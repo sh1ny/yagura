@@ -15,6 +15,21 @@ Planning is done with [Specwright](https://github.com/sh1ny/specwright) on OpenS
 
 Reviews: [openspec/architecture-review.md](openspec/architecture-review.md) (baseline, 2 rounds) and [review.md](openspec/changes/init-core-platform/review.md) (design, 2 rounds), both by a fresh-context reviewer subagent.
 
+## Development setup
+
+Prerequisites: [mise](https://mise.jdx.dev/) and Git. `mise install` installs the pinned Flutter SDK (with Dart) and git-cliff from `mise.toml`.
+
+| Task | What it does |
+|---|---|
+| `mise run format` | Format Dart source |
+| `mise run format:check` | Fail if any Dart file is not formatted |
+| `mise run changelog` | Regenerate `CHANGELOG.md` from local history (`cliff.toml`, strict `vX.Y.Z` tags) |
+| `mise run release-notes -- <range or --tag vX.Y.Z>` | Print release notes for a range or tag |
+
+`analyze` and `test` arrive with the pub workspace (task 1.1).
+
+Agent tooling: `.mcp.json` runs the official Dart MCP server from the mise-pinned SDK (read by Claude Code and OMP). Official Dart and Flutter skills are vendored in `.claude/skills/`, with their source commits and file hashes in `.claude/skills/UPSTREAM.json`.
+
 ## Next step
 
 `/opsx:apply init-core-platform` starting with task group 1 (workspace and the two M1 spikes: quickjs-ng on MSVC, Ctrl+C through the relay).

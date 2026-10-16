@@ -1,0 +1,195 @@
+{
+  "sources": [
+    {
+      "repository": "https://github.com/dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "license": "LICENSE.dart",
+      "skills": [
+        "dart-add-unit-test",
+        "dart-build-cli-app",
+        "dart-collect-coverage",
+        "dart-fix-runtime-errors",
+        "dart-resolve-package-conflicts",
+        "dart-run-static-analysis",
+        "dart-setup-ffi-assets",
+        "dart-use-ffigen",
+        "dart-use-path-package",
+        "dart-use-pattern-matching",
+        "dart-use-primary-constructors",
+        "dart-write-documentation"
+      ]
+    },
+    {
+      "repository": "https://github.com/flutter/agent-plugins",
+      "commit": "b60d0736a33a0de7d3f4ea2a7ad740ca0daa5c94",
+      "license": "LICENSE.flutter",
+      "skills": [
+        "flutter-add-integration-test",
+        "flutter-add-widget-preview",
+        "flutter-add-widget-test",
+        "flutter-apply-architecture-best-practices",
+        "flutter-build-responsive-layout",
+        "flutter-fix-layout-issues",
+        "flutter-setup-declarative-routing"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "dart-add-unit-test/SKILL.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "a4921a529000ddbfa6c98360dbc0b68f11fc4d4a"
+    },
+    {
+      "path": "dart-build-cli-app/SKILL.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "c888b42c94118e953a48f82bdf6a8a5eba025b52"
+    },
+    {
+      "path": "dart-build-cli-app/examples/multi_command_runner.dart",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "b62a077fcd4d0eba476f47542c2e807c65154edb"
+    },
+    {
+      "path": "dart-build-cli-app/examples/single_command_tool.dart",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "acad25545504e0e6305b9ee3cfdaa587048a48cb"
+    },
+    {
+      "path": "dart-build-cli-app/references/aot_sdk_discovery.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "0b4b851ceb575dd175e608d5bcec3b0685744f0e"
+    },
+    {
+      "path": "dart-build-cli-app/references/signals_and_terminal.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "a731482837e368be670f2817b553c916eb9e791c"
+    },
+    {
+      "path": "dart-collect-coverage/SKILL.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "60dad77533dc0a98b7f4a8363ac1b56d589d353a"
+    },
+    {
+      "path": "dart-fix-runtime-errors/SKILL.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "1a7db85158aaeced4d6f702d73acfd6f37d712a1"
+    },
+    {
+      "path": "dart-resolve-package-conflicts/SKILL.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "9a7ffdc5a79c14ad2e3d8dab6e257a28cfa40e3d"
+    },
+    {
+      "path": "dart-run-static-analysis/SKILL.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "27ca6546684accbc8f96091d0b992f6f43a16d15"
+    },
+    {
+      "path": "dart-setup-ffi-assets/SKILL.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "9f92eab3a167340b8ff65bb776a597bf2c3ad185"
+    },
+    {
+      "path": "dart-use-ffigen/SKILL.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "d7b58629f1850f91791f7ac5db588386ffa13843"
+    },
+    {
+      "path": "dart-use-path-package/SKILL.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "5f9fe324099a296237fa25fe7a65bbc6d176c64b"
+    },
+    {
+      "path": "dart-use-path-package/examples/cross_platform_paths.dart",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "41fa32fe2878b7deefd1aa9bee58a1d55f2d9d22"
+    },
+    {
+      "path": "dart-use-path-package/examples/file_system_context.dart",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "983ea46a46f5154364279ae6525b195ea39e5c1d"
+    },
+    {
+      "path": "dart-use-pattern-matching/SKILL.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "34dfee4944ae1f975faeba96887cf6bdd737b1e0"
+    },
+    {
+      "path": "dart-use-pattern-matching/examples/json_patterns.dart",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "d47a04e91b8d89a7f9459073a06e90e7074c9a51"
+    },
+    {
+      "path": "dart-use-primary-constructors/SKILL.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "13ba91c54f875aca5676729257a57d9c545a1cb3"
+    },
+    {
+      "path": "dart-write-documentation/SKILL.md",
+      "repository": "dart-lang/skills",
+      "commit": "bf984f3ef223dd85e92036f934bbcb6bf301e4ce",
+      "gitBlob": "e5fc042aa237954f5291b86d455c8b675204664e"
+    },
+    {
+      "path": "flutter-add-integration-test/SKILL.md",
+      "repository": "flutter/agent-plugins",
+      "commit": "b60d0736a33a0de7d3f4ea2a7ad740ca0daa5c94",
+      "gitBlob": "60902f1aa3156fa0c8e28df5448864dd5cc6c014"
+    },
+    {
+      "path": "flutter-add-widget-preview/SKILL.md",
+      "repository": "flutter/agent-plugins",
+      "commit": "b60d0736a33a0de7d3f4ea2a7ad740ca0daa5c94",
+      "gitBlob": "6ba68942e4b535b3459acb34071185c3dfaa0fb1"
+    },
+    {
+      "path": "flutter-add-widget-test/SKILL.md",
+      "repository": "flutter/agent-plugins",
+      "commit": "b60d0736a33a0de7d3f4ea2a7ad740ca0daa5c94",
+      "gitBlob": "01ac7ac645a7f6f66603cb1c78a2a28dba3a5d32"
+    },
+    {
+      "path": "flutter-apply-architecture-best-practices/SKILL.md",
+      "repository": "flutter/agent-plugins",
+      "commit": "b60d0736a33a0de7d3f4ea2a7ad740ca0daa5c94",
+      "gitBlob": "791994b12280e5734479079bd6255fa705e983c5"
+    },
+    {
+      "path": "flutter-build-responsive-layout/SKILL.md",
+      "repository": "flutter/agent-plugins",
+      "commit": "b60d0736a33a0de7d3f4ea2a7ad740ca0daa5c94",
+      "gitBlob": "b85bfd7e82e30ac676d2140ddb436bfebd0992cb"
+    },
+    {
+      "path": "flutter-fix-layout-issues/SKILL.md",
+      "repository": "flutter/agent-plugins",
+      "commit": "b60d0736a33a0de7d3f4ea2a7ad740ca0daa5c94",
+      "gitBlob": "3804a3c1d9fd2b88ee1ddc74716799cf2cd770c1"
+    },
+    {
+      "path": "flutter-setup-declarative-routing/SKILL.md",
+      "repository": "flutter/agent-plugins",
+      "commit": "b60d0736a33a0de7d3f4ea2a7ad740ca0daa5c94",
+      "gitBlob": "272031181bc8d8598c934a14b1d12cf08c7aa1bc"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+# git-cliff 2.14.2: https://git-cliff.org/docs/configuration/
+[changelog]
+header = """
+# Yagura Changelog
+{% if releases | length == 0 %}
+## Unreleased
+{% endif %}
+"""
+header_marker = ""
+body = """
+{% if version %}
+## {{ version }}{% if timestamp %} - {{ timestamp | date(format="%Y-%m-%d") }}{% endif %}
+{% else %}
+## Unreleased
+{% endif %}
+{% for entry in commits | commit_groups(groups=commit_parsers_groups) %}
+### {{ entry.group }}
+{% for commit in entry.commits -%}
+- {% if commit.breaking %}**BREAKING** {% endif %}{% if commit.scope %}*({{ commit.scope }})* {% endif %}{{ commit.message }}{% if commit.breaking_description and commit.breaking_description != commit.message %} — {{ commit.breaking_description }}{% endif %}
+{% endfor -%}
+{% endfor %}
+"""
+trim = true
+render_always = true
+format = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+# Skips come before the group parsers. Match the parsed conventional type, not
+# a non-conventional message prefix.
+commit_parsers = [
+    { field = "merge_commit", pattern = "^true$", skip = true },
+    { message = '^chore\(release\): v', skip = true },
+    # Specwright process commits: one per task, planning amendments, review
+    # fixes and the archive move. The change itself is described by the commit
+    # that lands it, not by its task list.
+    { message = '^\w+(\([^)]*\))?: (task \d|amend (proposal|specs|design|review|tasks)|address review feedback|add planning artifacts|archive change)', skip = true },
+    { field = "group", pattern = "^feat$", group = "Features" },
+    { field = "group", pattern = "^fix$", group = "Fixes" },
+    { field = "group", pattern = "^perf$", group = "Performance" },
+    { field = "group", pattern = "^docs$", group = "Documentation" },
+    { field = "group", pattern = "^(refactor|style)$", group = "Refactoring" },
+    { field = "group", pattern = "^test$", group = "Testing" },
+    { field = "group", pattern = "^(build|ci|chore)$", group = "Build, CI, and tooling" },
+    { message = ".*", group = "Other" },
+]
+# Strict v-prefixed SemVer 2.0.0. Numeric prerelease identifiers cannot
+# have leading zeroes; build metadata may, as allowed by https://semver.org/.
+tag_pattern = '\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\z'
+# Prerelease tags get no section of their own: the next final release lists
+# everything since the last final release.
+ignore_tags = '\Av[0-9]+\.[0-9]+\.[0-9]+-'
+sort_commits = "oldest"

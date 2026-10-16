@@ -1,0 +1,19 @@
+[tools]
+flutter = "3.47.7"
+"aqua:orhun/git-cliff" = "2.14.2"
+
+[tasks.format]
+description = "Format Dart source"
+run = "dart format ."
+
+[tasks."format:check"]
+description = "Check Dart formatting without changing files"
+run = "dart format --output=none --set-exit-if-changed ."
+
+[tasks.changelog]
+description = "Regenerate CHANGELOG.md from local Git history"
+run = "git-cliff --config cliff.toml --offline --output CHANGELOG.md"
+
+[tasks."release-notes"]
+description = "Print release notes; forward git-cliff range or tag options after --"
+run = "git-cliff --config cliff.toml --offline --strip header"
