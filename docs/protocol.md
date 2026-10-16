@@ -99,9 +99,9 @@ Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violation
 
 | Area | Reasons |
 |---|---|
-| General | `not_implemented`, `internal_error`, `invalid_json`, `schema_version_mismatch`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `prompt_resolved` |
+| General | `not_implemented`, `internal_error`, `instance_not_found`, `operation_not_found`, `invalid_json`, `schema_version_mismatch`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `prompt_resolved` |
 | Auth | `pairing_code_invalid`, `pairing_throttled`, `device_revoked`, `last_device`, `unauthenticated`, `access_denied` (admin channel) |
-| Instances | `not_installed`, `invalid_state`, `instance_running`, `instance_not_running`, `port_conflict`, `unsupported_platform`, `crash_loop`, `lost_while_daemon_down`, `update_interrupted`, `install_interrupted`, `restore_interrupted`, `settings_invalid`, `plugin_missing`, `instance_directory_missing`, `launch_failed`, `launch_logon_failed`, `directory_not_allowed`, `run_record_rejected`, `instance_file_stale` (warning), `autostarted` (notice) |
+| Instances | `confirmation_mismatch`, `not_installed`, `invalid_state`, `instance_running`, `instance_not_running`, `port_conflict`, `unsupported_platform`, `crash_loop`, `lost_while_daemon_down`, `update_interrupted`, `install_interrupted`, `restore_interrupted`, `settings_invalid`, `plugin_missing`, `instance_directory_missing`, `launch_failed`, `launch_logon_failed`, `directory_not_allowed`, `run_record_rejected`, `instance_file_stale` (warning), `autostarted` (notice) |
 | Plugins | `invalid_manifest`, `unsupported_manifest_version`, `file_too_large`, `hook_syntax_error`, `unsupported_in_this_version`, `mods_not_supported`, `rcon_not_supported` |
 | Hooks | `hook_timeout`, `hook_out_of_memory`, `hook_result_invalid`, `hook_result_too_large`, `hook_error`, `sandbox_violation`, `host_limit_exceeded`, `hook_runtime_degraded`, `not_supported`, `unsupported_in_this_version` (file-edit format) |
 | Config | `binding_file_missing`, `config_parse_error`, `file_locked`, `external_edit` (event/warning; values of secret-bound keys masked) |

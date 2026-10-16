@@ -116,24 +116,66 @@ class HookHost {
     final contextJson = jsonEncode(invocation.context.toJson());
     invocation.context.checkSize(utf8.encode(contextJson).length);
 
+    final reply = await _execute(
+      HookWorkerRequest(
+        hookName: invocation.point.exportName,
+        source: invocation.source,
+        contextJson: contextJson,
+        rootPath: invocation.root.path,
+        deadline: invocation.deadline,
+      ),
+      cancel,
+    );
+    return _finish(invocation, reply);
+  }
+
+  /// Loads [source] (a plugin's `hooks.js`) in a worker without calling any
+  /// hook, so a syntax error or a failing top level surfaces at plugin load.
+  /// Throws the same errors as [run] (`hook_syntax_error` names the line).
+  Future<void> checkLoads({
+    required String source,
+    required String rootPath,
+    Duration deadline = HookLimits.defaultDeadline,
+  }) async {
+    _refuseIfDegraded();
+    final reply = await _execute(
+      HookWorkerRequest(
+        hookName: loadCheckName,
+        source: source,
+        contextJson: '{}',
+        rootPath: rootPath,
+        deadline: deadline,
+      ),
+      null,
+    );
+    if (reply['status'] != 'ok') {
+      throw YaguraException(
+        reply['reason']! as String,
+        reply['message']! as String,
+        details: {'stack': ?reply['stack'], 'code': ?reply['code']},
+      );
+    }
+  }
+
+  /// The hook name [checkLoads] asks for; no plugin exports it.
+  static const loadCheckName = '__yagura_load_check__';
+
+  /// Takes a worker slot, runs [request] and returns the worker's reply (or
+  /// the watchdog's error reply).
+  Future<Map<String, Object?>> _execute(
+    HookWorkerRequest request,
+    Future<void>? cancel,
+  ) async {
     await _acquireSlot(cancel);
     final HookWorker worker;
     try {
-      worker = await _launch(
-        HookWorkerRequest(
-          hookName: invocation.point.exportName,
-          source: invocation.source,
-          contextJson: contextJson,
-          rootPath: invocation.root.path,
-          deadline: invocation.deadline,
-        ),
-      );
+      worker = await _launch(request);
     } on Object {
       _releaseSlot();
       rethrow;
     }
 
-    final hook = invocation.point.exportName;
+    final hook = request.hookName;
     var exited = false;
     var counted = false;
     Timer? leakTimer;
@@ -147,7 +189,7 @@ class HookHost {
     );
 
     final watchdog = Completer<Map<String, Object?>>();
-    final watchdogTimer = Timer(invocation.deadline + watchdogGrace, () {
+    final watchdogTimer = Timer(request.deadline + watchdogGrace, () {
       worker.kill();
       leakTimer = Timer(leakGrace, () {
         if (exited) return;
@@ -169,7 +211,7 @@ class HookHost {
       watchdogTimer.cancel();
     }
 
-    return _finish(invocation, reply);
+    return reply;
   }
 
   HookRunResult _finish(HookInvocation invocation, Map<String, Object?> reply) {

@@ -1,0 +1,884 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:math';
+
+import 'package:path/path.dart' as p;
+import 'package:yagura_plugin/yagura_plugin.dart';
+
+import '../errors.dart';
+import '../hooks/hooks.dart';
+import '../host/data_directory.dart';
+import '../operations/operations.dart';
+import '../plugins/plugin_registry.dart';
+import '../process/process.dart';
+import '../snapshots/snapshots.dart';
+import '../steam/steam.dart';
+import 'instance.dart';
+import 'instance_file.dart';
+import 'instance_store.dart';
+import 'lifecycle.dart';
+
+/// The instance manager: sole writer of instances, settings, ports and the
+/// instance state machine (design D17, D21, D25). Lifecycle work runs as
+/// operations of the [OperationRunner]; the steps themselves are in
+/// [Lifecycle].
+class InstanceManager {
+  InstanceManager({
+    required this.store,
+    required this.runner,
+    required this.registry,
+    required this.dataDirectory,
+    required this.apiPort,
+    required this.os,
+    required this.processHost,
+    required this.steam,
+    required this.hooks,
+    this.snapshotter,
+    DateTime Function()? clock,
+  }) : clock = clock ?? DateTime.now {
+    lifecycle = Lifecycle(this);
+    for (final record in store.loadAll()) {
+      _records[record.id] = record;
+    }
+  }
+
+  final InstanceStore store;
+  final OperationRunner runner;
+  final PluginRegistry registry;
+  final DataDirectory dataDirectory;
+
+  /// The daemon API port, which no instance may use.
+  final int apiPort;
+
+  /// `windows` or `linux`.
+  final String os;
+  final ProcessHost processHost;
+  final SteamService steam;
+  final HookHost hooks;
+  final Snapshotter? snapshotter;
+  final DateTime Function() clock;
+  late final Lifecycle lifecycle;
+
+  final _records = <String, InstanceRecord>{};
+  final _events = StreamController<InstanceEvent>.broadcast();
+  final _recoveryNotices = <InstanceNotice>[];
+  var _createTail = Future<void>.value();
+  var _closed = false;
+
+  static final _random = Random.secure();
+
+  // ---- reading ------------------------------------------------------------
+
+  Stream<InstanceEvent> get events => _events.stream;
+
+  /// Notices raised while recovering at startup.
+  List<InstanceNotice> get recoveryNotices =>
+      List.unmodifiable(_recoveryNotices);
+
+  List<Instance> list() => [for (final r in _records.values) view(r)];
+
+  Instance? find(String id) {
+    final record = _records[id];
+    return record == null ? null : view(record);
+  }
+
+  Instance get(String id) => view(_require(id));
+
+  InstanceRecord _require(String id) =>
+      _records[id] ??
+      (throw YaguraException(
+        'instance_not_found',
+        'there is no instance $id',
+        details: {'instanceId': id},
+      ));
+
+  /// The record an operation works on; an instance deleted while the
+  /// operation was queued makes it fail `invalid_state`.
+  InstanceRecord recordForOperation(String id) =>
+      _records[id] ??
+      (throw YaguraException(
+        'invalid_state',
+        'instance $id no longer exists',
+        details: {'instanceId': id},
+      ));
+
+  /// An immutable view of [record], with secrets as placeholders.
+  Instance view(InstanceRecord record) {
+    final plugin = registry.find(record.pluginId);
+    return Instance(
+      id: record.id,
+      name: record.name,
+      pluginId: record.pluginId,
+      pluginVersion: record.pluginVersion,
+      directory: record.directory,
+      state: record.state,
+      stateReason: record.stateReason,
+      warning: record.warning,
+      ports: List.unmodifiable(record.ports),
+      settings: withSecretPlaceholders(
+        plugin?.manifest.settings ?? const {},
+        record.settings,
+        const {'secret': true, 'set': false},
+      ),
+      schemaVersion: plugin?.schemaVersion,
+      steamAccountId: record.steamAccountId,
+      restartPolicy: record.restartPolicy,
+      autostart: record.autostart,
+      restartRequired: record.restartRequired,
+      settingsInvalid: record.settingsInvalid,
+      activeOperationId: runner.activeOperationId(record.id) ?? '',
+      queuedOperations: runner.queuedCount(record.id),
+      createdAt: record.createdAt,
+      stateChangedAt: record.stateChangedAt,
+      pid: record.server?.pid ?? 0,
+    );
+  }
+
+  // ---- create -------------------------------------------------------------
+
+  /// Creates an instance. Creates are serialised, so the port and directory
+  /// checks see every earlier create.
+  Future<Instance> create(CreateInstanceRequest request) {
+    final result = _createTail.then((_) => _create(request));
+    _createTail = result.then<void>((_) {}, onError: (_) {});
+    return result;
+  }
+
+  Instance _create(CreateInstanceRequest request) {
+    final plugin =
+        registry.find(request.pluginId) ??
+        (throw YaguraException(
+          'plugin_missing',
+          'plugin ${request.pluginId} is not loaded',
+          details: {'pluginId': request.pluginId},
+        ));
+    final manifest = plugin.manifest;
+    if (!manifest.executables.containsKey(os)) {
+      throw YaguraException(
+        'unsupported_platform',
+        'plugin ${manifest.id} has no executable for $os '
+            '(it declares: ${manifest.platforms.join(', ')})',
+        details: {'pluginId': manifest.id, 'os': os},
+      );
+    }
+    final name = request.name.trim();
+    if (name.isEmpty) {
+      throw _settingsInvalid([const SettingError('name', 'must not be empty')]);
+    }
+    if (request.schemaVersion != null &&
+        request.schemaVersion != plugin.schemaVersion) {
+      throw YaguraException(
+        'schema_version_mismatch',
+        'the settings were made for schema version ${request.schemaVersion}, '
+            'the plugin is at ${plugin.schemaVersion}',
+        details: {'schemaVersion': plugin.schemaVersion},
+      );
+    }
+
+    final settings = _validated(manifest, request.settings);
+    final ports = _resolvePorts(manifest, request.ports);
+    final id = _newId();
+    _checkPorts(name, ports, excluding: null);
+    final directory = _checkDirectory(request.directory, id);
+
+    final created = Directory(directory).existsSync() ? false : true;
+    Directory(directory).createSync(recursive: true);
+    final now = clock();
+    final record = InstanceRecord(
+      id: id,
+      name: name,
+      pluginId: manifest.id,
+      pluginVersion: manifest.version,
+      directory: directory,
+      state: InstanceState.notInstalled,
+      settings: settings,
+      ports: ports,
+      steamAccountId: request.steamAccountId ?? '',
+      createdAt: now,
+      stateChangedAt: now,
+    );
+    try {
+      store.save(record);
+    } on Object {
+      if (created) Directory(directory).deleteSync(recursive: true);
+      rethrow;
+    }
+    _records[id] = record;
+    writeInstanceFile(record);
+    _emitChanged(record);
+    return view(record);
+  }
+
+  // ---- settings -----------------------------------------------------------
+
+  /// Saves settings and ports. Secret values are refused; an omitted secret
+  /// or its placeholder leaves it unset.
+  Instance updateSettings(UpdateSettingsRequest request) {
+    final record = _require(request.instanceId);
+    final plugin = _requirePlugin(record);
+    final manifest = plugin.manifest;
+    final settings = _validated(manifest, request.settings);
+
+    var ports = record.ports;
+    if (request.ports case final overrides?) {
+      final current = {
+        for (final port in record.ports)
+          if (manifest.ports.any((d) => d.name == port.name && !d.isDerived))
+            port.name: port.number,
+      };
+      ports = _resolvePorts(manifest, {...current, ...overrides});
+    }
+    _checkPorts(record.name, ports, excluding: record.id);
+
+    final policy = request.restartPolicy;
+    if (policy != null && policy != 'never' && policy != 'on_crash') {
+      throw _settingsInvalid([
+        SettingError(
+          'restart_policy',
+          'must be never or on_crash (got $policy)',
+        ),
+      ]);
+    }
+
+    record
+      ..settings = settings
+      ..ports = ports
+      ..pluginVersion = manifest.version
+      ..settingsInvalid = false
+      ..restartPolicy = policy ?? record.restartPolicy
+      ..autostart = request.autostart ?? record.autostart
+      ..steamAccountId = request.steamAccountId ?? record.steamAccountId;
+    if (record.state == InstanceState.running ||
+        record.state == InstanceState.starting) {
+      record.restartRequired = true;
+    }
+    if (record.state == InstanceState.error &&
+        record.stateReason == settingsInvalidReason) {
+      _applyState(record, InstanceState.stopped);
+    }
+    _commit(record);
+    return view(record);
+  }
+
+  /// This version has no secret store (design D24).
+  Instance setSecret(String id, String key, String value) {
+    _require(id);
+    throw _noSecretStore(key);
+  }
+
+  Instance deleteSecret(String id, String key) {
+    _require(id);
+    throw _noSecretStore(key);
+  }
+
+  YaguraException _noSecretStore(String key) => YaguraException(
+    'secret_store_unavailable',
+    'this version has no secret store, so the secret "$key" cannot be changed',
+    details: {'key': key},
+  );
+
+  Map<String, Object?> _validated(
+    PluginManifest manifest,
+    Map<String, Object?> input,
+  ) {
+    final validation = validateSettings(manifest, input);
+    if (validation.isValid) return validation.values;
+    final secret = validation.errors.where(
+      (e) => e.code == 'secret_store_unavailable',
+    );
+    if (secret.isNotEmpty) {
+      throw YaguraException(
+        'secret_store_unavailable',
+        'this version has no secret store: ${secret.map((e) => e.path).join(', ')} '
+            'cannot be set',
+        details: {
+          'fields': [for (final e in secret) e.path],
+        },
+      );
+    }
+    throw _settingsInvalid(validation.errors);
+  }
+
+  YaguraException _settingsInvalid(List<SettingError> errors) =>
+      YaguraException(
+        settingsInvalidReason,
+        'invalid settings: ${errors.join('; ')}',
+        details: {
+          'fieldViolations': [
+            for (final e in errors) {'field': e.path, 'description': e.message},
+          ],
+        },
+      );
+
+  // ---- ports and directories ----------------------------------------------
+
+  List<PortAssignment> _resolvePorts(
+    PluginManifest manifest,
+    Map<String, int> overrides,
+  ) {
+    final Map<String, int> numbers;
+    try {
+      numbers = resolvePorts(manifest, overrides);
+    } on ArgumentError catch (e) {
+      throw _settingsInvalid([
+        SettingError('ports.${e.name ?? ''}', '${e.message}'),
+      ]);
+    }
+    return [
+      for (final decl in manifest.ports)
+        PortAssignment(
+          name: decl.name,
+          number: numbers[decl.name]!,
+          protocol: decl.protocol,
+          purpose: decl.purpose,
+          exposed: decl.exposed,
+        ),
+    ];
+  }
+
+  bool _overlap(PortProtocol a, PortProtocol b) =>
+      a == PortProtocol.both || b == PortProtocol.both || a == b;
+
+  void _checkPorts(
+    String name,
+    List<PortAssignment> ports, {
+    required String? excluding,
+  }) {
+    for (final port in ports) {
+      if (port.number == apiPort) {
+        throw YaguraException(
+          'port_conflict',
+          'port ${port.name} of "$name" would use ${port.number}, the port '
+              'of the daemon API',
+          details: {
+            'port': port.number,
+            'portName': port.name,
+            'daemonApi': true,
+          },
+        );
+      }
+    }
+    for (final other in _records.values) {
+      if (other.id == excluding) continue;
+      for (final theirs in other.ports) {
+        for (final mine in ports) {
+          if (mine.number == theirs.number &&
+              _overlap(mine.protocol, theirs.protocol)) {
+            throw YaguraException(
+              'port_conflict',
+              'port ${mine.name} (${mine.number}/${mine.protocol.name}) of '
+                  '"$name" collides with port ${theirs.name} of '
+                  '"${other.name}"',
+              details: {
+                'port': mine.number,
+                'portName': mine.name,
+                'conflictingInstance': other.name,
+                'conflictingInstanceId': other.id,
+                'conflictingPortName': theirs.name,
+              },
+            );
+          }
+        }
+      }
+    }
+  }
+
+  /// The instance directory: `<data>/instances/<id>` by default, or a path
+  /// strictly under `<data>/instances` that overlaps no other instance
+  /// (design D21; configured roots come with the admin channel in M2).
+  String _checkDirectory(String? requested, String id) {
+    final root = p.normalize(p.absolute(dataDirectory.instancesPath));
+    if (requested == null || requested.isEmpty) return p.join(root, id);
+    final directory = p.normalize(p.absolute(requested));
+    Never refuse(String why) => throw YaguraException(
+      'directory_not_allowed',
+      'directory $requested is not allowed: $why',
+      details: {'path': requested},
+    );
+    if (!p.isWithin(root, directory)) {
+      refuse('instances live under $root');
+    }
+    for (final other in _records.values) {
+      final theirs = p.normalize(p.absolute(other.directory));
+      if (p.equals(directory, theirs) ||
+          p.isWithin(theirs, directory) ||
+          p.isWithin(directory, theirs)) {
+        refuse('it overlaps instance "${other.name}" at ${other.directory}');
+      }
+    }
+    return directory;
+  }
+
+  String _newId() {
+    String hex() =>
+        [for (var i = 0; i < 12; i++) _random.nextInt(16).toRadixString(16)]
+            .join();
+    var id = 'inst-${hex()}';
+    while (_records.containsKey(id)) {
+      id = 'inst-${hex()}';
+    }
+    return id;
+  }
+
+  // ---- lifecycle requests -------------------------------------------------
+
+  Operation install(String id, {bool validateFiles = false}) {
+    final record = _guarded(id, OperationKind.install);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.install,
+      body: (context) =>
+          lifecycle.install(context, record.id, validate: validateFiles),
+    );
+  }
+
+  Operation update(
+    String id, {
+    bool skipSnapshot = false,
+    bool validateFiles = false,
+  }) {
+    final record = _guarded(id, OperationKind.update);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.update,
+      body: (context) => lifecycle.update(
+        context,
+        record.id,
+        kind: OperationKind.update,
+        validate: validateFiles,
+        skipSnapshot: skipSnapshot,
+      ),
+    );
+  }
+
+  Operation validate(String id) {
+    final record = _guarded(id, OperationKind.validate);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.validate,
+      body: (context) => lifecycle.update(
+        context,
+        record.id,
+        kind: OperationKind.validate,
+        validate: true,
+        skipSnapshot: false,
+      ),
+    );
+  }
+
+  Operation start(String id) {
+    final record = _guarded(id, OperationKind.start);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.start,
+      body: (context) => lifecycle.start(context, record.id),
+    );
+  }
+
+  Operation stop(String id, {bool force = false}) {
+    final record = _guarded(id, OperationKind.stop);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.stop,
+      body: (context) => lifecycle.stop(context, record.id, force: force),
+    );
+  }
+
+  Operation restart(String id) {
+    final record = _guarded(id, OperationKind.restart);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.restart,
+      body: (context) => lifecycle.restart(context, record.id),
+    );
+  }
+
+  /// Deletes the instance as an operation on its queue (design D25). A wrong
+  /// confirmation fails before an operation exists.
+  Operation delete(
+    String id, {
+    bool deleteFiles = false,
+    String confirmName = '',
+  }) {
+    final record = _require(id);
+    if (deleteFiles && confirmName != record.name) {
+      throw YaguraException(
+        'confirmation_mismatch',
+        'deleting the files needs the instance name "${record.name}" as '
+            'confirmation',
+        details: {'instanceId': id},
+      );
+    }
+    if (runner.hasActive(id)) {
+      throw YaguraException(
+        'invalid_state',
+        'instance "${record.name}" has another operation queued or running; '
+            'delete is refused until it ends',
+        details: {'instanceId': id},
+      );
+    }
+    checkAllowed(record, OperationKind.delete, execution: false);
+    if (deleteFiles) requirePlugin(record);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.delete,
+      body: (context) =>
+          lifecycle.delete(context, record.id, deleteFiles: deleteFiles),
+    );
+  }
+
+  /// Clears an `error` after the cause was addressed (design D17).
+  Instance acknowledge(String id) {
+    final record = _require(id);
+    if (record.state != InstanceState.error ||
+        record.stateReason == settingsInvalidReason ||
+        record.stateReason == pluginMissingReason) {
+      throw YaguraException(
+        'invalid_state',
+        record.state == InstanceState.error
+            ? 'Acknowledge does not apply to error ${record.stateReason}; '
+                  '${record.stateReason == settingsInvalidReason ? 'save valid settings' : 'reload the plugin'}'
+            : 'instance "${record.name}" is ${record.state.wireName}, not in error',
+        details: {'instanceId': id},
+      );
+    }
+    final warning = switch (record.stateReason) {
+      crashLoopReason => '',
+      restoreInterruptedReason =>
+        'the restore was interrupted: data paths may be mixed',
+      _ => 'the update did not finish: files may be inconsistent',
+    };
+    _applyState(record, InstanceState.stopped);
+    record.warning = warning;
+    _commit(record);
+    return view(record);
+  }
+
+  /// At request time an idle instance is checked against the state machine;
+  /// when operations are queued or running, the check happens when the
+  /// operation reaches the head of the queue.
+  InstanceRecord _guarded(String id, OperationKind kind) {
+    final record = _require(id);
+    if (!runner.hasActive(id)) {
+      checkAllowed(record, kind, execution: false);
+    }
+    return record;
+  }
+
+  /// Whether [kind] is allowed in the instance's state (design D17); throws
+  /// `invalid_state` or a more specific reason otherwise. At [execution] time
+  /// the specific reasons become `invalid_state`, and Stop never fails.
+  void checkAllowed(
+    InstanceRecord record,
+    OperationKind kind, {
+    required bool execution,
+  }) {
+    final state = record.state;
+    final reason = record.stateReason;
+    final described = state == InstanceState.error
+        ? 'error ($reason)'
+        : state.wireName;
+    Never refuse(String specific, String why) => throw YaguraException(
+      execution ? 'invalid_state' : specific,
+      'instance "${record.name}" is $described: $why',
+      details: {'instanceId': record.id, 'state': state.wireName},
+    );
+
+    switch (kind) {
+      case OperationKind.install:
+        if (state != InstanceState.notInstalled) {
+          refuse('invalid_state', 'Install needs not_installed');
+        }
+      case OperationKind.update || OperationKind.validate:
+        final ok =
+            state == InstanceState.stopped ||
+            state == InstanceState.running ||
+            record.isUpdateFailure;
+        if (!ok) {
+          if (state == InstanceState.notInstalled) {
+            refuse('not_installed', '${kind.name} needs an installed server');
+          }
+          refuse('invalid_state', '${kind.name} is not allowed');
+        }
+      case OperationKind.start:
+        if (record.settingsInvalid) {
+          refuse(
+            'invalid_state',
+            'Start is refused: its settings are invalid ($settingsInvalidReason)',
+          );
+        }
+        final ok =
+            state == InstanceState.stopped ||
+            (state == InstanceState.error && reason == crashLoopReason);
+        if (!ok) {
+          if (state == InstanceState.notInstalled) {
+            refuse('not_installed', 'install it first');
+          }
+          if (state == InstanceState.running ||
+              state == InstanceState.starting) {
+            refuse('instance_running', 'it is already running');
+          }
+          refuse('invalid_state', 'Start is not allowed');
+        }
+      case OperationKind.stop:
+        if (execution) return;
+        final ok =
+            state == InstanceState.running ||
+            state == InstanceState.starting ||
+            state == InstanceState.stopping ||
+            state == InstanceState.error;
+        if (!ok) refuse('instance_not_running', 'there is nothing to stop');
+      case OperationKind.restart:
+        if (state != InstanceState.running) {
+          refuse(
+            state == InstanceState.notInstalled
+                ? 'not_installed'
+                : 'instance_not_running',
+            'Restart needs a running instance',
+          );
+        }
+      case OperationKind.delete:
+        final ok =
+            state == InstanceState.stopped ||
+            state == InstanceState.notInstalled ||
+            state == InstanceState.error;
+        if (!ok) refuse('invalid_state', 'Delete needs it stopped');
+    }
+  }
+
+  // ---- state changes (used by the lifecycle and recovery) ------------------
+
+  /// Sets the state, clearing the reason and warning unless given, and
+  /// persists and announces it. A no-op once the manager is closed, so
+  /// operations that outlive a killed daemon change nothing.
+  void setState(
+    InstanceRecord record,
+    InstanceState state, {
+    String reason = '',
+    String warning = '',
+  }) {
+    if (_closed) return;
+    _applyState(record, state, reason: reason, warning: warning);
+    _commit(record);
+  }
+
+  void _applyState(
+    InstanceRecord record,
+    InstanceState state, {
+    String reason = '',
+    String warning = '',
+  }) {
+    record
+      ..state = state
+      ..stateReason = reason
+      ..warning = warning
+      ..stateChangedAt = clock();
+    if (state == InstanceState.running) record.restartRequired = false;
+    if (state != InstanceState.running &&
+        state != InstanceState.starting &&
+        state != InstanceState.stopping) {
+      record.server = null;
+    }
+  }
+
+  /// Persists and announces a change of [record] that is not a state change.
+  void saveChanges(InstanceRecord record) {
+    if (_closed) return;
+    _commit(record);
+  }
+
+  /// Removes the instance's rows (design D25; operation rows stay).
+  void removeRows(InstanceRecord record) {
+    if (_closed) return;
+    store.delete(record.id);
+    _records.remove(record.id);
+    if (!_events.isClosed) _events.add(InstanceRemoved(record.id));
+  }
+
+  void _commit(InstanceRecord record) {
+    store.save(record);
+    writeInstanceFile(record);
+    _emitChanged(record);
+  }
+
+  void _emitChanged(InstanceRecord record) {
+    if (!_closed && !_events.isClosed) {
+      _events.add(InstanceChanged(view(record)));
+    }
+  }
+
+  /// Writes `instance.json`; a failure after the commit is a warning, not an
+  /// error: the file is rewritten at the next change and at startup.
+  void writeInstanceFile(InstanceRecord record) {
+    if (_closed) return;
+    try {
+      InstanceFile.write(record, registry.find(record.pluginId)?.manifest);
+    } on FileSystemException catch (e) {
+      notice(
+        record.id,
+        'instance_file_stale',
+        'instance.json could not be written: ${e.osError?.message ?? e.message}',
+      );
+    }
+  }
+
+  void notice(String instanceId, String kind, String message) {
+    if (_closed || _events.isClosed) return;
+    _events.add(InstanceNotice(instanceId, kind, message));
+  }
+
+  LoadedPlugin _requirePlugin(InstanceRecord record) => requirePlugin(record);
+
+  /// The loaded plugin of the instance; `plugin_missing` when there is none.
+  LoadedPlugin requirePlugin(InstanceRecord record) =>
+      registry.find(record.pluginId) ??
+      (throw YaguraException(
+        'plugin_missing',
+        'plugin ${record.pluginId} of instance "${record.name}" is not loaded',
+        details: {'pluginId': record.pluginId},
+      ));
+
+  // ---- plugins ------------------------------------------------------------
+
+  /// Reloads plugins on explicit request and reconciles the instances with
+  /// the result (design D17): running operations keep the manifest they
+  /// started with.
+  Future<List<PluginReloadOutcome>> reloadPlugins() async {
+    final outcomes = await registry.reload();
+    reconcilePlugins();
+    return outcomes;
+  }
+
+  /// Applies the plugin registry to every instance: `plugin_missing` for a
+  /// stopped instance whose plugin is gone, back to `stopped` when it is
+  /// restored, and settings re-validation against the loaded manifest.
+  void reconcilePlugins() {
+    for (final record in _records.values.toList()) {
+      final plugin = registry.find(record.pluginId);
+      if (plugin == null) {
+        if (record.state == InstanceState.stopped) {
+          setState(record, InstanceState.error, reason: pluginMissingReason);
+          notice(
+            record.id,
+            pluginMissingReason,
+            'plugin ${record.pluginId} is not loaded',
+          );
+        }
+        continue;
+      }
+      if (record.state == InstanceState.error &&
+          record.stateReason == pluginMissingReason) {
+        setState(record, InstanceState.stopped);
+      }
+      final validation = validateSettings(plugin.manifest, record.settings);
+      if (validation.isValid) {
+        if (record.settingsInvalid ||
+            record.pluginVersion != plugin.manifest.version) {
+          record
+            ..settingsInvalid = false
+            ..pluginVersion = plugin.manifest.version;
+          saveChanges(record);
+        }
+        continue;
+      }
+      final message = validation.errors.join('; ');
+      if (record.state == InstanceState.stopped) {
+        setState(record, InstanceState.error, reason: settingsInvalidReason);
+        notice(record.id, settingsInvalidReason, message);
+      } else if (record.state != InstanceState.error &&
+          !record.settingsInvalid) {
+        record.settingsInvalid = true;
+        saveChanges(record);
+        notice(record.id, settingsInvalidReason, message);
+      }
+    }
+  }
+
+  // ---- recovery -----------------------------------------------------------
+
+  /// Moves instances out of transient states after a daemon restart and marks
+  /// unfinished operations `interrupted` (design D9). Re-attaching to running
+  /// servers comes with the process model; until then an instance that was
+  /// starting, running or stopping is `stopped`.
+  void recover() {
+    runner.recoverInterrupted();
+    for (final record in _records.values.toList()) {
+      switch (record.state) {
+        case InstanceState.installing:
+          setState(record, InstanceState.notInstalled);
+          _recoveryNotice(
+            record,
+            'install_interrupted',
+            'the daemon stopped during the install; start it again',
+          );
+        case InstanceState.updating:
+          setState(
+            record,
+            InstanceState.error,
+            reason: updateInterruptedReason,
+          );
+          _recoveryNotice(
+            record,
+            'update_interrupted',
+            'the daemon stopped during the update; update again or acknowledge',
+          );
+        case InstanceState.starting ||
+            InstanceState.running ||
+            InstanceState.stopping:
+          setState(record, InstanceState.stopped);
+          _recoveryNotice(
+            record,
+            'lost_while_daemon_down',
+            'the server was not re-attached after the daemon restarted',
+          );
+        case InstanceState.notInstalled ||
+            InstanceState.stopped ||
+            InstanceState.error:
+          break;
+      }
+    }
+  }
+
+  void _recoveryNotice(InstanceRecord record, String kind, String message) {
+    final notice = InstanceNotice(record.id, kind, message);
+    _recoveryNotices.add(notice);
+    if (!_events.isClosed) _events.add(notice);
+  }
+
+  /// Rewrites `instance.json` of every instance (ADR 0008: the file can be
+  /// stale only when the daemon died between commit and write).
+  void rewriteInstanceFiles() {
+    for (final record in _records.values) {
+      if (Directory(record.directory).existsSync()) {
+        writeInstanceFile(record);
+      }
+    }
+  }
+
+  /// Finishes deletes interrupted by a crash (design D25): a directory under
+  /// the instances root with a `.yagura/deleting` marker and no instance row
+  /// is removed; a marker whose row still exists is removed alone, because
+  /// the rows were never deleted.
+  void sweepMarkedDirectories() {
+    final root = Directory(dataDirectory.instancesPath);
+    if (!root.existsSync()) return;
+    for (final entry in root.listSync().whereType<Directory>()) {
+      final marker = File(p.join(entry.path, '.yagura', 'deleting'));
+      if (!marker.existsSync()) continue;
+      final owner = _records.values.any(
+        (r) => p.equals(p.normalize(p.absolute(r.directory)), entry.path),
+      );
+      if (owner) {
+        marker.deleteSync();
+      } else {
+        entry.deleteSync(recursive: true);
+      }
+    }
+  }
+
+  /// Stops announcing changes. Operations still running change nothing more.
+  Future<void> close() async {
+    _closed = true;
+    await _events.close();
+  }
+}
