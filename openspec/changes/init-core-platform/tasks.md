@@ -13,21 +13,21 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | plugin-hooks → Sandboxed host API | File edit returned and applied by the daemon | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | file_edit_returned_and_applied_by_the_daemon | 2 (M1) | red |
 | plugin-hooks → Sandboxed host API | Write attempted from a hook | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | write_attempted_from_a_hook | 2 (M1) | red |
 | plugin-hooks → Sandboxed host API | Path escape refused | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | path_escape_refused | 2 (M1) | red |
-| plugin-hooks → Hook deadline | Manifest deadline above the cap | packages/yagura_plugin/test/hook_declarations_test.dart | manifest_deadline_above_the_cap | 3 (M1) | red |
-| plugin-manifest → Launch templates | Conditional and joined arguments | packages/yagura_plugin/test/launch_templates_test.dart | conditional_and_joined_arguments | 3 (M1) | red |
-| plugin-manifest → Launch templates | Template references an unknown setting | packages/yagura_plugin/test/launch_templates_test.dart | template_references_an_unknown_setting | 3 (M1) | red |
-| plugin-manifest → Plugin discovery and validation | Valid plugin loaded | packages/yagura_plugin/test/plugin_discovery_and_validation_test.dart | valid_plugin_loaded | 3 (M1) | red |
-| plugin-manifest → Plugin discovery and validation | Invalid manifest rejected with location | packages/yagura_plugin/test/plugin_discovery_and_validation_test.dart | invalid_manifest_rejected_with_location | 3 (M1) | red |
-| plugin-manifest → Plugin discovery and validation | Unknown manifest version | packages/yagura_plugin/test/plugin_discovery_and_validation_test.dart | unknown_manifest_version | 3 (M1) | red |
-| plugin-manifest → Plugin size limits | Oversized hooks file | packages/yagura_plugin/test/plugin_size_limits_test.dart | oversized_hooks_file | 3 (M1) | red |
-| plugin-manifest → Plugin size limits | Within limits | packages/yagura_plugin/test/plugin_size_limits_test.dart | within_limits | 3 (M1) | red |
-| plugin-manifest → Port declarations | Derived port follows its base | packages/yagura_plugin/test/port_declarations_test.dart | derived_port_follows_its_base | 3 (M1) | red |
-| plugin-manifest → Save data paths stay inside the instance | Valheim save directory inside the instance | packages/yagura_plugin/test/save_data_paths_stay_inside_the_instance_test.dart | valheim_save_directory_inside_the_instance | 3 (M1) | red |
-| plugin-manifest → Save data paths stay inside the instance | Data path outside the instance | packages/yagura_plugin/test/save_data_paths_stay_inside_the_instance_test.dart | data_path_outside_the_instance | 3 (M1) | red |
-| plugin-manifest → Settings schema types and constraints | Repeatable structure validated | packages/yagura_plugin/test/settings_schema_types_and_constraints_test.dart | repeatable_structure_validated | 3 (M1) | red |
-| plugin-manifest → Settings schema types and constraints | Row with missing required field | packages/yagura_plugin/test/settings_schema_types_and_constraints_test.dart | row_with_missing_required_field | 3 (M1) | red |
-| plugin-manifest → Stop and health declarations | Invalid health regex | packages/yagura_plugin/test/stop_and_health_declarations_test.dart | invalid_health_regex | 3 (M1) | red |
-| plugin-manifest → Stop and health declarations | Unsupported stop strategy | packages/yagura_plugin/test/stop_and_health_declarations_test.dart | unsupported_stop_strategy | 3 (M1) | red |
+| plugin-hooks → Hook deadline | Manifest deadline above the cap | packages/yagura_plugin/test/hook_declarations_test.dart | manifest_deadline_above_the_cap | 3 (M1) | green |
+| plugin-manifest → Launch templates | Conditional and joined arguments | packages/yagura_plugin/test/launch_templates_test.dart | conditional_and_joined_arguments | 3 (M1) | green |
+| plugin-manifest → Launch templates | Template references an unknown setting | packages/yagura_plugin/test/launch_templates_test.dart | template_references_an_unknown_setting | 3 (M1) | green |
+| plugin-manifest → Plugin discovery and validation | Valid plugin loaded | packages/yagura_plugin/test/plugin_discovery_and_validation_test.dart | valid_plugin_loaded | 3 (M1) | green |
+| plugin-manifest → Plugin discovery and validation | Invalid manifest rejected with location | packages/yagura_plugin/test/plugin_discovery_and_validation_test.dart | invalid_manifest_rejected_with_location | 3 (M1) | green |
+| plugin-manifest → Plugin discovery and validation | Unknown manifest version | packages/yagura_plugin/test/plugin_discovery_and_validation_test.dart | unknown_manifest_version | 3 (M1) | green |
+| plugin-manifest → Plugin size limits | Oversized hooks file | packages/yagura_plugin/test/plugin_size_limits_test.dart | oversized_hooks_file | 3 (M1) | green |
+| plugin-manifest → Plugin size limits | Within limits | packages/yagura_plugin/test/plugin_size_limits_test.dart | within_limits | 3 (M1) | green |
+| plugin-manifest → Port declarations | Derived port follows its base | packages/yagura_plugin/test/port_declarations_test.dart | derived_port_follows_its_base | 3 (M1) | green |
+| plugin-manifest → Save data paths stay inside the instance | Valheim save directory inside the instance | packages/yagura_plugin/test/save_data_paths_stay_inside_the_instance_test.dart | valheim_save_directory_inside_the_instance | 3 (M1) | green |
+| plugin-manifest → Save data paths stay inside the instance | Data path outside the instance | packages/yagura_plugin/test/save_data_paths_stay_inside_the_instance_test.dart | data_path_outside_the_instance | 3 (M1) | green |
+| plugin-manifest → Settings schema types and constraints | Repeatable structure validated | packages/yagura_plugin/test/settings_schema_types_and_constraints_test.dart | repeatable_structure_validated | 3 (M1) | green |
+| plugin-manifest → Settings schema types and constraints | Row with missing required field | packages/yagura_plugin/test/settings_schema_types_and_constraints_test.dart | row_with_missing_required_field | 3 (M1) | green |
+| plugin-manifest → Stop and health declarations | Invalid health regex | packages/yagura_plugin/test/stop_and_health_declarations_test.dart | invalid_health_regex | 3 (M1) | green |
+| plugin-manifest → Stop and health declarations | Unsupported stop strategy | packages/yagura_plugin/test/stop_and_health_declarations_test.dart | unsupported_stop_strategy | 3 (M1) | green |
 | plugin-hooks → Hook errors are reported with location | Syntax error at load | apps/yagurad/test/hooks/hook_errors_are_reported_with_location_test.dart | syntax_error_at_load | 4 (M1) | red |
 | plugin-manifest → Launch templates | Missing executable for this OS | apps/yagurad/test/instances/launch_templates_test.dart | missing_executable_for_this_os | 4 (M1) | red |
 | plugin-manifest → Port declarations | Derived port collides | apps/yagurad/test/instances/port_declarations_test.dart | derived_port_collides | 4 (M1) | red |
