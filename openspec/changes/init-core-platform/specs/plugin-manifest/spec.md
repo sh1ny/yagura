@@ -36,12 +36,12 @@ The daemon SHALL reject a plugin whose `plugin.yaml` exceeds 256 KiB or whose `h
 The daemon SHALL reload plugins only on explicit request, never on file change. Instances whose plugin reloads successfully use the new manifest from their next operation; a running operation keeps the manifest it started with. If a plugin fails to reload, the previously loaded version stays active for existing instances and the failure is reported.
 
 #### Scenario: Fixed manifest picked up
-- **WHEN** an admin edits a launch argument in `plugins/dayz/plugin.yaml` and calls `ReloadPlugins`
-- **THEN** the response lists `dayz` as `reloaded` and the next `Start` uses the new argument
+- **WHEN** an admin edits a launch argument in `plugins/valheim/plugin.yaml` and calls `ReloadPlugins`
+- **THEN** the response lists `valheim` as `reloaded` and the next `Start` uses the new argument
 
 #### Scenario: Broken edit keeps the old version
 - **WHEN** the edited manifest no longer validates and `ReloadPlugins` is called
-- **THEN** the response lists `dayz` as `reload_failed` with the errors, and existing DayZ instances keep starting with the previous manifest
+- **THEN** the response lists `valheim` as `reload_failed` with the errors, and existing Valheim instances keep starting with the previous manifest
 
 ### Requirement: Settings schema types and constraints
 The manifest's `settings` SHALL support the types `string`, `integer`, `number`, `boolean`, `enum`, `secret`, `string_list`, `object` (nested fields) and `list` (repeatable rows of an object type), with `label`, `description`, `default`, `required`, `min`, `max`, `pattern`, `group` and `advanced`. The daemon serves this schema to clients and validates values against it.
@@ -54,15 +54,18 @@ The manifest's `settings` SHALL support the types `string`, `integer`, `number`,
 - **WHEN** a row in `itemStackOverrides` omits required `class`
 - **THEN** validation fails with `INVALID_ARGUMENT` naming `itemStackOverrides[1].class`
 
-#### Scenario: Secret values are write-only
-- **WHEN** a client reads the settings of an instance with a `secret` setting that has a value
-- **THEN** the field is returned as `{"secret": true, "set": true}` and the value is not returned
+### Requirement: Secret settings stay unset without a secret store
+A `default` on a `secret` setting SHALL be rejected at load. This version has no secret store, so a value for a `secret` setting SHALL be refused with `FAILED_PRECONDITION` reason `secret_store_unavailable`, and secret settings stay unset.
+
+#### Scenario: Secret values refused
+- **WHEN** a client submits a value for a `secret` setting, when creating an instance or updating its settings
+- **THEN** the call fails with `FAILED_PRECONDITION` reason `secret_store_unavailable`, nothing is saved, and reading the settings returns the field as `{"secret": true, "set": false}`
 
 ### Requirement: Launch templates
-The manifest SHALL declare the executable per OS and the launch arguments as templates over `settings`, `ports`, `paths`, `mods` and `os`, supporting conditional entries and list joins. The daemon renders them at start into an argument list without passing through a shell.
+The manifest SHALL declare the executable per OS and the launch arguments as templates over `settings`, `ports`, `paths` and `os`, supporting conditional entries and list joins. The daemon renders them at start into an argument list without passing through a shell.
 
 #### Scenario: Conditional and joined arguments
-- **WHEN** a DayZ instance with `logs: true` and client mods `[@CF, @VPP]` is started
+- **WHEN** an instance with `logs: true` and the `string_list` setting `serverMods: ["@CF", "@VPP"]` is started from a manifest that adds `-dologs`, `-adminlog` and `-netlog` when `logs` is true and joins `serverMods` with `;` into `-mod=`
 - **THEN** the rendered arguments contain `-dologs`, `-adminlog`, `-netlog` and `-mod=@CF;@VPP`, each as a separate argv entry
 
 #### Scenario: Template references an unknown setting
@@ -85,11 +88,15 @@ Each declared port SHALL have a name, default number, protocol (`udp`, `tcp` or 
 - **THEN** the settings change fails with `FAILED_PRECONDITION` naming both instances and the port
 
 ### Requirement: Stop and health declarations
-The manifest SHALL declare a stop strategy (`rcon`, `signal` or `kill`, with command and grace seconds) and a health check (`process` alive, `port` listening, `log_match` regex on a log source, or `query` via Steam A2S), with a start timeout.
+The manifest SHALL declare a stop strategy (`signal` or `kill`, with grace seconds) and a health check (`process` alive, `port` listening, or `log_match` regex on a declared log source), with a start timeout. `log_match` matches only lines written after the current start. In this version a plugin that declares stop strategy `rcon`, health `query`, or a `bindings`, `mods` or `rcon` section is `rejected` at load with reason `unsupported_in_this_version` naming the field.
 
 #### Scenario: Log-match health check
-- **WHEN** a Valheim instance starts with health `log_match: "Game server connected"` on source `stdout`
-- **THEN** the instance becomes `running` when that line appears in the log
+- **WHEN** a Valheim instance starts with health `log_match: "Game server connected"` on its log source `server`, whose file still holds that line from the previous run
+- **THEN** the instance becomes `running` when the line is written during this run, not because of the old line
+
+#### Scenario: Unsupported stop strategy
+- **WHEN** a manifest declares `stop: {strategy: rcon}`
+- **THEN** the plugin is `rejected` with reason `unsupported_in_this_version` naming `stop.strategy`
 
 #### Scenario: Invalid health regex
 - **WHEN** a manifest declares `log_match: "([unclosed"`
@@ -100,7 +107,7 @@ The manifest SHALL declare `data_paths` (templated paths of save and player data
 
 #### Scenario: Valheim save directory inside the instance
 - **WHEN** the Valheim plugin declares `data_paths: ["save/"]` and launches with `-savedir {{instance}}/save`
-- **THEN** the world files are written under the instance's `save/` directory
+- **THEN** the rendered `-savedir` argument and the declared data path both resolve to the instance's `save/` directory
 
 #### Scenario: Data path outside the instance
 - **WHEN** a manifest declares `data_paths: ["{{instance}}/../shared"]`
@@ -110,7 +117,7 @@ The manifest SHALL declare `data_paths` (templated paths of save and player data
 The manifest's executable SHALL be the process that runs for the server's lifetime; launcher or bootstrapper executables that exit after spawning another process are not supported.
 
 #### Scenario: Long-running executable tracked
-- **WHEN** a Valheim instance starts `valheim_server.exe`
+- **WHEN** an instance starts an executable that keeps running until it is stopped
 - **THEN** the recorded server PID stays alive for the whole run and its exit is detected
 
 #### Scenario: Bootstrapper exits

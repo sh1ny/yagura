@@ -32,7 +32,7 @@ The daemon SHALL decode each source with its declared encoding and SHALL replace
 For `stdout` sources the daemon SHALL capture the server's standard output and error into rotating files in the instance's log directory (10 MiB per file, 5 files), so lines written while the daemon is down are still delivered after it restarts.
 
 #### Scenario: Stdout survives daemon restart
-- **WHEN** the daemon restarts while a Valheim server keeps writing to stdout
+- **WHEN** the daemon restarts while a server whose log source is `stdout` keeps writing to it
 - **THEN** after re-attach, clients receive the lines written while the daemon was down from the capture file
 
 #### Scenario: Capture file rotation
@@ -40,7 +40,7 @@ For `stdout` sources the daemon SHALL capture the server's standard output and e
 - **THEN** it rotates, at most 5 files are kept, and no line is split across the rotation in the stream
 
 ### Requirement: Bounded buffer and backlog
-Each source SHALL keep the last 10,000 lines (at most 4 MiB) in memory. `Logs.Backlog` SHALL return up to 5,000 recent lines, refilling from the file tail after a daemon restart.
+Each source SHALL keep the last 10,000 lines (at most 4 MiB) in memory. `Logs.Backlog` SHALL return up to 5,000 recent lines, refilling from the file tail after a daemon restart. A line longer than 64 KiB SHALL be cut at 64 KiB and delivered with `truncated: true`, and the rest of it up to the next newline discarded.
 
 #### Scenario: Backlog after restart
 - **WHEN** a client requests 500 backlog lines of a source right after a daemon restart
@@ -50,8 +50,12 @@ Each source SHALL keep the last 10,000 lines (at most 4 MiB) in memory. `Logs.Ba
 - **WHEN** a client requests 50,000 backlog lines
 - **THEN** it receives 5,000 lines and a `truncated: true` marker
 
+#### Scenario: Line without a newline
+- **WHEN** a source receives 1 MiB of output without a newline
+- **THEN** clients receive one 64 KiB line marked `truncated: true`, and the source stays within its memory bounds
+
 ### Requirement: Live follow with backpressure
-`Logs.Follow` SHALL stream new lines for selected sources with source name, timestamp and sequence. A subscriber that falls more than 1,000 lines behind SHALL receive a `dropped` marker with the count and continue from the newest lines.
+`Logs.Follow` SHALL stream new lines for selected sources with source name, timestamp and sequence. A subscriber that falls more than 1,000 lines or 4 MiB behind SHALL receive a `dropped` marker with the count and continue from the newest lines.
 
 #### Scenario: Live lines delivered
 - **WHEN** a client follows the `rpt` source and the server writes a line

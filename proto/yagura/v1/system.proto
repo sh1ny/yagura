@@ -38,6 +38,9 @@ message DaemonHealth {
   uint32 leaked_hook_workers = 7;
   bool hooks_degraded = 8;
   bool plugins_ok = 9;
+  // Components this daemon version does not have (for example "secret_store",
+  // "firewall" in M1); their *_ok fields are false and carry no meaning.
+  repeated string not_built = 10;
 }
 
 message ListAuditRequest {

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Downloads and updates game server content and workshop items from Steam, handling anonymous, account and Steam Guard logins without exposing credentials.
+Downloads and updates game server content from Steam with SteamCMD, without user interaction.
 
 ## ADDED Requirements
 
@@ -18,11 +18,15 @@ The daemon SHALL download and bootstrap SteamCMD on first need into its data dir
 - **THEN** the operation fails with `steamcmd_unavailable` and the HTTP status or network error, and no partial SteamCMD directory is left marked as ready
 
 ### Requirement: Login mode per plugin
-Each plugin SHALL declare `steam.login` as `anonymous`, `account` or `account_optional`, and SHALL install `anonymous` plugins with SteamCMD's anonymous login.
+Each plugin SHALL declare `steam.login` as `anonymous`, `account` or `account_optional`, and SHALL install `anonymous` and `account_optional` plugins with SteamCMD's anonymous login. In this version the daemon has no Steam accounts, so installing an `account` plugin fails before SteamCMD runs.
 
 #### Scenario: Anonymous install
 - **WHEN** a Valheim instance (`login: anonymous`) is installed
 - **THEN** SteamCMD runs with `+login anonymous` and the app is installed into the instance directory
+
+#### Scenario: Account login not available
+- **WHEN** a client installs an instance of a plugin with `login: account`
+- **THEN** the call fails with `FAILED_PRECONDITION` reason `steam_account_required`, and no SteamCMD process is started
 
 ### Requirement: SteamCMD runs non-interactively
 The daemon SHALL invoke SteamCMD only with `+command` arguments ending in `+quit` and stdin closed, never through a script file, run at most one SteamCMD process per installation at a time, and classify output with a versioned pattern table; unrecognised failure output is returned verbatim (last 50 lines, password removed).
@@ -51,7 +55,7 @@ The daemon SHALL install and update an instance's app with `app_update <app_id>`
 - **THEN** the operation fails with `insufficient_disk` naming the volume, free bytes and required bytes, before SteamCMD downloads anything
 
 ### Requirement: SteamCMD runs are bounded and cleaned up
-A SteamCMD step SHALL fail after 15 minutes without download progress or 12 hours in total. SteamCMD processes SHALL end when the daemon ends, and at startup the daemon SHALL terminate any SteamCMD process running from its SteamCMD directories before accepting operations.
+A SteamCMD step SHALL fail after 15 minutes without download progress or 12 hours in total. SteamCMD processes SHALL end when the daemon ends, and at startup the daemon SHALL terminate any SteamCMD process running from its SteamCMD directories before accepting operations. If one cannot be terminated, that installation is unavailable: operations that need it fail with `steamcmd_unavailable` and start no SteamCMD process until a sweep, retried every 60 s, succeeds.
 
 #### Scenario: Stalled download
 - **WHEN** SteamCMD reports no download progress for 15 minutes
@@ -60,3 +64,7 @@ A SteamCMD step SHALL fail after 15 minutes without download progress or 12 hour
 #### Scenario: Stray SteamCMD after a crash
 - **WHEN** the daemon starts and a SteamCMD process from its directories is still running
 - **THEN** that process is terminated before the API listener opens, and the termination is logged
+
+#### Scenario: Stray SteamCMD cannot be terminated
+- **WHEN** the startup sweep cannot terminate a SteamCMD process running from the anonymous installation
+- **THEN** the API listener still opens with a notice, installs fail with `steamcmd_unavailable` without starting another SteamCMD, and installs run again once a retried sweep succeeds

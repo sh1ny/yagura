@@ -41,14 +41,14 @@ Calls that start lifecycle work SHALL return an operation id immediately. `Watch
 
 #### Scenario: Missed events no longer retained
 - **WHEN** a client resumes with `after_sequence: 10` and events 11-2400 are no longer retained
-- **THEN** the stream starts with `events_dropped` from 11 to 2400, then the current operation including any pending prompt, then live events
+- **THEN** the stream starts with `events_dropped` from 11 to 2400, then the current operation, then live events
 
 #### Scenario: Operation pruned from history
 - **WHEN** a client watches an operation id that was pruned
 - **THEN** the call fails with `NOT_FOUND` reason `operation_expired`
 
 ### Requirement: Instance state and event stream
-`WatchInstances` SHALL stream a snapshot of all instances followed by changes (state, health, operations, mod update counts); deltas carry settings only when settings changed, so a client never needs to poll.
+`WatchInstances` SHALL stream a snapshot of all instances followed by changes (state, health, operations); deltas carry settings only when settings changed, so a client never needs to poll.
 
 #### Scenario: Snapshot then deltas
 - **WHEN** a client subscribes and then another client starts instance `A`
@@ -83,3 +83,10 @@ The daemon SHALL accept request messages up to 4 MiB and send response messages 
 #### Scenario: Paged backlog
 - **WHEN** a client requests 5,000 backlog lines that exceed one message
 - **THEN** they arrive across several stream messages in order with no line split between messages
+
+### Requirement: Methods a daemon version does not implement
+A call to a method of a served service that the daemon version does not implement SHALL fail with `UNIMPLEMENTED` reason `not_implemented` and change nothing. `docs/protocol.md` SHALL list the methods each daemon version implements.
+
+#### Scenario: Method not built yet
+- **WHEN** a client calls `Instances.ExportInstance` on a daemon that does not implement it
+- **THEN** the call fails with `UNIMPLEMENTED` reason `not_implemented`, and nothing changes

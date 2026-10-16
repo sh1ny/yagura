@@ -102,7 +102,7 @@ When the daemon starts, it SHALL mark every operation left `queued` or `running`
 - **THEN** after restart the instance is `not_installed` with notice `install_interrupted` and a new install can be started
 
 ### Requirement: Updates stop and restart a running server
-An update or validate of a running instance SHALL stop it with its stop strategy, snapshot its data paths, update the app, re-apply the configuration, and start it again; an update of a stopped instance leaves it stopped.
+An update or validate of a running instance SHALL stop it with its stop strategy, snapshot its data paths, update the app, run the plugin's `onPostUpdate` hook and apply its file edits (step `apply_config`), and start it again; an update of a stopped instance leaves it stopped.
 
 #### Scenario: Update while running
 - **WHEN** a client updates a running instance
@@ -124,7 +124,7 @@ The daemon SHALL detect when a `running` instance's process exits without a stop
 - **THEN** it is not restarted, its state becomes `error` with reason `crash_loop`, and a `crash_loop` event is emitted
 
 ### Requirement: Running servers survive daemon restarts
-Game server processes SHALL keep running when the daemon stops, crashes or is upgraded. On startup the daemon SHALL re-attach to each instance recorded as running only if a process with the recorded PID, executable path and start time exists.
+Game server processes SHALL keep running when the daemon stops, crashes or is upgraded. On startup the daemon SHALL re-attach to each instance recorded as running only if a process with the recorded PID, executable path and start time exists. A server whose start the daemon had not yet recorded when it died SHALL be found from that start's run directory and re-attached the same way; an instance is never started twice.
 
 #### Scenario: Re-attach after daemon restart
 - **WHEN** the daemon restarts while instance `A`'s server process is still running with the recorded PID, executable and start time
@@ -133,6 +133,10 @@ Game server processes SHALL keep running when the daemon stops, crashes or is up
 #### Scenario: PID reused by another process
 - **WHEN** the daemon starts and the recorded PID of instance `A` now belongs to a process with a different executable or start time
 - **THEN** instance `A` is reported `stopped` with a `lost_while_daemon_down` event, and the unrelated process is not touched
+
+#### Scenario: Daemon killed during a start
+- **WHEN** the daemon is killed after instance `A`'s server process started but before the start was recorded as running
+- **THEN** after restart instance `A` is reported `running` with that server process, and no second server is started for it
 
 ### Requirement: Graceful stop per plugin strategy
 Stopping SHALL follow the plugin's stop strategy (`signal` (Linux SIGTERM / Windows Ctrl+C to the server's console), or `kill`), wait up to the grace period, then kill the process if it is still alive, and report which step ended it.
@@ -146,7 +150,7 @@ Stopping SHALL follow the plugin's stop strategy (`signal` (Linux SIGTERM / Wind
 - **THEN** the daemon kills the process, the instance becomes `stopped`, and the operation result reports `stopped_by: kill`
 
 ### Requirement: Durable state with a portable instance file
-The daemon SHALL persist instances, settings, mods and operations in its database before acknowledging a change, and SHALL write `instance.json` (plugin id and version, settings, mods, ports, `format_version: 1`, no secret values) into the instance directory after every committed change.
+The daemon SHALL persist instances, settings and operations in its database before acknowledging a change, and SHALL write `instance.json` (plugin id and version, settings, ports, `format_version: 1`, secret settings as placeholders) into the instance directory after every committed change.
 
 #### Scenario: Change persisted and mirrored
 - **WHEN** a client changes `hostname` on an instance and the call returns success
@@ -157,8 +161,8 @@ The daemon SHALL persist instances, settings, mods and operations in its databas
 - **THEN** the call succeeds, a `instance_file_stale` warning event is emitted, and the file is rewritten at the next change or daemon start
 
 #### Scenario: Secrets excluded from instance.json
-- **WHEN** an instance has an RCON password and a GSLT set
-- **THEN** `instance.json` contains `"rconPassword": {"secret": true}` placeholders and neither secret value appears anywhere in the file
+- **WHEN** an instance's plugin declares a `secret` setting `rconPassword`
+- **THEN** `instance.json` contains `"rconPassword": {"secret": true}` and no other value for it
 
 ### Requirement: Save data is declared and snapshotted
 Instances SHALL keep save data in the plugin's `data_paths`, inside the instance directory. The daemon SHALL snapshot them before every update (unless the request skips it, which the operation result records) and before a delete with files, keep the last 3 per instance and pre-delete snapshots of deleted instances for 30 days, and refuse the operation when the snapshots volume lacks the space.
@@ -222,7 +226,7 @@ An instance in `error` SHALL carry a reason, and only the exits defined for that
 - **THEN** the instance ends `stopped` and the error reason is cleared
 
 ### Requirement: Autostart after daemon or host restart
-Each instance SHALL have an `autostart` setting (default on). After a daemon or host restart, an instance that was last requested to run and is not running after re-attach SHALL be started through a normal Start, one instance every 10 seconds, subject to its restart policy.
+Each instance SHALL have an `autostart` setting (default on). After a daemon or host restart, an instance that was last requested to run and is not running after re-attach SHALL be started through a normal Start, one instance every 10 seconds, subject to its restart policy. An instance is last requested to run from a successful Start until a Stop, a Delete, or an operation that ends with its server stopped.
 
 #### Scenario: Host rebooted
 - **WHEN** the host reboots while two instances with `autostart` on are running
@@ -231,6 +235,10 @@ Each instance SHALL have an `autostart` setting (default on). After a daemon or 
 #### Scenario: Instance stopped by the admin before the reboot
 - **WHEN** an instance was stopped by a client before the reboot
 - **THEN** it stays `stopped` after the daemon starts
+
+#### Scenario: Cancelled update not autostarted
+- **WHEN** an update of a running instance was cancelled after its `stop` step, and the daemon then restarts
+- **THEN** the instance stays `stopped`
 
 #### Scenario: Crash-looped instance not autostarted
 - **WHEN** an instance is in `error` with `crash_loop` and the daemon restarts

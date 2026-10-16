@@ -2,16 +2,16 @@
 
 ## Purpose
 
-Runs the daemon as a long-lived host service that starts at boot, with a predictable data layout and a safe startup sequence.
+Runs the daemon with a predictable data layout and a safe startup sequence.
 
 ## ADDED Requirements
 
 ### Requirement: Data directory layout
-The daemon SHALL keep its state in one data directory (default `%ProgramData%\Yagura`, `/var/lib/yagura` on Linux) containing the database, SteamCMD installations, the content store, plugins and daemon logs; instance directories are created under its `instances/` folder.
+The daemon SHALL keep its state in one data directory (default `%ProgramData%\Yagura`, `/var/lib/yagura` on Linux) containing the database, SteamCMD installations, plugins, snapshots and daemon logs; instance directories are created under its `instances/` folder.
 
 #### Scenario: Default layout created
 - **WHEN** the daemon starts for the first time with no configuration
-- **THEN** `%ProgramData%\Yagura` contains `yagura.db`, `steamcmd/`, `content/`, `plugins/`, `instances/` and `logs/`
+- **THEN** `%ProgramData%\Yagura` contains `yagura.db`, `steamcmd/`, `plugins/`, `instances/`, `snapshots/` and `logs/`
 
 #### Scenario: Data directory not writable
 - **WHEN** the daemon cannot create its data directory

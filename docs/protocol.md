@@ -99,18 +99,18 @@ Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violation
 
 | Area | Reasons |
 |---|---|
-| General | `internal_error`, `invalid_json`, `schema_version_mismatch`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `prompt_resolved` |
+| General | `not_implemented`, `internal_error`, `invalid_json`, `schema_version_mismatch`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `prompt_resolved` |
 | Auth | `pairing_code_invalid`, `pairing_throttled`, `device_revoked`, `last_device`, `unauthenticated`, `access_denied` (admin channel) |
 | Instances | `not_installed`, `invalid_state`, `instance_running`, `instance_not_running`, `port_conflict`, `unsupported_platform`, `crash_loop`, `lost_while_daemon_down`, `update_interrupted`, `install_interrupted`, `settings_invalid`, `plugin_missing`, `instance_directory_missing`, `launch_failed`, `launch_logon_failed`, `directory_not_allowed`, `run_record_rejected`, `instance_file_stale` (warning), `autostarted` (notice) |
-| Plugins | `unsupported_manifest_version`, `file_too_large`, `hook_syntax_error`, `mods_not_supported`, `rcon_not_supported` |
-| Hooks | `hook_timeout`, `hook_out_of_memory`, `hook_result_invalid`, `hook_result_too_large`, `hook_error`, `sandbox_violation`, `host_limit_exceeded`, `hook_runtime_degraded`, `not_supported` |
+| Plugins | `unsupported_manifest_version`, `file_too_large`, `hook_syntax_error`, `unsupported_in_this_version`, `mods_not_supported`, `rcon_not_supported` |
+| Hooks | `hook_timeout`, `hook_out_of_memory`, `hook_result_invalid`, `hook_result_too_large`, `hook_error`, `sandbox_violation`, `host_limit_exceeded`, `hook_runtime_degraded`, `not_supported`, `unsupported_in_this_version` (file-edit format) |
 | Config | `binding_file_missing`, `config_parse_error`, `file_locked`, `external_edit` (event/warning; values of secret-bound keys masked) |
 | Steam | `steamcmd_unavailable`, `steam_account_required`, `steam_no_subscription`, `steam_unknown_error`, `steam_guard_invalid`, `steam_guard_timeout`, `steam_reauth_required`, `steam_stalled`, `gslt_required`, `insufficient_disk`, `workshop_item_unavailable` |
 | Mods | `stage_link_failed`, `key_conflict` (warning) |
 | Snapshots | `insufficient_disk` (snapshot) |
 | RCON | `rcon_auth_failed`, `rcon_unavailable` (stop fell back to kill), `timeout` |
 | Firewall | `firewall_unavailable` (warning) |
-| Host | `data_dir_locked`, `data_dir_unwritable`, `migration_failed`, `secret_store_unavailable`, `dev_mode_requires_loopback`, `elevation_required`, `systemd_required` (CLI/startup exit reasons) |
+| Host | `data_dir_locked`, `data_dir_unwritable`, `migration_failed`, `secret_store_unavailable`, `dev_mode_requires_loopback`, `secure_mode_unavailable`, `elevation_required`, `systemd_required` (CLI/startup exit reasons) |
 
 ## Versioning
 
@@ -118,3 +118,11 @@ Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violation
 - Minor bumps add fields, methods or enum values only. Clients ignore unknown enum values (treated as `*_UNSPECIFIED`) and hide features above the daemon's minor.
 - A breaking change creates `yagura.v2`; the daemon serves v1 and v2 side by side for at least one minor release.
 - Field numbers are never reused; removed fields are `reserved`.
+
+## Methods by daemon version
+
+The whole `yagura.v1` contract is defined up front; each daemon version implements part of it. A method of a served service that a version does not implement fails `UNIMPLEMENTED` with reason `not_implemented`; a service a version does not serve is unknown to its server. `GetHealth.not_built` names the components a version does not have.
+
+| Version | Services served | Methods not implemented |
+|---|---|---|
+| M1 (walking skeleton, dev mode only) | `System`, `Plugins`, `Instances`, `Operations`, `Logs` | `System.ListAudit`; `Instances.ImportInstance`, `ExportInstance`, `ApplyConfig`; `Operations.RespondToPrompt`. `Instances.SetSecret` and `DeleteSecret` fail `FAILED_PRECONDITION` / `secret_store_unavailable`. `revision` is always 0 and `expected_revision` is not checked. `not_built`: `secret_store`, `firewall`. |
