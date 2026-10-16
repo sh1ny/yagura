@@ -1,6 +1,6 @@
 # Yagura — how it works
 
-A high-level walk-through of the system. The baseline tables (components, state ownership, bounds) are in [openspec/architecture.md](../openspec/architecture.md); decisions are in [docs/adr/](adr/); behaviour contracts are the specs under [openspec/changes/init-core-platform/specs/](../openspec/changes/init-core-platform/specs/).
+A high-level walk-through of the system. The baseline tables (components, state ownership, bounds) are in [openspec/architecture.md](../openspec/architecture.md); decisions are in [docs/adr/](adr/); behaviour contracts are the specs under [openspec/changes/init-core-platform/specs/](../openspec/changes/init-core-platform/specs/) (M1) and [openspec/changes/platform-backlog/specs/](../openspec/changes/platform-backlog/specs/) (M2-M5), and under [openspec/specs/](../openspec/specs/) once each milestone is archived.
 
 ## The shape
 

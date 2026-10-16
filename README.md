@@ -11,9 +11,10 @@ Planning is done with [Specwright](https://github.com/sh1ny/specwright) on OpenS
 3. [openspec/architecture.md](openspec/architecture.md) — components, state machine, state ownership, failure and recovery, bounds, ADR index
 4. [docs/protocol.md](docs/protocol.md) + [proto/yagura/v1/](proto/yagura/v1/) — the desktop ↔ daemon protocol and its security
 5. [openspec/roadmap.md](openspec/roadmap.md) — milestones M1-M5 with exit criteria
-6. [openspec/changes/init-core-platform/](openspec/changes/init-core-platform/) — the umbrella change: proposal, 13 capability specs, design, review, phased tasks
+6. [openspec/changes/init-core-platform/](openspec/changes/init-core-platform/) — M1, the walking skeleton: proposal, 9 capability specs, design, review, tasks
+7. [openspec/changes/platform-backlog/](openspec/changes/platform-backlog/) — M2-M5, parked: each milestone becomes its own change when it starts
 
-Reviews: [openspec/architecture-review.md](openspec/architecture-review.md) (baseline, 2 rounds) and [review.md](openspec/changes/init-core-platform/review.md) (design, 2 rounds), both by a fresh-context reviewer subagent.
+Reviews: [openspec/architecture-review.md](openspec/architecture-review.md) (baseline, 2 rounds) and [review.md](openspec/changes/init-core-platform/review.md) (design), both by a fresh-context reviewer subagent.
 
 ## Development setup
 
@@ -32,4 +33,4 @@ Agent tooling: `.mcp.json` runs the official Dart MCP server from the mise-pinne
 
 ## Next step
 
-`/opsx:apply init-core-platform` starting with task group 1 (workspace and the two M1 spikes: quickjs-ng on MSVC, Ctrl+C through the relay).
+Once the M1 design review passes, `/opsx:apply init-core-platform` starting with task group 1 (workspace and the two M1 spikes: quickjs-ng on MSVC, Ctrl+C through the relay).
