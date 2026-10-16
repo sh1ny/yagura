@@ -18,6 +18,7 @@
   - Checks:
     - `openspec validate init-core-platform --strict` passes.
     - By script, all 148 scenarios in the 9 specs have a test-map row with a matching requirement and scenario name.
+  - Re-checks after the verdict: round 4 fixes at `git diff 9773c10..ba3c924`, then the R4-S9 and R4-S10 fixes at `git show a65da02` (design D17 and D25, the M1 instance-lifecycle delta, the backlog's MODIFIED "Deleting an instance protects game data", and the Rebuttals rows). `openspec validate init-core-platform --strict` and `openspec validate platform-backlog --strict` pass at a65da02.
 
 <!-- This verdict covers only the contents reviewed. Editing proposal, specs or design afterward (other than applying Required Changes) voids it. -->
 
@@ -273,6 +274,24 @@ The edits introduced two small gaps. Neither blocks the Required Changes; the au
   - *Location:* D17's "any | Stop, Delete | refused only while an operation runs" row, and the "Error reasons have defined exits" text.
   - *Problem:* Both still say "while an operation runs", but the delete requirement now refuses delete while an operation is queued *or* running.
   - *Fix:* Align the wording for Delete.
+
+### Re-check (R4-S9 and R4-S10, after commit a65da02)
+
+The reviewer re-checked `git show a65da02`. It touches only `design.md`, the M1 `specs/instance-lifecycle/spec.md`, the backlog's `specs/instance-lifecycle/spec.md` and this file's Rebuttals. Both gaps are fixed:
+
+- **R4-S9: fixed.**
+  - The delete requirement keeps the instance's operation records past the delete until normal history pruning. "Deleting files survives a daemon crash" says operation records are kept when the rows are removed.
+  - D25 says operation records are not instance rows. They are pruned by the history bound (30 days or 1,000 per instance), which matches the "Operations + history" rows in `openspec/architecture.md`. The design's "Operation events" row ("until the operation is pruned") still holds.
+  - "Delete with files snapshots first" now also asserts that `WatchOperation` returns the result after the instance is gone. The existing test-map row (`delete_with_files_snapshots_first`, group 6) covers it: the scenario name is unchanged, and task 8.2 (group 8) builds `WatchOperation` resume. `docs/protocol.md` still lists `DeleteInstance` as returning an `Operation`, so no protocol edit is needed.
+- **R4-S10: fixed.**
+  - D17 splits the row. Stop is refused only while an operation runs, and Delete is refused while another operation is queued or running (D25).
+  - "Error reasons have defined exits" says the same, and it agrees with the delete requirement and D25.
+  - The Stop wording is unchanged from round 4, so it neither adds to nor conflicts with D18's stop-while-busy rule.
+- **Backlog copy.** The MODIFIED "Deleting an instance protects game data" now matches M1: delete is an operation, refused while another operation is queued or running; a wrong confirmation creates no operation; the THENs are read from the operation; operation records are kept. Its only additions are the firewall rules and content-store references in the requirement and "its firewall rules are removed" in "Delete keeping files".
+  - *Nit (no action required):* the backlog sentence "remove its database rows except its operation records, which ..., and its firewall rules and content-store references" can be read as also exempting the firewall rules. The "Delete keeping files" scenario settles it (firewall rules are removed). The author may move the exception to a separate sentence, as M1 does.
+- `openspec validate init-core-platform --strict` passes. `openspec validate platform-backlog --strict` passes; its INFO notes about MODIFIED deltas on specs that do not exist yet are expected until M1 is archived.
+
+The edits introduce no new inconsistency. They are wording fixes for the reviewer's own R4-S9 and R4-S10 findings, so the verdict still covers the artifacts at a65da02.
 
 CHANGES_APPLIED: yes
 
