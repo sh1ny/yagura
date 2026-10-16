@@ -17,6 +17,10 @@ Calls that start lifecycle work SHALL return an operation id immediately. `Watch
 - **WHEN** a client resumes with `after_sequence: 10` and events 11-2400 are no longer retained
 - **THEN** the stream starts with `events_dropped` from 11 to 2400, then the current operation including any pending prompt, then live events
 
+#### Scenario: Resume across coalesced progress
+- **WHEN** a client resumes with `after_sequence: 17` and the progress events 18-40 of one step were coalesced into event 40 while it was disconnected
+- **THEN** it receives every retained event after 17 that is not progress, and event 40 as the latest progress of that step, with no `events_dropped` marker
+
 #### Scenario: Operation pruned from history
 - **WHEN** a client watches an operation id that was pruned
 - **THEN** the call fails with `NOT_FOUND` reason `operation_expired`

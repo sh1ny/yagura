@@ -64,6 +64,10 @@ The manifest SHALL declare a stop strategy (`rcon`, `signal` or `kill`, with com
 - **WHEN** a Valheim instance starts with health `log_match: "Game server connected"` on its log source `server`, whose file still holds that line from the previous run
 - **THEN** the instance becomes `running` when the line is written during this run, not because of the old line
 
+#### Scenario: Log file rewritten past its old size
+- **WHEN** the previous run's log file is 40 KiB and still holds the match line, and the new run rewrites the file from the start past 40 KiB before the next poll
+- **THEN** the instance becomes `running` on the new run's line
+
 #### Scenario: Invalid health regex
 - **WHEN** a manifest declares `log_match: "([unclosed"`
 - **THEN** the plugin is `rejected` at load with an error naming `health.log_match` and the regex error
