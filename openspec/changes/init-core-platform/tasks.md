@@ -6,13 +6,13 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 
 | Requirement | Scenario | Test file | Test name | Group | State |
 |---|---|---|---|---|---|
-| plugin-hooks → Hook host calls are bounded | Large file read refused | apps/yagurad/test/hooks/hook_host_calls_are_bounded_test.dart | large_file_read_refused | 2 (M1) | red |
-| plugin-hooks → Hook host calls are bounded | Waiting for a worker | apps/yagurad/test/hooks/hook_host_calls_are_bounded_test.dart | waiting_for_a_worker | 2 (M1) | red |
-| plugin-hooks → Hook host calls are bounded | Timed-out worker keeps its slot | apps/yagurad/test/hooks/hook_host_calls_are_bounded_test.dart | timed_out_worker_keeps_its_slot | 2 (M1) | red |
-| plugin-hooks → Hook host calls are bounded | Directory listing within limit | apps/yagurad/test/hooks/hook_host_calls_are_bounded_test.dart | directory_listing_within_limit | 2 (M1) | red |
-| plugin-hooks → Sandboxed host API | File edit returned and applied by the daemon | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | file_edit_returned_and_applied_by_the_daemon | 2 (M1) | red |
-| plugin-hooks → Sandboxed host API | Write attempted from a hook | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | write_attempted_from_a_hook | 2 (M1) | red |
-| plugin-hooks → Sandboxed host API | Path escape refused | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | path_escape_refused | 2 (M1) | red |
+| plugin-hooks → Hook host calls are bounded | Large file read refused | apps/yagurad/test/hooks/hook_host_calls_are_bounded_test.dart | large_file_read_refused | 2 (M1) | green |
+| plugin-hooks → Hook host calls are bounded | Waiting for a worker | apps/yagurad/test/hooks/hook_host_calls_are_bounded_test.dart | waiting_for_a_worker | 2 (M1) | green |
+| plugin-hooks → Hook host calls are bounded | Timed-out worker keeps its slot | apps/yagurad/test/hooks/hook_host_calls_are_bounded_test.dart | timed_out_worker_keeps_its_slot | 2 (M1) | green |
+| plugin-hooks → Hook host calls are bounded | Directory listing within limit | apps/yagurad/test/hooks/hook_host_calls_are_bounded_test.dart | directory_listing_within_limit | 2 (M1) | green |
+| plugin-hooks → Sandboxed host API | File edit returned and applied by the daemon | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | file_edit_returned_and_applied_by_the_daemon | 2 (M1) | green |
+| plugin-hooks → Sandboxed host API | Write attempted from a hook | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | write_attempted_from_a_hook | 2 (M1) | green |
+| plugin-hooks → Sandboxed host API | Path escape refused | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | path_escape_refused | 2 (M1) | green |
 | plugin-hooks → Hook deadline | Manifest deadline above the cap | packages/yagura_plugin/test/hook_declarations_test.dart | manifest_deadline_above_the_cap | 3 (M1) | green |
 | plugin-manifest → Launch templates | Conditional and joined arguments | packages/yagura_plugin/test/launch_templates_test.dart | conditional_and_joined_arguments | 3 (M1) | green |
 | plugin-manifest → Launch templates | Template references an unknown setting | packages/yagura_plugin/test/launch_templates_test.dart | template_references_an_unknown_setting | 3 (M1) | green |
@@ -174,7 +174,7 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 
 Covers: plugin-hooks → Hook host calls are bounded (worker slots, read and listing limits); plugin-hooks → Sandboxed host API (writer, write and path-escape refusal). The other hook rows need a running operation and sit in groups 3-8; the hook runner built here is what they exercise.
 
-- [ ] 2.1 Write the failing tests for this group's test-map rows; verify each fails for the stated reason (missing API, not a compile error elsewhere).
+- [x] 2.1 Write the failing tests for this group's test-map rows; verify each fails for the stated reason (missing API, not a compile error elsewhere).
 - [ ] 2.2 Implement `yagura_js`: runtime/context lifecycle, `JS_SetMemoryLimit`, `JS_SetMaxStackSize`, interrupt handler with a monotonic deadline, eval, call-with-JSON, synchronous host functions with JSON arguments, exception + stack extraction. Verify: package unit tests for the interrupt deadline, the memory limit and exception extraction pass (the test-map rows for them run through the daemon in groups 5 and 8).
 - [ ] 2.3 Implement the JSON layer and the file-edit writer (design D22, D23): a lossless JSON tree in `yagura_formats` (parse, merge-patch, serialise, key order and formatting kept) and a daemon file-edit writer that resolves each path, refuses one outside the instance root with `sandbox_violation`, writes through a temporary file and atomic rename, applies all edits of one hook result or none, and refuses formats other than `json` with `unsupported_in_this_version`. Verify: unit tests for the JSON round trip and the writer pass.
 - [ ] 2.4 Implement the hook runner (design D4): isolate per call, 4 worker slots (wait excluded from the deadline), watchdog of deadline + 2 s that requests an isolate kill while the slot stays reserved until the isolate exits, leaked-worker accounting with `hook_runtime_degraded` at 2, context and result schemas per hook, result and context size caps, the pure `yagura.*` host API (`log`, `fs.readText`, `fs.list` read-only under the resolved-path check, `formats.json.parse/serialize`; other formats throw `unsupported_in_this_version`), and hook file edits through the writer from 2.3. Verify: every row of this group is green; flip them.
