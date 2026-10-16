@@ -203,11 +203,11 @@ Instances SHALL keep save data in the plugin's `data_paths`, inside the instance
 - **THEN** its `pre_delete` snapshot is listed by `ListOrphanSnapshots` with the instance name, and it is removed 30 days after the delete
 
 ### Requirement: Deleting an instance protects game data
-Deleting an instance SHALL require it to be `stopped`, `not_installed` or `error` and SHALL remove its database rows; its directory is removed only when the request sets `delete_files: true` and repeats the instance name as confirmation. Delete SHALL run as an operation on the instance's queue and is refused with `invalid_state` while another operation is queued or running.
+Deleting an instance SHALL require it to be `stopped`, `not_installed` or `error`, SHALL run as an operation on the instance's queue, refused with `invalid_state` while another operation is queued or running, and SHALL remove its database rows; its directory is removed only when the request sets `delete_files: true` and repeats the instance name as confirmation. Its operation records SHALL outlive it until normal history pruning.
 
 #### Scenario: Delete with files snapshots first
 - **WHEN** a client deletes a stopped instance with `delete_files: true` and the correct confirmation
-- **THEN** the delete operation succeeds, and its result names the `pre_delete` snapshot of the data paths, written to the snapshots directory before the instance directory was removed
+- **THEN** the delete operation succeeds, its result names the `pre_delete` snapshot of the data paths, written to the snapshots directory before the instance directory was removed, and `WatchOperation` on the delete still returns that result after the instance is gone
 
 #### Scenario: Delete an instance whose plugin is missing
 - **WHEN** an instance in `error` with `plugin_missing` is deleted without `delete_files`
@@ -222,14 +222,14 @@ Deleting an instance SHALL require it to be `stopped`, `not_installed` or `error
 - **THEN** the call fails with `INVALID_ARGUMENT`, no operation is created, and nothing is deleted
 
 ### Requirement: Deleting files survives a daemon crash
-With `delete_files`, the daemon SHALL take the `pre_delete` snapshot, write a `.yagura/deleting` marker into the instance directory, remove the database rows, then remove the directory. At startup, a directory under an instance root that has the marker and no instance row SHALL be removed again.
+With `delete_files`, the daemon SHALL take the `pre_delete` snapshot, write a `.yagura/deleting` marker into the instance directory, remove the instance's database rows (operation records are kept), then remove the directory. At startup, a directory under an instance root that has the marker and no instance row SHALL be removed again.
 
 #### Scenario: Daemon killed while removing files
 - **WHEN** the daemon is killed while removing an instance directory after the instance's rows were deleted
 - **THEN** after restart the instance is not listed, the remaining directory is removed, and its `pre_delete` snapshot is listed by `ListOrphanSnapshots`
 
 ### Requirement: Error reasons have defined exits
-An instance in `error` SHALL carry a reason, and only the exits defined for that reason are allowed: `crash_loop` leaves by Start or Acknowledge; `update_interrupted` and update failures by Update, Validate or Acknowledge; `restore_interrupted` by a restore or Acknowledge; `settings_invalid` by saving valid settings; `plugin_missing` by a reload that restores the plugin. Stop and Delete are allowed from any reason when no operation runs; other requests fail with `invalid_state`.
+An instance in `error` SHALL carry a reason that allows only these exits: `crash_loop` leaves by Start or Acknowledge; `update_interrupted` and update failures by Update, Validate or Acknowledge; `restore_interrupted` by a restore or Acknowledge; `settings_invalid` by saving valid settings; `plugin_missing` by a reload that restores the plugin. Stop (when no operation runs) and Delete (when none is queued or running) are allowed from any reason; other requests fail with `invalid_state`.
 
 #### Scenario: Acknowledge a crash loop
 - **WHEN** a client acknowledges an instance in `error` with `crash_loop`

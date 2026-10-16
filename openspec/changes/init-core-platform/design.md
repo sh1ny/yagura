@@ -129,7 +129,8 @@ Unverified assumptions, each closed by a spike task in `tasks.md`: MSVC compile 
 | `restore_interrupted` | Acknowledge | `stopped` (warning kept: data paths may be mixed) |
 | `settings_invalid` | UpdateSettings with valid settings | `stopped` |
 | `plugin_missing` | ReloadPlugins that restores the plugin | `stopped` |
-| any | Stop, Delete | refused only while an operation runs |
+| any | Stop | refused only while an operation runs |
+| any | Delete | refused while another operation is queued or running (D25) |
 
 Start from `error: settings_invalid` or `plugin_missing` fails `invalid_state`. A running instance whose settings become invalid on reload keeps running with flag `settings_invalid` and a notice; its next Start is refused.
 - **Rejected:** a single generic `error` that any Start clears because it would restart a crash-looping or half-updated server without the admin seeing why.
@@ -181,7 +182,7 @@ M1 sets every instance `revision` to 0 and does not check `expected_revision`, s
 
 ### D25: Delete is an operation with a crash-safe order
 
-- **Choice:** `DeleteInstance` returns an `Operation` on the instance's queue and is refused with `invalid_state` while another operation is queued or running; a wrong confirmation fails the call before an operation exists. With `delete_files` the steps are: `pre_delete` snapshot, `.yagura/deleting` marker written into the instance directory, database rows removed, directory removed. Cancellation is honoured only before the rows are removed; after that the delete runs to the end. At startup a marked directory with no instance row is removed again (D9), and a marked directory whose row still exists is left alone with its marker removed, because the rows were never deleted.
+- **Choice:** `DeleteInstance` returns an `Operation` on the instance's queue and is refused with `invalid_state` while another operation is queued or running; a wrong confirmation fails the call before an operation exists. With `delete_files` the steps are: `pre_delete` snapshot, `.yagura/deleting` marker written into the instance directory, the instance's database rows removed, directory removed. Operation records are not instance rows: they outlive the instance and are pruned by the normal history bound (30 days or 1,000 per instance), so the delete operation stays readable through `GetOperation` and `WatchOperation` after the instance is gone. Cancellation is honoured only before the rows are removed; after that the delete runs to the end. At startup a marked directory with no instance row is removed again (D9), and a marked directory whose row still exists is left alone with its marker removed, because the rows were never deleted.
 - **Rejected:** a unary call returning `Empty`, because copying a snapshot and removing a 1-2 GB directory blocks the call past the 30 s client deadline and has no defined outcome on cancel or crash.
 - **Reversal cost:** low before M1 ships the v1 contract; a breaking change after.
 

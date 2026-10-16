@@ -168,23 +168,23 @@ Instances SHALL keep save data in the plugin's `data_paths`, inside the instance
 - **THEN** its `pre_delete` snapshot is listed by `ListOrphanSnapshots` with the instance name, and it is removed 30 days after the delete
 
 ### Requirement: Deleting an instance protects game data
-Deleting an instance SHALL require it to be `stopped`, `not_installed` or `error` with no running operation and SHALL remove its database rows, firewall rules and content-store references; its directory is removed only when the request sets `delete_files: true` and repeats the instance name as confirmation.
+Deleting an instance SHALL require it to be `stopped`, `not_installed` or `error` and SHALL remove its database rows except its operation records, which outlive the instance and are pruned by the normal operation-history bound (30 days or 1,000 per instance), and its firewall rules and content-store references; its directory is removed only when the request sets `delete_files: true` and repeats the instance name as confirmation. Delete SHALL run as an operation on the instance's queue and is refused with `invalid_state` while another operation is queued or running.
 
 #### Scenario: Delete with files snapshots first
 - **WHEN** a client deletes a stopped instance with `delete_files: true` and the correct confirmation
-- **THEN** a `pre_delete` snapshot of its data paths is written to the snapshots directory, then the instance directory is removed
+- **THEN** the delete operation succeeds, its result names the `pre_delete` snapshot of the data paths, written to the snapshots directory before the instance directory was removed, and `WatchOperation` on the delete still returns that result after the instance is gone
 
 #### Scenario: Delete an instance whose plugin is missing
 - **WHEN** an instance in `error` with `plugin_missing` is deleted without `delete_files`
-- **THEN** it disappears from listings and its directory is left on disk
+- **THEN** the delete operation succeeds, the instance disappears from listings, and its directory is left on disk
 
 #### Scenario: Delete keeping files
 - **WHEN** a client deletes a stopped instance without `delete_files`
-- **THEN** the instance disappears from listings, its firewall rules are removed, and its directory with world saves is left on disk
+- **THEN** the delete operation succeeds, the instance disappears from listings, its firewall rules are removed, and its directory with world saves is left on disk
 
 #### Scenario: Delete with wrong confirmation
 - **WHEN** a client deletes with `delete_files: true` and a confirmation that does not match the instance name
-- **THEN** the call fails with `INVALID_ARGUMENT` and nothing is deleted
+- **THEN** the call fails with `INVALID_ARGUMENT`, no operation is created, and nothing is deleted
 
 ### Requirement: Durable state with a portable instance file
 The daemon SHALL persist instances, settings, mods and operations in its database before acknowledging a change, and SHALL write `instance.json` (plugin id and version, settings, mods, ports, `format_version: 1`, no secret values) into the instance directory after every committed change.
