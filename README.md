@@ -18,12 +18,13 @@ Reviews: [openspec/architecture-review.md](openspec/architecture-review.md) (bas
 
 ## Development setup
 
-Prerequisites: [mise](https://mise.jdx.dev/) and Git. `mise install` installs the pinned Flutter SDK (with Dart) and git-cliff from `mise.toml`.
+Prerequisites: [mise](https://mise.jdx.dev/) and Git. `mise install` installs the pinned Flutter SDK (with Dart), protoc and git-cliff from `mise.toml`.
 
 | Task | What it does |
 |---|---|
 | `mise run analyze` | Static analysis of the whole workspace |
 | `mise run test` | Every package's tests (`dart test`, `flutter test` for the desktop app); forward runner options after `--` |
+| `mise run proto` | Regenerate `packages/yagura_proto` from `proto/` with the pinned `protoc` and `protoc_plugin` |
 | `mise run format` | Format Dart source |
 | `mise run format:check` | Fail if any Dart file is not formatted |
 | `mise run changelog` | Regenerate `CHANGELOG.md` from local history (`cliff.toml`, strict `vX.Y.Z` tags) |
