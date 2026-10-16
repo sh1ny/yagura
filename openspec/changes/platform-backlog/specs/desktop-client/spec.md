@@ -7,7 +7,7 @@ Gives the admin one desktop application to manage several Yagura daemons, render
 ## ADDED Requirements
 
 ### Requirement: Multiple paired daemons
-The client SHALL keep a list of paired daemons with name, address and connection state (`connected`, `connecting`, `offline`, `incompatible`, `revoked`, `expired`), connect to all of them, and reconnect with backoff up to 60 s.
+The client SHALL keep a list of paired daemons with name, address and connection state (`connected`, `connecting`, `offline`, `incompatible`, `revoked`, `expired`), connect to all of them with the `System.GetInfo` negotiation of one connection, and reconnect with backoff up to 60 s, fetching a fresh instance snapshot and resuming streams after each reconnect.
 
 #### Scenario: Two daemons online
 - **WHEN** the client starts with two paired daemons that are reachable
@@ -76,7 +76,7 @@ The client SHALL render instance settings from the plugin's settings schema: an 
 - **THEN** the field is shown read-only with its raw JSON value and a notice, and the rest of the form works
 
 ### Requirement: Logs and console views
-The client SHALL show each instance's log sources with backlog and live follow, search within the loaded lines, pause, and a console for RCON-capable instances with command history.
+The client SHALL show each instance's log sources with backlog and live follow, search within the loaded lines, pause, and a console for RCON-capable instances with command history. While paused, a view SHALL hold up to 10,000 new lines; beyond that it drops the oldest held lines and shows their count on resume.
 
 #### Scenario: Follow and pause
 - **WHEN** the admin pauses a live log view
@@ -85,3 +85,13 @@ The client SHALL show each instance's log sources with backlog and live follow, 
 #### Scenario: Dropped lines marker
 - **WHEN** the daemon sends a `dropped` marker
 - **THEN** the view shows an inline notice with the number of skipped lines
+
+#### Scenario: Pause longer than the buffer
+- **WHEN** 15,000 lines arrive while a log view is paused
+- **THEN** on resume the view shows a notice for 5,000 dropped lines followed by the newest 10,000 lines in order
+
+## REMOVED Requirements
+
+### Requirement: Connection to one daemon
+**Reason**: M2 replaces the single development connection with several paired daemons.
+**Migration**: Multiple paired daemons keeps the version negotiation and reconnect behaviour for each daemon.

@@ -1,6 +1,27 @@
 # Design
 
-Parked backlog for milestones M2-M5. This file holds the decisions and design rows that only later milestones build. Decisions shared with M1 (D1-D7, D9-D12, D14, D15, D17, D18, D21) are in `openspec/changes/init-core-platform/design.md` (in `openspec/changes/archive/` once M1 is archived), and their **M1 scope** lines name the parts that land here. Decision numbers continue that file's numbering. Each milestone change taken out of this backlog copies the decisions and rows it depends on and gets its own design review.
+Parked backlog for milestones M2-M5. This file holds the decisions and design rows that only later milestones build. Decisions shared with M1 (D1-D7, D9-D12, D14, D15, D17, D18, D21-D24) are in `openspec/changes/init-core-platform/design.md` (in `openspec/changes/archive/` once M1 is archived), and their **M1 scope** lines name the parts that land here. Decision numbers continue that file's numbering. Each milestone change taken out of this backlog copies the decisions and rows it depends on and gets its own design review.
+
+## Extraction notes
+
+Several MODIFIED requirements here mix clauses from different milestones, because each holds the final text of a requirement M1 created. When a milestone change is taken out of this backlog, write each such requirement as it stands at that milestone: the clauses and scenarios of that milestone and earlier ones go into the new change's MODIFIED requirement, and the rest stays here.
+
+| Spec → requirement | Clauses by milestone |
+|---|---|
+| instance-lifecycle → Graceful stop per plugin strategy | M2: servers started by the service as `yagura-srv`; M4: the `rcon` strategy |
+| instance-lifecycle → Durable state with a portable instance file | M2: stored secret values excluded; M3: mods |
+| instance-lifecycle → Instance creation validates settings | M2: instance roots and ACLs |
+| host-service → Data directory layout | M2: instance roots added locally; M3: the content store |
+| desktop-client → Forms rendered from plugin schemas | M2: `revision_conflict`; M4: list tables |
+| desktop-client → Logs and console views | M4: the RCON console |
+| plugin-hooks → Hook input and output contract | M2: a set secret shown as a placeholder; M3: staged mods |
+| plugin-hooks → Sandboxed host API | M3: staged mod folders, more formats, external-edit tracking |
+| plugin-manifest → Stop and health declarations | M4: the `rcon` strategy. `query` health has no milestone yet: assign it when M4 is taken out, and keep rejecting it until then |
+| plugin-manifest → Settings schema types and constraints | M2 (with the REMOVED "Secret settings stay unset without a secret store") |
+| daemon-security → Development mode is localhost only | M2 (dev mode stops being the only mode) |
+| daemon-protocol → both requirements | M3: pending prompts, mod update counts |
+
+M1 decision D22 (resolved-path checks) is replaced by D13 (InstanceFs) in M2; D23's file-edit writer is reused by the config binder (task 15.3).
 
 ## Triage
 

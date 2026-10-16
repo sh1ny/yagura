@@ -9,12 +9,7 @@ Every scenario of this backlog maps to a Dart test at the boundary it crosses: d
 | Requirement | Scenario | Test file | Test name | Group | State |
 |---|---|---|---|---|---|
 | host-service → Data directory layout | Instance on another drive | apps/yagurad/test/host/data_directory_layout_test.dart | instance_on_another_drive | 10 (M2) | red |
-| host-service → Startup sequence | Firewall unavailable at startup | apps/yagurad/test/host/startup_sequence_test.dart | firewall_unavailable_at_startup | 12 (M2) | red |
-| instance-lifecycle → Deleting an instance protects game data | Delete keeping files | apps/yagurad/test/instances/deleting_an_instance_protects_game_data_test.dart | delete_keeping_files | 12 (M2) | red |
-| instance-lifecycle → Instance creation validates settings against the plugin schema | Directory outside the instance roots | apps/yagurad/test/instances/instance_creation_validates_settings_against_the_test.dart | directory_outside_the_instance_roots | 11 (M2) | red |
 | instance-lifecycle → Save data is declared and snapshotted | Snapshot skipped on request | apps/yagurad/test/instances/save_data_is_declared_and_snapshotted_test.dart | snapshot_skipped_on_request | 10 (M2) | red |
-| instance-lifecycle → Updates stop and restart a running server | Update while running | apps/yagurad/test/instances/updates_stop_and_restart_a_running_server_test.dart | update_while_running | 16 (M3) | red |
-| instance-lifecycle → Graceful stop per plugin strategy | Valheim saves on a signal stop | apps/yagurad/test/instances/graceful_stop_per_plugin_strategy_test.dart | valheim_saves_on_a_signal_stop | 11 (M2) | red |
 | daemon-security → Audit log | Instance deletion audited | apps/yagurad/test/security/audit_log_test.dart | instance_deletion_audited | 10 (M2) | red |
 | daemon-security → Audit log | Scanner flood | apps/yagurad/test/security/audit_log_test.dart | scanner_flood | 10 (M2) | red |
 | daemon-security → Audit log | Secret set without value in audit | apps/yagurad/test/security/audit_log_test.dart | secret_set_without_value_in_audit | 10 (M2) | red |
@@ -38,6 +33,11 @@ Every scenario of this backlog maps to a Dart test at the boundary it crosses: d
 | daemon-security → Secrets never leave the daemon | No read path for secrets | apps/yagurad/test/security/secrets_never_leave_the_daemon_test.dart | no_read_path_for_secrets | 10 (M2) | red |
 | daemon-security → Secrets never leave the daemon | Data directory scan | apps/yagurad/test/security/secrets_never_leave_the_daemon_test.dart | data_directory_scan | 10 (M2) | red |
 | host-service → Data directory layout | Instance root added locally | apps/yagurad/test/host/data_directory_layout_test.dart | instance_root_added_locally | 10 (M2) | red |
+| plugin-hooks → Hook input and output contract | Context contents | apps/yagurad/test/hooks/hook_input_and_output_contract_test.dart | context_contents | 10 (M2) | red |
+| plugin-manifest → Settings schema types and constraints | Secret values are write-only | apps/yagurad/test/instances/settings_schema_types_and_constraints_test.dart | secret_values_are_write_only | 10 (M2) | red |
+| instance-lifecycle → Durable state with a portable instance file | Secrets excluded from instance.json | apps/yagurad/test/instances/durable_state_with_a_portable_instance_file_test.dart | secrets_excluded_from_instance_json | 10 (M2) | red |
+| instance-lifecycle → Instance creation validates settings against the plugin schema | Directory outside the instance roots | apps/yagurad/test/instances/instance_creation_validates_settings_against_the_test.dart | directory_outside_the_instance_roots | 11 (M2) | red |
+| instance-lifecycle → Graceful stop per plugin strategy | Valheim saves on a signal stop | apps/yagurad/test/instances/graceful_stop_per_plugin_strategy_test.dart | valheim_saves_on_a_signal_stop | 11 (M2) | red |
 | host-service → Game servers run under a low-privilege account | Server process identity | apps/yagurad/integration_test/windows/game_servers_run_under_a_low_privilege_account_test.dart | server_process_identity | 11 (M2) | red |
 | host-service → Game servers run under a low-privilege account | Logon fails | apps/yagurad/integration_test/windows/game_servers_run_under_a_low_privilege_account_test.dart | logon_fails | 11 (M2) | red |
 | host-service → Servers survive service stop and upgrade | Service restart | apps/yagurad/integration_test/windows/servers_survive_service_stop_and_upgrade_test.dart | service_restart | 11 (M2) | red |
@@ -50,6 +50,8 @@ Every scenario of this backlog maps to a Dart test at the boundary it crosses: d
 | instance-lifecycle → Only verified game server processes are terminated | Forged run file | apps/yagurad/test/instances/only_verified_game_server_processes_are_terminat_test.dart | forged_run_file | 11 (M2) | red |
 | instance-lifecycle → Only verified game server processes are terminated | Genuine server | apps/yagurad/test/instances/only_verified_game_server_processes_are_terminat_test.dart | genuine_server | 11 (M2) | red |
 | steam-content → Install, update and validate apps | Other instance's server blocked during an update | apps/yagurad/test/steam/install_update_and_validate_apps_test.dart | other_instance_s_server_blocked_during_an_update | 11 (M2) | red |
+| host-service → Startup sequence | Firewall unavailable at startup | apps/yagurad/test/host/startup_sequence_test.dart | firewall_unavailable_at_startup | 12 (M2) | red |
+| instance-lifecycle → Deleting an instance protects game data | Delete keeping files | apps/yagurad/test/instances/deleting_an_instance_protects_game_data_test.dart | delete_keeping_files | 12 (M2) | red |
 | firewall-rules → Daemon API port rule | Fresh host reachable after install | apps/yagurad/test/firewall/daemon_api_port_rule_test.dart | fresh_host_reachable_after_install | 12 (M2) | red |
 | firewall-rules → Daemon API port rule | Firewall unavailable at service install | apps/yagurad/test/firewall/daemon_api_port_rule_test.dart | firewall_unavailable_at_service_install | 12 (M2) | red |
 | firewall-rules → Daemon API port rule | Port changed | apps/yagurad/test/firewall/daemon_api_port_rule_test.dart | port_changed | 12 (M2) | red |
@@ -89,6 +91,7 @@ Every scenario of this backlog maps to a Dart test at the boundary it crosses: d
 | steam-content → Steam passwords never reach disk or logs | Remember password | apps/yagurad/test/steam/steam_passwords_never_reach_disk_or_logs_test.dart | remember_password | 14 (M3) | red |
 | steam-content → Workshop downloads | Workshop item downloaded | apps/yagurad/test/steam/workshop_downloads_test.dart | workshop_item_downloaded | 14 (M3) | red |
 | steam-content → Workshop downloads | Item removed from the workshop | apps/yagurad/test/steam/workshop_downloads_test.dart | item_removed_from_the_workshop | 14 (M3) | red |
+| daemon-protocol → Long operations are asynchronous with resumable progress | Missed events no longer retained | apps/yagurad/test/api/long_operations_are_asynchronous_with_resumable__test.dart | missed_events_no_longer_retained | 14 (M3) | red |
 | config-bindings → Bindings map settings to file keys | Scalar binding applied | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | scalar_binding_applied | 15 (M3) | red |
 | config-bindings → Bindings map settings to file keys | Bound file missing | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | bound_file_missing | 15 (M3) | red |
 | config-bindings → Bindings map settings to file keys | Missing file created from the plugin template | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | missing_file_created_from_the_plugin_template | 15 (M3) | red |
@@ -101,6 +104,8 @@ Every scenario of this backlog maps to a Dart test at the boundary it crosses: d
 | config-bindings → Supported formats | Unknown format name | packages/yagura_formats/test/supported_formats_test.dart | unknown_format_name | 15 (M3) | red |
 | config-bindings → Writes are atomic | Interrupted apply | apps/yagurad/test/config/writes_are_atomic_test.dart | interrupted_apply | 15 (M3) | red |
 | config-bindings → Writes are atomic | File locked by a running process | apps/yagurad/test/config/writes_are_atomic_test.dart | file_locked_by_a_running_process | 15 (M3) | red |
+| plugin-hooks → Sandboxed host API | File edit returned and applied by the daemon | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | file_edit_returned_and_applied_by_the_daemon | 15 (M3) | red |
+| instance-lifecycle → Updates stop and restart a running server | Update while running | apps/yagurad/test/instances/updates_stop_and_restart_a_running_server_test.dart | update_while_running | 16 (M3) | red |
 | mod-management → Key files and post-processing | Bikeys synced | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | bikeys_synced | 16 (M3) | red |
 | mod-management → Key files and post-processing | Shared key kept | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | shared_key_kept | 16 (M3) | red |
 | mod-management → Key files and post-processing | Admin's own key with the same name | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | admin_s_own_key_with_the_same_name | 16 (M3) | red |
@@ -122,6 +127,9 @@ Every scenario of this backlog maps to a Dart test at the boundary it crosses: d
 | mod-management → Staging by link with copy fallback | DayZ mod linked | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | dayz_mod_linked | 16 (M3) | red |
 | mod-management → Staging by link with copy fallback | Mod renamed on the workshop | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | mod_renamed_on_the_workshop | 16 (M3) | red |
 | mod-management → Staging by link with copy fallback | Link not permitted | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | link_not_permitted | 16 (M3) | red |
+| plugin-hooks → Sandboxed host API | Edit into a staged mod refused | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | edit_into_a_staged_mod_refused | 16 (M3) | red |
+| plugin-manifest → Launch templates | Conditional and joined arguments | packages/yagura_plugin/test/launch_templates_test.dart | conditional_and_joined_arguments | 16 (M3) | red |
+| host-service → Data directory layout | Default layout created | apps/yagurad/test/host/data_directory_layout_test.dart | default_layout_created | 16 (M3) | red |
 | log-streaming → Secrets masked in log streams | Password echoed by the server | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | password_echoed_by_the_server | 17 (M3) | red |
 | log-streaming → Secrets masked in log streams | Backlog and crash lines masked | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | backlog_and_crash_lines_masked | 17 (M3) | red |
 | log-streaming → Secrets masked in log streams | No secrets set | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | no_secrets_set | 17 (M3) | red |
@@ -197,7 +205,7 @@ Covers: config-bindings → Bindings map settings to file keys; config-bindings 
 
 - [ ] 15.1 Collect real-file corpora for `ini`, `json`, `dayz-cfg` and `kv` under `packages/yagura_formats/test/corpus/` (DayZ `serverDZ.cfg`, `cfggameplay.json`, BattlEye cfg, generic INI).
 - [ ] 15.2 Write the failing tests for this group's rows, plus a byte-identical round-trip test over every corpus file.
-- [ ] 15.3 Implement the four parsers with lossless trees, then the binder: bindings in the manifest schema, `create`/`template`, apply before `onPreStart`, hook file edits applied after bindings, hash tracking, `external_edit` events, `game_writes`, atomic replace with the 5 s lock retry. Verify: this group's rows are green; flip them.
+- [ ] 15.3 Implement the four parsers with lossless trees, then the binder: bindings in the manifest schema, `create`/`template`, apply before `onPreStart`, hook file edits applied after bindings through the M1 file-edit writer (`init-core-platform` D23, extended to these formats), hash tracking, `external_edit` events, `game_writes`, atomic replace with the 5 s lock retry. Verify: this group's rows are green; flip them.
 
 ## 16. [M3] Mod pipeline and content store
 

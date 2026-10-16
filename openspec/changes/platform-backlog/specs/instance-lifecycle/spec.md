@@ -185,3 +185,18 @@ Deleting an instance SHALL require it to be `stopped`, `not_installed` or `error
 #### Scenario: Delete with wrong confirmation
 - **WHEN** a client deletes with `delete_files: true` and a confirmation that does not match the instance name
 - **THEN** the call fails with `INVALID_ARGUMENT` and nothing is deleted
+
+### Requirement: Durable state with a portable instance file
+The daemon SHALL persist instances, settings, mods and operations in its database before acknowledging a change, and SHALL write `instance.json` (plugin id and version, settings, mods, ports, `format_version: 1`, no secret values) into the instance directory after every committed change.
+
+#### Scenario: Change persisted and mirrored
+- **WHEN** a client changes `hostname` on an instance and the call returns success
+- **THEN** a daemon restart still shows the new hostname, and `instance.json` contains it
+
+#### Scenario: instance.json write fails
+- **WHEN** the database commit succeeds but writing `instance.json` fails (for example the disk is full)
+- **THEN** the call succeeds, a `instance_file_stale` warning event is emitted, and the file is rewritten at the next change or daemon start
+
+#### Scenario: Secrets excluded from instance.json
+- **WHEN** an instance has an RCON password and a GSLT set
+- **THEN** `instance.json` contains `"rconPassword": {"secret": true}` placeholders and neither secret value appears anywhere in the file

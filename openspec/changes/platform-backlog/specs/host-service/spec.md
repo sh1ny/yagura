@@ -57,11 +57,11 @@ Stopping, restarting or upgrading the daemon service SHALL NOT stop running game
 ## MODIFIED Requirements
 
 ### Requirement: Data directory layout
-The daemon SHALL keep its state in one data directory (default `%ProgramData%\Yagura`, `/var/lib/yagura` on Linux) containing the database, SteamCMD installations, the content store, plugins and daemon logs; instance directories default under it and may be placed elsewhere per instance. Instance roots are added and removed only with `yagurad roots add|remove` over the local admin channel; the gRPC API cannot change them.
+The daemon SHALL keep its state in one data directory (default `%ProgramData%\Yagura`, `/var/lib/yagura` on Linux) containing the database, SteamCMD installations, the content store, plugins, snapshots and daemon logs; instance directories default under it and may be placed elsewhere per instance. Instance roots are added and removed only with `yagurad roots add|remove` over the local admin channel; the gRPC API cannot change them.
 
 #### Scenario: Default layout created
 - **WHEN** the daemon starts for the first time with no configuration
-- **THEN** `%ProgramData%\Yagura` contains `yagura.db`, `steamcmd/`, `content/`, `plugins/`, `instances/` and `logs/`
+- **THEN** `%ProgramData%\Yagura` contains `yagura.db`, `steamcmd/`, `content/`, `plugins/`, `instances/`, `snapshots/` and `logs/`
 
 #### Scenario: Instance root added locally
 - **WHEN** an administrator runs `yagurad roots add D:\servers`

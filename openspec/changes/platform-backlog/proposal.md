@@ -27,7 +27,7 @@ This change is never applied or archived. At the start of each milestone, `specw
 
 ### Modified Capabilities
 Created by `init-core-platform` (M1); this backlog adds requirements to them and extends some M1 requirements (listed as MODIFIED in their delta specs).
-- `instance-lifecycle`, `plugin-manifest`, `plugin-hooks`, `steam-content`, `daemon-security`, `log-streaming`, `host-service`, `desktop-client`.
+- `instance-lifecycle`, `plugin-manifest`, `plugin-hooks`, `steam-content`, `daemon-protocol`, `daemon-security`, `log-streaming`, `host-service`, `desktop-client`.
 
 ## Impact
 
