@@ -7,7 +7,7 @@
 | T1 Components (new component, or 3+ with directed relationships) | yes | New system: daemon with ~13 components, launcher/relay/signal entry points, hook workers, SteamCMD, game servers, desktop client (`openspec/architecture.md` Components) |
 | T2 State (persistent state, caches, 3+ state machine) | yes | SQLite state, versioned content store, 8-state instance machine with error reasons, operation queues, device certificates, snapshots |
 | T3 Concurrency (background work, workers/isolates, async, retries) | yes | Per-instance operation queues, heavy-operation slots, SteamCMD installation locks, hook isolates with watchdogs, log tailers, RCON reconnect, mod update timer |
-| T4 Boundaries (data format, migration, shared interface, IPC, external) | yes | gRPC `garrison.v1`, local admin channel, plugin manifest v1 + hook contract, config formats, `instance.json`, launcher report and relay files, SteamCMD output, OS firewall/service/DPAPI/account APIs |
+| T4 Boundaries (data format, migration, shared interface, IPC, external) | yes | gRPC `yagura.v1`, local admin channel, plugin manifest v1 + hook contract, config formats, `instance.json`, launcher report and relay files, SteamCMD output, OS firewall/service/DPAPI/account APIs |
 | T5 Volume (grows without a fixed bound) | yes | Logs, operation events and history, audit log, workshop content versions, snapshots |
 | T6 Risk (security, money, data loss, unrecoverable user data) | yes | Remote admin over the network, Steam credentials, firewall changes, SYSTEM file operations next to an untrusted account, world saves |
 
@@ -15,25 +15,25 @@ TIER: FULL
 
 ## Context
 
-Greenfield: no code exists. The baseline in `openspec/architecture.md` (components, instance state machine, state ownership, contracts, failure and recovery, resource bounds) and ADRs 0001-0013 (`docs/adr/`, accepted after two baseline review rounds) are the frame; this design does not restate them. The protocol is `proto/garrison/v1/*.proto`, explained in `docs/protocol.md`; flows are in `docs/overview.md`.
+Greenfield: no code exists. The baseline in `openspec/architecture.md` (components, instance state machine, state ownership, contracts, failure and recovery, resource bounds) and ADRs 0001-0013 (`docs/adr/`, accepted after two baseline review rounds) are the frame; this design does not restate them. The protocol is `proto/yagura/v1/*.proto`, explained in `docs/protocol.md`; flows are in `docs/overview.md`.
 
 Where this design refines a baseline table (the error-state exits in D17, the bounds in Resource Bounds), the refinement is authoritative for this change and task 21.3 writes it back into `openspec/architecture.md`.
 
 Verified on 2026-10-16 against package docs and source: `package:grpc` server supports `requestClientCertificate`/`requireClientCertificate`, exposes `ServiceCall.clientCertificate`, and enforces a server keepalive policy (configured per ADR 0009 review, `docs/protocol.md`); Dart build hooks exist since Dart 3.10 and `native_toolchain_c` compiles C sources; `dart:io` `Process.start(detached)` on Windows sets only `DETACHED_PROCESS` (hence ADR 0009's native spawn); `quickjs_runtime` 0.3.6 has no Windows build path and no interrupt or memory limit; `x509` 0.2.4 lists `TbsCertificate` and `Signer`; WinSW 2.x is the stable line.
 
-Unverified assumptions, each closed by a spike task in `tasks.md`: MSVC compile of quickjs-ng through `native_toolchain_c` (1.2); Ctrl+C delivery to a server on the relay's console and Valheim saving on it (1.3); TLS rejection of untrusted client certificates in request mode and `x509` signing (10.1); WinSW leaving relays running, the relay console starting as `garrison-srv` on its own window station, and `garrisond signal` running as LocalSystem delivering Ctrl+C to that console (Valheim saves) (11.3); SteamCMD Steam Guard behaviour with stdin closed (14.1); SCUM's reaction to Ctrl+C (19.3).
+Unverified assumptions, each closed by a spike task in `tasks.md`: MSVC compile of quickjs-ng through `native_toolchain_c` (1.2); Ctrl+C delivery to a server on the relay's console and Valheim saving on it (1.3); TLS rejection of untrusted client certificates in request mode and `x509` signing (10.1); WinSW leaving relays running, the relay console starting as `yagura-srv` on its own window station, and `yagurad signal` running as LocalSystem delivering Ctrl+C to that console (Valheim saves) (11.3); SteamCMD Steam Guard behaviour with stdin closed (14.1); SCUM's reaction to Ctrl+C (19.3).
 
 ## Decisions
 
 ### D1: Dart pub workspace with apps, packages and plugins in one repo
 
-- **Choice:** one repository, a pub workspace: `apps/garrisond` (daemon, AOT), `apps/garrison_desktop` (Flutter), `packages/garrison_proto` (generated from `proto/`), `packages/garrison_js` (quickjs-ng FFI + build hook), `packages/garrison_formats` (parsers), `packages/garrison_plugin` (manifest model, validation, templates; also behind `garrison plugin lint`), `plugins/<id>/`, `schemas/plugin-manifest.v1.json`, `tool/`.
+- **Choice:** one repository, a pub workspace: `apps/yagurad` (daemon, AOT), `apps/yagura_desktop` (Flutter), `packages/yagura_proto` (generated from `proto/`), `packages/yagura_js` (quickjs-ng FFI + build hook), `packages/yagura_formats` (parsers), `packages/yagura_plugin` (manifest model, validation, templates; also behind `yagura plugin lint`), `plugins/<id>/`, `schemas/plugin-manifest.v1.json`, `tool/`.
 - **Rejected:** separate repositories per app because protocol and manifest changes would need coordinated releases before any external consumer exists.
 - **Reversal cost:** low.
 
 ### D2: One binary, four entry modes, implementing ADR 0009
 
-- **Choice:** `garrisond` dispatches on its first argument: `run` (default; `--console` for development without a service account), `launch`, `relay`, `signal`. `launch` (service mode) logs on `garrison-srv`, loads its profile, builds its environment, and starts the relay with `CREATE_NEW_CONSOLE | CREATE_BREAKAWAY_FROM_JOB` (no `CREATE_NEW_PROCESS_GROUP`) on window station/desktop `GarrisonSrv\Default`; it writes `{relay_pid, relay_created}` as one JSON line to its stdout and exits. `relay` calls `SetConsoleCtrlHandler(NULL, FALSE)` to clear any inherited ignore flag, installs a handler that returns TRUE for itself, starts the server without `CREATE_NEW_PROCESS_GROUP` on the same console with stdout/stderr pipes, writes `relay.json` (relay and server PID, start times, executable paths; no command line) and later `exit.json`. `signal --console-of <server pid>` (falling back to the relay pid) attaches and calls `GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)`; the helper ignores the event itself (`SetConsoleCtrlHandler(NULL, TRUE)` in the helper only) and exits 0 after `GenerateConsoleCtrlEvent` returns. On Linux, `launch` asks systemd for a transient scope (`StartTransientUnit`) and `signal` sends SIGTERM to the server. Win32 calls sit behind a `ProcessHost` interface.
+- **Choice:** `yagurad` dispatches on its first argument: `run` (default; `--console` for development without a service account), `launch`, `relay`, `signal`. `launch` (service mode) logs on `yagura-srv`, loads its profile, builds its environment, and starts the relay with `CREATE_NEW_CONSOLE | CREATE_BREAKAWAY_FROM_JOB` (no `CREATE_NEW_PROCESS_GROUP`) on window station/desktop `YaguraSrv\Default`; it writes `{relay_pid, relay_created}` as one JSON line to its stdout and exits. `relay` calls `SetConsoleCtrlHandler(NULL, FALSE)` to clear any inherited ignore flag, installs a handler that returns TRUE for itself, starts the server without `CREATE_NEW_PROCESS_GROUP` on the same console with stdout/stderr pipes, writes `relay.json` (relay and server PID, start times, executable paths; no command line) and later `exit.json`. `signal --console-of <server pid>` (falling back to the relay pid) attaches and calls `GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)`; the helper ignores the event itself (`SetConsoleCtrlHandler(NULL, TRUE)` in the helper only) and exits 0 after `GenerateConsoleCtrlEvent` returns. On Linux, `launch` asks systemd for a transient scope (`StartTransientUnit`) and `signal` sends SIGTERM to the server. Win32 calls sit behind a `ProcessHost` interface.
 - **Rejected:** separate helper executables because they add build and signing targets while sharing all their code with the daemon.
 - **Reversal cost:** low.
 
@@ -45,7 +45,7 @@ Unverified assumptions, each closed by a spike task in `tasks.md`: MSVC compile 
 
 ### D4: Hook worker is a fresh isolate per call, bounded from inside, with leak accounting
 
-- **Choice:** each hook call takes one of 4 worker slots (waiting for a slot does not count against the hook deadline; the wait is bounded by the operation's own cancellation), spawns an isolate, creates a quickjs-ng runtime with 64 MiB heap, 1 MiB stack and an interrupt handler on a monotonic deadline, registers the pure `garrison.*` host functions, runs the hook and frees the runtime. A watchdog fires at deadline + 2 s: the operation fails with `hook_timeout`, the slot is released, `Isolate.kill` is requested, and if the isolate has not exited 5 s later it is counted as leaked. `GetHealth` reports leaked workers; at 2 leaked, hooks are refused with `hook_runtime_degraded` until the daemon restarts.
+- **Choice:** each hook call takes one of 4 worker slots (waiting for a slot does not count against the hook deadline; the wait is bounded by the operation's own cancellation), spawns an isolate, creates a quickjs-ng runtime with 64 MiB heap, 1 MiB stack and an interrupt handler on a monotonic deadline, registers the pure `yagura.*` host functions, runs the hook and frees the runtime. A watchdog fires at deadline + 2 s: the operation fails with `hook_timeout`, the slot is released, `Isolate.kill` is requested, and if the isolate has not exited 5 s later it is counted as leaked. `GetHealth` reports leaked workers; at 2 leaked, hooks are refused with `hook_runtime_degraded` until the daemon restarts.
 - **Rejected:** a warm runtime pool because state can leak between calls and instances, and hooks run a few times per operation.
 - **Reversal cost:** low.
 
@@ -75,7 +75,7 @@ Unverified assumptions, each closed by a spike task in `tasks.md`: MSVC compile 
 
 ### D9: Startup separates fatal steps from degraded ones
 
-- **Choice:** fatal (exit non-zero, nothing served): data-directory lock (`LockFileEx`/`flock` on `garrisond.lock`, released by the OS when the holder dies; the PID inside is informational), database open and migration, secret store, daemon identity. Degraded (listener still opens, notice + `GetHealth` flag): stray SteamCMD sweep, plugin load failures, `.staging` cleanup, state recovery (`installing` → `not_installed`; `updating` → `error: update_interrupted`; `starting`/`running`/`stopping` → re-attach under D13 checks, else `stopped` or crash handling), firewall reconcile, log tailing, autostart (D14), `instance.json` rewrite. Per-instance failures affect only that instance.
+- **Choice:** fatal (exit non-zero, nothing served): data-directory lock (`LockFileEx`/`flock` on `yagurad.lock`, released by the OS when the holder dies; the PID inside is informational), database open and migration, secret store, daemon identity. Degraded (listener still opens, notice + `GetHealth` flag): stray SteamCMD sweep, plugin load failures, `.staging` cleanup, state recovery (`installing` → `not_installed`; `updating` → `error: update_interrupted`; `starting`/`running`/`stopping` → re-attach under D13 checks, else `stopped` or crash handling), firewall reconcile, log tailing, autostart (D14), `instance.json` rewrite. Per-instance failures affect only that instance.
 - **Rejected:** "any failure before the listener exits" because a stopped firewall service would make WinSW restart the daemon in a loop and the admin could not connect to see why.
 - **Reversal cost:** low.
 
@@ -99,8 +99,8 @@ Unverified assumptions, each closed by a spike task in `tasks.md`: MSVC compile 
 
 ### D13: Trust boundary inside instance directories (implements ADR 0013)
 
-- **Choice:** all daemon file access under an instance directory goes through one `InstanceFs` component: paths are opened relative to the instance root handle with `FILE_FLAG_OPEN_REPARSE_POINT`, each component is checked for reparse points, the final path is verified with `GetFinalPathNameByHandle` against the allowed root, and any reparse point other than a recorded mod junction (re-verified against its expected content-store target) fails with `sandbox_violation`. Recursive delete and snapshot copy never descend into reparse points. Atomic writes create the temp file through the same handle-relative path. During install, update and validate, the daemon removes `garrison-srv`'s access entry from the target instance root (the instance has no running server), runs the reparse-point check, runs `app_update`, re-runs the check, and only then restores the ADR 0013 ACL; a failure at any point leaves the ACL removed and the operation fails with `sandbox_violation` or its own reason. This holds against other instances' servers, which run as the same account. Process records: the relay PID comes from the launcher's report; the server PID from `relay.json` is accepted only if its parent is the recorded relay and its token user is `garrison-srv` (console mode: the current user); every terminate re-checks the token user. If `relay.json` fails verification, the daemon identifies the server as the verified relay's child running as `garrison-srv` (by parent PID and token user); if none is found, it terminates the verified relay, whose exit ends its console's processes, and reports `error` with reason `run_record_rejected`.
-- **Rejected:** running file operations impersonating `garrison-srv` because the daemon must also write files (keys, configs) that the account should only read, and impersonation does not stop junction-based reads of SYSTEM-only files for operations that legitimately run as SYSTEM.
+- **Choice:** all daemon file access under an instance directory goes through one `InstanceFs` component: paths are opened relative to the instance root handle with `FILE_FLAG_OPEN_REPARSE_POINT`, each component is checked for reparse points, the final path is verified with `GetFinalPathNameByHandle` against the allowed root, and any reparse point other than a recorded mod junction (re-verified against its expected content-store target) fails with `sandbox_violation`. Recursive delete and snapshot copy never descend into reparse points. Atomic writes create the temp file through the same handle-relative path. During install, update and validate, the daemon removes `yagura-srv`'s access entry from the target instance root (the instance has no running server), runs the reparse-point check, runs `app_update`, re-runs the check, and only then restores the ADR 0013 ACL; a failure at any point leaves the ACL removed and the operation fails with `sandbox_violation` or its own reason. This holds against other instances' servers, which run as the same account. Process records: the relay PID comes from the launcher's report; the server PID from `relay.json` is accepted only if its parent is the recorded relay and its token user is `yagura-srv` (console mode: the current user); every terminate re-checks the token user. If `relay.json` fails verification, the daemon identifies the server as the verified relay's child running as `yagura-srv` (by parent PID and token user); if none is found, it terminates the verified relay, whose exit ends its console's processes, and reports `error` with reason `run_record_rejected`.
+- **Rejected:** running file operations impersonating `yagura-srv` because the daemon must also write files (keys, configs) that the account should only read, and impersonation does not stop junction-based reads of SYSTEM-only files for operations that legitimately run as SYSTEM.
 - **Reversal cost:** medium.
 
 ### D14: Instances that were running restart after a host or daemon restart
@@ -117,7 +117,7 @@ Unverified assumptions, each closed by a spike task in `tasks.md`: MSVC compile 
 
 ### D16: Firewall desired state follows launched ports while running
 
-- **Choice:** desired rules exist for every installed instance (not `not_installed`), for its exposed ports: while running, the ports the process was launched with; otherwise the saved ports. A port change on a running instance is saved, marks `restart_required`, and the rules change at the next start. Rule names stay `Garrison/<id>/<port-name>/<proto>`.
+- **Choice:** desired rules exist for every installed instance (not `not_installed`), for its exposed ports: while running, the ports the process was launched with; otherwise the saved ports. A port change on a running instance is saved, marks `restart_required`, and the rules change at the next start. Rule names stay `Yagura/<id>/<port-name>/<proto>`.
 - **Rejected:** opening the new port immediately and keeping the old one because both rules would have the same name, and closing the old one at once cuts off connected players.
 - **Reversal cost:** low.
 
@@ -147,7 +147,7 @@ Start from `error: settings_invalid` or `plugin_missing` fails `invalid_state`. 
 
 ### D19: Key files are owned per mod, never over an admin's key
 
-- **Choice:** each placed key is recorded `(instance, file name, content hash, providing mods)`. A key is removed only when no staged mod provides it any more; if a file of that name exists and Garrison did not place it, it is never overwritten and the mod gets a `key_conflict` warning.
+- **Choice:** each placed key is recorded `(instance, file name, content hash, providing mods)`. A key is removed only when no staged mod provides it any more; if a file of that name exists and Yagura did not place it, it is never overwritten and the mod gets a `key_conflict` warning.
 - **Rejected:** removing a mod's keys with the mod because dependants commonly ship the same key (CF), which would break other mods.
 - **Reversal cost:** low.
 
@@ -159,7 +159,7 @@ Start from `error: settings_invalid` or `plugin_missing` fails `invalid_state`. 
 
 ### D21: Instance directories are placed and ACL'd by the daemon
 
-- **Choice:** create and import accept a directory only under a configured instance root (default `<data>/instances`; admins add roots with `garrisond roots add`), not overlapping another instance, the data directory, the content store, the snapshots root or a system directory (`directory_not_allowed`). The daemon applies the ADR 0013 ACLs on create and import.
+- **Choice:** create and import accept a directory only under a configured instance root (default `<data>/instances`; admins add roots with `yagurad roots add`), not overlapping another instance, the data directory, the content store, the snapshots root or a system directory (`directory_not_allowed`). The daemon applies the ADR 0013 ACLs on create and import.
 - **Rejected:** any path the client sends because an ACL grant or `delete_files` on a mistyped `D:\` would hit unrelated data.
 - **Reversal cost:** low.
 
@@ -173,7 +173,7 @@ flowchart TB
     CONN1[Connection: daemon A] & CONN2[Connection: daemon B]
   end
   CONN1 -->|gRPC mTLS| API
-  subgraph Daemon["garrisond (LocalSystem)"]
+  subgraph Daemon["yagurad (LocalSystem)"]
     API[API + interceptor] --> RUN[Operation runner]
     RUN --> IM[Instance manager]
     IM --> PS[Process supervisor]
@@ -188,12 +188,12 @@ flowchart TB
     HR -.isolate per call.-> HWI[[Hook isolate + quickjs-ng]]
     CB & SN & MP & LH & HR --> IFS[InstanceFs<br/>no reparse following]
   end
-  PS -->|CreateProcessW| L[[garrisond launch]]
+  PS -->|CreateProcessW| L[[yagurad launch]]
   L -->|report relay pid| PS
-  L -->|CreateProcessAsUserW garrison-srv| RELAY[[garrisond relay]]
+  L -->|CreateProcessAsUserW yagura-srv| RELAY[[yagurad relay]]
   RELAY -->|child, same console| GS[[Game server]]
-  RELAY -->|relay.json, exit.json, capture| RUNDIR[(instance/.garrison/run)]
-  PS -->|graceful stop| SIG[[garrisond signal]] -->|Ctrl+C on server console| GS
+  RELAY -->|relay.json, exit.json, capture| RUNDIR[(instance/.yagura/run)]
+  PS -->|graceful stop| SIG[[yagurad signal]] -->|Ctrl+C on server console| GS
   SB -->|suspended, job, resume| SCMD[[SteamCMD]]
   RC -->|localhost| GS
   FWR -->|PowerShell NetSecurity| WFW[(Windows Firewall)]
@@ -255,7 +255,7 @@ flowchart LR
   LCH[launcher stdout JSON] --> IM
   RL[relay.json / exit.json v1] -->|verified by parent + token| IM
   CB[Config binder] -->|round-trip patch| CF[game configs]
-  ADM[garrisond CLI] -->|admin pipe JSON| D[daemon]
+  ADM[yagurad CLI] -->|admin pipe JSON| D[daemon]
 ```
 
 ## State & Ownership (FULL)
@@ -338,7 +338,7 @@ System-level bounds are in `openspec/architecture.md` (Resource bounds). This de
 |---|---|---|---|
 | Relay + launcher (ADR 0009, D2) | yes | Without them servers die with the daemon, stdout is lost and graceful stop is impossible | — |
 | InstanceFs reparse checks (D13) | yes | A compromised server could turn SYSTEM file operations into host takeover | — |
-| ACL withdrawal during SteamCMD runs | yes | other instances' servers share `garrison-srv` and could plant junctions SteamCMD (SYSTEM) follows | per-instance accounts |
+| ACL withdrawal during SteamCMD runs | yes | other instances' servers share `yagura-srv` and could plant junctions SteamCMD (SYSTEM) follows | per-instance accounts |
 | Token-user check before terminate (D13) | yes | A forged `relay.json` could kill any process | — |
 | Hook watchdog + leak cap (D4) | yes | A native hang would otherwise block every hook forever | — |
 | Atomic config writes | yes | Truncated configs after a crash | — |
@@ -364,10 +364,10 @@ System-level bounds are in `openspec/architecture.md` (Resource bounds). This de
 - [quickjs-ng does not build with MSVC through `native_toolchain_c`] → spike 1.2; fallback clang-cl, then a CI-built DLL loaded by path.
 - [Ctrl+C does not reach the server on the relay console] → spike 1.3 before the process model is built; fallback: RCON or `kill` with a warning that the plugin cannot stop gracefully, which blocks the Valheim exit criterion and is escalated.
 - [TLS request mode accepts unknown client certificates] → spike 10.1; fallback: separate pairing listener (`docs/protocol.md`).
-- [WinSW stops relays or `garrison-srv` consoles fail to start] → spike 11.3; fallback: native service entry point (ADR 0012).
+- [WinSW stops relays or `yagura-srv` consoles fail to start] → spike 11.3; fallback: native service entry point (ADR 0012).
 - [SteamCMD output wording changes] → patterns are data; unknown output shown raw and never retried blindly.
 - [Junctions in instance dirs confuse a game or anti-cheat] → `copy_fallback`; verified with BattlEye in task 17.3.
-- [`garrison-srv` lacks a right a game needs] → `data_paths` keep saves in the instance; every reference plugin runs under the account before M2 closes.
+- [`yagura-srv` lacks a right a game needs] → `data_paths` keep saves in the instance; every reference plugin runs under the account before M2 closes.
 - [Umbrella change spans five milestones] → task groups tagged by milestone; roadmap explains how remaining groups move at each close.
 
 ## ADRs

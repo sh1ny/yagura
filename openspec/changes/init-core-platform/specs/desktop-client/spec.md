@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Gives the admin one desktop application to manage several Garrison daemons, rendering each game's settings from its plugin schema and showing operations, prompts, logs and consoles live.
+Gives the admin one desktop application to manage several Yagura daemons, rendering each game's settings from its plugin schema and showing operations, prompts, logs and consoles live.
 
 ## ADDED Requirements
 

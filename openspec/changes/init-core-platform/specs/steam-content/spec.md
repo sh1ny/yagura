@@ -73,7 +73,7 @@ The daemon SHALL install and update an instance's app with `app_update <app_id>`
 - **THEN** progress events report bytes and percent at least every 2 s until completion
 
 #### Scenario: Other instance's server blocked during an update
-- **WHEN** instance A is updating and instance B's server process (running as `garrison-srv`) tries to create a junction inside A's directory
+- **WHEN** instance A is updating and instance B's server process (running as `yagura-srv`) tries to create a junction inside A's directory
 - **THEN** the attempt fails with access denied, and after the update A's directory has the game-server account's access restored
 
 #### Scenario: Two instances of one app installed at once

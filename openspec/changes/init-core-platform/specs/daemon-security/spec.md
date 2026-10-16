@@ -18,7 +18,7 @@ On first start the daemon SHALL create a CA key pair and certificate and a serve
 - **THEN** the daemon exits with a non-zero code and the error `secret_store_unavailable`, and no listener is opened
 
 ### Requirement: Pairing with a one-time code
-`garrisond pair` SHALL obtain from the running daemon, over the local admin channel, a pairing string with the daemon address, a single-use code valid for 10 minutes, and the CA fingerprint. `Pairing.Enroll` SHALL accept the code with a device name and a certificate signing request, and return a client certificate signed by the daemon CA, valid for one year.
+`yagurad pair` SHALL obtain from the running daemon, over the local admin channel, a pairing string with the daemon address, a single-use code valid for 10 minutes, and the CA fingerprint. `Pairing.Enroll` SHALL accept the code with a device name and a certificate signing request, and return a client certificate signed by the daemon CA, valid for one year.
 
 #### Scenario: Successful enrollment
 - **WHEN** a client submits a valid, unused code with device name `desk-01` and a CSR within 10 minutes
@@ -125,9 +125,9 @@ The API SHALL allow setting, replacing and deleting secrets (Steam passwords, RC
 Host-local CLI commands (`pair`, `devices`, `status`, `roots`) SHALL reach the running daemon only through a local channel restricted to SYSTEM and Administrators (root on Linux); the CLI SHALL NOT open the database while the daemon runs.
 
 #### Scenario: Administrator requests a pairing code
-- **WHEN** an administrator runs `garrisond pair` on the host while the service runs
+- **WHEN** an administrator runs `yagurad pair` on the host while the service runs
 - **THEN** the command prints a pairing string issued by the running daemon
 
 #### Scenario: Non-administrator
-- **WHEN** a standard user runs `garrisond pair`
+- **WHEN** a standard user runs `yagurad pair`
 - **THEN** the command fails with `access_denied` and no pairing code is issued

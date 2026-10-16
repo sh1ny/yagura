@@ -1,4 +1,4 @@
-# Garrison Roadmap
+# Yagura Roadmap
 
 Strategy: openspec/strategy.md · Architecture: openspec/architecture.md
 
@@ -8,10 +8,10 @@ The whole platform is specified by one umbrella change, `init-core-platform`, at
 
 ## Now: M1 - Walking skeleton
 
-**Outcome:** On a Windows machine, `garrisond --console --dev` installs a Valheim server with SteamCMD, starts it under the relay, streams its log to a minimal desktop client over localhost gRPC, stops it gracefully with the world saved, and keeps it running across a daemon restart. The Valheim plugin is a manifest with no hooks; a test plugin proves JS hooks run with deadlines and memory caps.
+**Outcome:** On a Windows machine, `yagurad --console --dev` installs a Valheim server with SteamCMD, starts it under the relay, streams its log to a minimal desktop client over localhost gRPC, stops it gracefully with the world saved, and keeps it running across a daemon restart. The Valheim plugin is a manifest with no hooks; a test plugin proves JS hooks run with deadlines and memory caps.
 
 **Exit criteria:**
-- quickjs-ng compiles through the Dart build hook with MSVC on Windows and `garrison_js` tests pass there (agent)
+- quickjs-ng compiles through the Dart build hook with MSVC on Windows and `yagura_js` tests pass there (agent)
 - Every M1-tagged test-map row of `init-core-platform` is green on Windows CI (agent)
 - A hook with `while(true){}` is interrupted within 6 s while the daemon keeps answering `System.GetInfo` (agent)
 - Valheim installs anonymously, starts, reaches `running` via its log-match health check, and its log streams to the desktop client (user)
@@ -24,7 +24,7 @@ The whole platform is specified by one umbrella change, `init-core-platform`, at
 
 ## Next: M2 - Secure remote host
 
-The daemon runs as a Windows service, pairs with desktops over mTLS with per-device revocation and renewal, runs game servers as `garrison-srv`, and opens firewall ports itself; the desktop manages several daemons and detects concurrent edits. Main risks retired: certificate signing in Dart, TLS request-mode behaviour, and WinSW leaving relays running on service stop and upgrade. Exit criteria include: a fresh host is installed and paired in under 5 minutes with no manual certificate or firewall work (user); service stop and upgrade leave running servers untouched (user); a revoked device's next call fails (agent).
+The daemon runs as a Windows service, pairs with desktops over mTLS with per-device revocation and renewal, runs game servers as `yagura-srv`, and opens firewall ports itself; the desktop manages several daemons and detects concurrent edits. Main risks retired: certificate signing in Dart, TLS request-mode behaviour, and WinSW leaving relays running on service stop and upgrade. Exit criteria include: a fresh host is installed and paired in under 5 minutes with no manual certificate or firewall work (user); service stop and upgrade leave running servers untouched (user); a revoked device's next call fails (agent).
 
 ## Later
 

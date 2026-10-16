@@ -138,7 +138,7 @@ Game server processes SHALL keep running when the daemon stops, crashes or is up
 Stopping SHALL follow the plugin's stop strategy (`rcon` command, `signal` (Linux SIGTERM / Windows Ctrl+C to the server's console), or `kill`), wait up to the grace period, then kill the process if it is still alive, and report which step ended it.
 
 #### Scenario: Valheim saves on a signal stop
-- **WHEN** a client stops a running Valheim instance started by the installed service (server running as `garrison-srv`) whose strategy is `signal`
+- **WHEN** a client stops a running Valheim instance started by the installed service (server running as `yagura-srv`) whose strategy is `signal`
 - **THEN** the server receives Ctrl+C, its world save file is written before the process exits, and the result reports `stopped_by: graceful`
 
 #### Scenario: RCON unavailable during stop
@@ -282,8 +282,8 @@ Each instance SHALL have an `autostart` setting (default on). After a daemon or 
 Every daemon file operation inside an instance directory (config writes, hook reads, key copies, staging, snapshots, restore, delete, log tailing, update checks) SHALL refuse any symbolic link or junction other than the mod links the daemon created and recorded, which must still point at their recorded content-store target.
 
 #### Scenario: Junction planted in a config folder
-- **WHEN** the game-server account replaces `garrison/` in an instance with a junction to `C:\Windows\System32` and the instance is started
-- **THEN** the start fails with `sandbox_violation` naming `garrison/`, and no file outside the instance is written
+- **WHEN** the game-server account replaces `yagura/` in an instance with a junction to `C:\Windows\System32` and the instance is started
+- **THEN** the start fails with `sandbox_violation` naming `yagura/`, and no file outside the instance is written
 
 #### Scenario: Recorded mod link
 - **WHEN** an instance's `@CF` junction points at its recorded content-store version
@@ -301,5 +301,5 @@ The daemon SHALL terminate a process only if it is the relay it launched or that
 - **THEN** the daemon refuses to terminate that process, stops the genuine server through the verified relay, reports notice `run_record_rejected`, and the system process keeps running
 
 #### Scenario: Genuine server
-- **WHEN** the recorded server is the relay's child running as `garrison-srv`
+- **WHEN** the recorded server is the relay's child running as `yagura-srv`
 - **THEN** stop and kill act on it normally

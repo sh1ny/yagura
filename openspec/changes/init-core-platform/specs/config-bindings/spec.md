@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Applies instance settings to game configuration files declared by the plugin, preserving everything the admin or the game wrote that Garrison does not own.
+Applies instance settings to game configuration files declared by the plugin, preserving everything the admin or the game wrote that Yagura does not own.
 
 ## ADDED Requirements
 

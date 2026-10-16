@@ -1,6 +1,6 @@
-# Garrison protocol (`garrison.v1`)
+# Yagura protocol (`yagura.v1`)
 
-How the desktop client and `garrisond` talk, and how that channel is secured. The service definitions are in [`proto/garrison/v1/`](../proto/garrison/v1/); the behaviour contract is in the `daemon-protocol` and `daemon-security` specs; the decisions are ADR 0006 (gRPC) and ADR 0007 (mTLS and pairing).
+How the desktop client and `yagurad` talk, and how that channel is secured. The service definitions are in [`proto/yagura/v1/`](../proto/yagura/v1/); the behaviour contract is in the `daemon-protocol` and `daemon-security` specs; the decisions are ADR 0006 (gRPC) and ADR 0007 (mTLS and pairing).
 
 ## Transport
 
@@ -10,7 +10,7 @@ How the desktop client and `garrisond` talk, and how that channel is secured. Th
 | Default port | 7443/tcp (configurable `--bind`) |
 | TLS | TLS 1.3 only (1.2 refused) |
 | Keys | ECDSA P-256 for CA, server and devices |
-| Server auth | Server cert signed by the daemon CA, SAN `garrisond-<daemon-id>`; client uses the pinned CA as its only root and sets the TLS authority to that name |
+| Server auth | Server cert signed by the daemon CA, SAN `yagurad-<daemon-id>`; client uses the pinned CA as its only root and sets the TLS authority to that name |
 | Client auth | Client cert signed by the daemon CA, required on every method except `Pairing.Info` / `Pairing.Enroll` |
 | Dev mode | `--dev`: plaintext, loopback bind only, server reflection on |
 | Keepalive | HTTP/2 ping every 30 s from the client; daemon closes connections idle 10 min without streams |
@@ -21,23 +21,23 @@ How the desktop client and `garrisond` talk, and how that channel is secured. Th
 
 | Certificate | Subject | Validity | Key usage | Where the key lives |
 |---|---|---|---|---|
-| Daemon CA | `CN=Garrison CA <host>`; `basicConstraints CA:true, pathlen:0` | 20 years | keyCertSign, cRLSign | Daemon secret store (DPAPI), never exported |
-| Server | `CN=garrisond-<daemon-id>`; SAN: `garrisond-<daemon-id>`, `localhost` | 2 years, renewed at startup when < 30 days left | digitalSignature; EKU serverAuth | Daemon secret store |
+| Daemon CA | `CN=Yagura CA <host>`; `basicConstraints CA:true, pathlen:0` | 20 years | keyCertSign, cRLSign | Daemon secret store (DPAPI), never exported |
+| Server | `CN=yagurad-<daemon-id>`; SAN: `yagurad-<daemon-id>`, `localhost` | 2 years, renewed at startup when < 30 days left | digitalSignature; EKU serverAuth | Daemon secret store |
 | Device | `CN=<device name>`, serial = random 128-bit | 1 year from enroll, `notBefore` 1 h in the past | digitalSignature; EKU clientAuth | Client OS keychain (generated there; only the CSR leaves) |
 
 Device renewal: within 30 days of expiry the client calls `Pairing.RenewCertificate` over its existing mTLS connection with a CSR for a new key; the daemon signs it and adds the new certificate's SHA-256 to the same device; the old certificate keeps working until it expires, and revoking the device rejects both. An expired device must pair again.
 
-Because the client connects by whatever address the admin typed, it never verifies the network address: it uses the pinned CA certificate as its only trusted root and sets the TLS authority (SNI and name check) to `garrisond-<daemon-id>`, which is the server certificate's SAN. The CA certificate itself is obtained from `Pairing.Info` at pairing and checked against the fingerprint in the pairing string. Device identity on the daemon side is the SHA-256 of the client certificate DER (`dart:io`'s `X509Certificate` exposes the DER, not the serial).
+Because the client connects by whatever address the admin typed, it never verifies the network address: it uses the pinned CA certificate as its only trusted root and sets the TLS authority (SNI and name check) to `yagurad-<daemon-id>`, which is the server certificate's SAN. The CA certificate itself is obtained from `Pairing.Info` at pairing and checked against the fingerprint in the pairing string. Device identity on the daemon side is the SHA-256 of the client certificate DER (`dart:io`'s `X509Certificate` exposes the DER, not the serial).
 
 ## Pairing
 
 ```
-garrison://<host>:<port>?code=<CODE>&ca=sha256:<64 hex>&name=<daemon name>
+yagura://<host>:<port>?code=<CODE>&ca=sha256:<64 hex>&name=<daemon name>
 ```
 
 - `CODE`: 8 characters from `23456789ABCDEFGHJKMNPQRSTUVWXYZ` shown as `XXXX-XXXX` (~40 bits), single use, 10 minutes, at most one active code per daemon (issuing a new one invalidates the old).
 - Throttle: 5 wrong attempts from one address in 10 minutes block that address (`pairing_throttled`); 50 wrong attempts in total in 10 minutes invalidate the active code.
-- The pairing string travels out of band (the admin copies it from `garrisond pair`, which talks to the running service over the local admin pipe, ACL'd to SYSTEM and Administrators); that is what makes the CA fingerprint trustworthy.
+- The pairing string travels out of band (the admin copies it from `yagurad pair`, which talks to the running service over the local admin pipe, ACL'd to SYSTEM and Administrators); that is what makes the CA fingerprint trustworthy.
 
 ```mermaid
 sequenceDiagram
@@ -47,7 +47,7 @@ sequenceDiagram
   C->>D: TLS (no client cert, no verification yet) Pairing.Info
   D-->>C: CA cert DER, tls_authority
   C->>C: SHA-256(CA) == pin? (fail: fingerprint_mismatch, abort)
-  C->>D: new TLS connection, CA as sole root, authority garrisond-<id>
+  C->>D: new TLS connection, CA as sole root, authority yagurad-<id>
   C->>C: generate P-256 key in keychain, build CSR (CN=device name)
   C->>D: Pairing.Enroll(code, device_name, csr)
   D->>D: code valid & unused & not throttled? (fail: pairing_code_invalid / RESOURCE_EXHAUSTED)
@@ -114,7 +114,7 @@ Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violation
 
 ## Versioning
 
-- Package `garrison.v1`; `System.GetInfo.api_versions` lists every `major.minor` served; the client uses the highest major it shares.
+- Package `yagura.v1`; `System.GetInfo.api_versions` lists every `major.minor` served; the client uses the highest major it shares.
 - Minor bumps add fields, methods or enum values only. Clients ignore unknown enum values (treated as `*_UNSPECIFIED`) and hide features above the daemon's minor.
-- A breaking change creates `garrison.v2`; the daemon serves v1 and v2 side by side for at least one minor release.
+- A breaking change creates `yagura.v2`; the daemon serves v1 and v2 side by side for at least one minor release.
 - Field numbers are never reused; removed fields are `reserved`.

@@ -7,25 +7,25 @@ Runs the daemon as a long-lived host service that starts at boot, with a predict
 ## ADDED Requirements
 
 ### Requirement: Windows service install and control
-`garrisond service install` SHALL register the daemon as a Windows service that starts automatically, runs as LocalSystem and restarts on failure; `service uninstall` and `service status` SHALL remove and report it. Both require an elevated prompt.
+`yagurad service install` SHALL register the daemon as a Windows service that starts automatically, runs as LocalSystem and restarts on failure; `service uninstall` and `service status` SHALL remove and report it. Both require an elevated prompt.
 
 #### Scenario: Install as a service
-- **WHEN** an admin runs `garrisond service install` in an elevated prompt
-- **THEN** a service `garrisond` exists with start type automatic, and it is running after the command returns
+- **WHEN** an admin runs `yagurad service install` in an elevated prompt
+- **THEN** a service `yagurad` exists with start type automatic, and it is running after the command returns
 
 #### Scenario: Not elevated
 - **WHEN** the command runs without elevation
 - **THEN** it exits non-zero with `elevation_required` and no service is registered
 
 ### Requirement: Data directory layout
-The daemon SHALL keep its state in one data directory (default `%ProgramData%\Garrison`, `/var/lib/garrison` on Linux) containing the database, SteamCMD installations, the content store, plugins and daemon logs; instance directories default under it and may be placed elsewhere per instance. Instance roots are added and removed only with `garrisond roots add|remove` over the local admin channel; the gRPC API cannot change them.
+The daemon SHALL keep its state in one data directory (default `%ProgramData%\Yagura`, `/var/lib/yagura` on Linux) containing the database, SteamCMD installations, the content store, plugins and daemon logs; instance directories default under it and may be placed elsewhere per instance. Instance roots are added and removed only with `yagurad roots add|remove` over the local admin channel; the gRPC API cannot change them.
 
 #### Scenario: Default layout created
 - **WHEN** the daemon starts for the first time with no configuration
-- **THEN** `%ProgramData%\Garrison` contains `garrison.db`, `steamcmd/`, `content/`, `plugins/`, `instances/` and `logs/`
+- **THEN** `%ProgramData%\Yagura` contains `yagura.db`, `steamcmd/`, `content/`, `plugins/`, `instances/` and `logs/`
 
 #### Scenario: Instance root added locally
-- **WHEN** an administrator runs `garrisond roots add D:\servers`
+- **WHEN** an administrator runs `yagurad roots add D:\servers`
 - **THEN** creating an instance under `D:\servers` is allowed and no remote call can add or remove a root
 
 #### Scenario: Data directory not writable
@@ -41,7 +41,7 @@ On start the daemon SHALL lock the data directory, open and migrate the database
 
 #### Scenario: Migration with backup
 - **WHEN** a new daemon version starts on a database with an older schema
-- **THEN** a backup `garrison.db.bak-<version>` is written, migrations run in a transaction, and the daemon serves calls afterwards
+- **THEN** a backup `yagura.db.bak-<version>` is written, migrations run in a transaction, and the daemon serves calls afterwards
 
 #### Scenario: Firewall unavailable at startup
 - **WHEN** the Windows Firewall service is stopped when the daemon starts
@@ -55,7 +55,7 @@ On start the daemon SHALL lock the data directory, open and migrate the database
 The daemon SHALL hold an operating-system exclusive lock on a lock file in its data directory, which the OS releases when the holder exits, and refuse to start if another process holds it.
 
 #### Scenario: Second instance refused
-- **WHEN** a second `garrisond` starts against the same data directory
+- **WHEN** a second `yagurad` starts against the same data directory
 - **THEN** it exits non-zero with `data_dir_locked` and the PID of the holder
 
 #### Scenario: Lock file left by a crashed daemon
@@ -63,18 +63,18 @@ The daemon SHALL hold an operating-system exclusive lock on a lock file in its d
 - **THEN** the new daemon acquires the lock and starts normally
 
 ### Requirement: Linux service
-On Linux the daemon SHALL install a systemd unit through `garrisond service install`, with game servers started in their own transient scopes so stopping the unit does not stop them.
+On Linux the daemon SHALL install a systemd unit through `yagurad service install`, with game servers started in their own transient scopes so stopping the unit does not stop them.
 
 #### Scenario: Unit installed
-- **WHEN** an admin runs `sudo garrisond service install` on Linux
-- **THEN** `garrisond.service` is enabled and active
+- **WHEN** an admin runs `sudo yagurad service install` on Linux
+- **THEN** `yagurad.service` is enabled and active
 
 #### Scenario: systemd not available
-- **WHEN** `garrisond service install` runs on a Linux host without systemd
+- **WHEN** `yagurad service install` runs on a Linux host without systemd
 - **THEN** it exits non-zero with `systemd_required` and installs nothing
 
 #### Scenario: Stopping the unit keeps servers
-- **WHEN** `systemctl stop garrisond` runs while two instances are running
+- **WHEN** `systemctl stop yagurad` runs while two instances are running
 - **THEN** both game server processes are still running afterwards
 
 ### Requirement: Game servers run under a low-privilege account
@@ -82,7 +82,7 @@ Service install SHALL create a local account for game servers with no administra
 
 #### Scenario: Server process identity
 - **WHEN** a DayZ instance is started on a host where the service is installed
-- **THEN** the server process runs as `garrison-srv`, and it cannot open `garrison.db`
+- **THEN** the server process runs as `yagura-srv`, and it cannot open `yagura.db`
 
 #### Scenario: Logon fails
 - **WHEN** the game-server account's logon fails (for example it was disabled)

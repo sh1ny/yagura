@@ -64,7 +64,7 @@ The daemon SHALL apply the plugin's key rules after staging (for example copying
 
 #### Scenario: Bikeys synced
 - **WHEN** two DayZ mods each containing one `.bikey` are staged
-- **THEN** `keys/` contains both key files plus any keys not placed by Garrison, unchanged
+- **THEN** `keys/` contains both key files plus any keys not placed by Yagura, unchanged
 
 #### Scenario: Shared key kept
 - **WHEN** mods X and Y both ship `CF.bikey` and mod X is removed
@@ -76,7 +76,7 @@ The daemon SHALL apply the plugin's key rules after staging (for example copying
 
 #### Scenario: Mod removed takes its key
 - **WHEN** one of those mods is removed
-- **THEN** its key file is removed from `keys/`, and keys Garrison did not place are not touched
+- **THEN** its key file is removed from `keys/`, and keys Yagura did not place are not touched
 
 ### Requirement: Load order and roles
 Each instance SHALL keep an ordered mod list with each mod's role from the plugin's roles (for example `client` or `server`). The launch template receives one ordered list per role.

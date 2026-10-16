@@ -1,6 +1,6 @@
-# Garrison Architecture
+# Yagura Architecture
 
-Garrison is two applications sharing one protocol: `garrisond`, a headless Dart daemon (AOT-compiled) that owns a host and its game servers, and the Garrison desktop client (Flutter, Windows/Linux/macOS) that manages one or more paired daemons. Games are plugins: a manifest plus optional JavaScript hooks run inside the daemon. A narrative walk-through of the main flows is in [docs/overview.md](../docs/overview.md), and the wire protocol and its security in [docs/protocol.md](../docs/protocol.md); this file is the baseline that change designs read first.
+Yagura is two applications sharing one protocol: `yagurad`, a headless Dart daemon (AOT-compiled) that owns a host and its game servers, and the Yagura desktop client (Flutter, Windows/Linux/macOS) that manages one or more paired daemons. Games are plugins: a manifest plus optional JavaScript hooks run inside the daemon. A narrative walk-through of the main flows is in [docs/overview.md](../docs/overview.md), and the wire protocol and its security in [docs/protocol.md](../docs/protocol.md); this file is the baseline that change designs read first.
 
 ## System triage
 
@@ -15,14 +15,14 @@ Garrison is two applications sharing one protocol: `garrisond`, a headless Dart 
 
 ```mermaid
 flowchart LR
-  subgraph Desktop["Garrison desktop (Flutter)"]
+  subgraph Desktop["Yagura desktop (Flutter)"]
     UI[Schema-driven UI] --> CL[Daemon connections<br/>one per paired host]
     CL --> KC[(OS keychain:<br/>device key + certs)]
   end
   CL -->|gRPC over mTLS| API
-  CLI[garrisond CLI verbs<br/>pair, devices, status] -->|local admin pipe<br/>Admins only| ADM
+  CLI[yagurad CLI verbs<br/>pair, devices, status] -->|local admin pipe<br/>Admins only| ADM
 
-  subgraph D["garrisond service (LocalSystem)"]
+  subgraph D["yagurad service (LocalSystem)"]
     API[API server + auth interceptor] --> OPS[Operation runner<br/>per-instance queue]
     ADM[Local admin channel] --> PAIR
     API --> PAIR[Pairing + CA]
@@ -46,11 +46,11 @@ flowchart LR
   end
 
   STEAM -->|kill-on-close job| SCMD[[SteamCMD<br/>one install per account]]
-  PROC -->|CreateProcessW| LAUNCH[[garrisond launch<br/>exits at once]]
-  LAUNCH -->|CreateProcessAsUserW<br/>garrison-srv| RELAY[[garrisond relay]]
+  PROC -->|CreateProcessW| LAUNCH[[yagurad launch<br/>exits at once]]
+  LAUNCH -->|CreateProcessAsUserW<br/>yagura-srv| RELAY[[yagurad relay]]
   RELAY -->|child, pipes| GS[[Game server]]
-  PROC -->|graceful stop| SIG[[garrisond signal]] -.Ctrl+C to console.-> RELAY
-  RELAY -->|relay.json, exit.json, capture| RUN[(instance/.garrison/run)]
+  PROC -->|graceful stop| SIG[[yagurad signal]] -.Ctrl+C to console.-> RELAY
+  RELAY -->|relay.json, exit.json, capture| RUN[(instance/.yagura/run)]
   GS -->|log files| LOGS
   RUN --> LOGS
   RCON -->|UDP/TCP/WS localhost| GS
@@ -62,7 +62,7 @@ flowchart LR
 
 | Component | Responsibility | Owns (state) | Talks to via (contract) |
 |---|---|---|---|
-| API server | gRPC services, mTLS, device check, audit of mutating and auth calls | none (stateless) | `proto/garrison/v1` (ADR 0006, 0007) |
+| API server | gRPC services, mTLS, device check, audit of mutating and auth calls | none (stateless) | `proto/yagura/v1` (ADR 0006, 0007) |
 | Local admin channel | CLI verbs on the host (`pair`, `devices`, `status`) | none | Named pipe ACL'd to SYSTEM + Administrators (ADR 0012) |
 | Pairing + CA | CA, server cert, pairing codes, device enrollment, renewal, revocation | CA key (secret), devices, pairing codes | SQLite, SecretStore |
 | Operation runner | Serialises operations per instance, host-wide heavy limit, progress, cancellation, startup recovery | operations table, in-memory progress | Operation events stream |
@@ -122,7 +122,7 @@ stateDiagram-v2
 | Instance-mod rows (`staged_version`, `desired_version`, order, staged name; GC treats both versions as references) | Mod pipeline | Until removed | — | SQLite |
 | Bound file hashes | Config binder | Per bound file | Updated after each apply | SQLite |
 | SteamCMD installs + cached logins | Steam service | Per Steam account | Re-login on expiry | SteamCMD's own files (ACL'd) |
-| Secrets (CA key, Steam pw, RCON pw, GSLT, `garrison-srv` pw) | SecretStore, called by the owning component | Until replaced/deleted | — | SQLite blobs, DPAPI user scope of LocalSystem (ADR 0011) |
+| Secrets (CA key, Steam pw, RCON pw, GSLT, `yagura-srv` pw) | SecretStore, called by the owning component | Until replaced/deleted | — | SQLite blobs, DPAPI user scope of LocalSystem (ADR 0011) |
 | Devices, pairing codes | Pairing + CA | Device: until revoked; code: 10 min, single use | Expired codes pruned | SQLite |
 | Owned firewall rules | Firewall reconciler | While the port is wanted | Reconcile at startup, on port change, on request | Windows Firewall (actual) vs SQLite (desired) |
 | Save snapshots | Save snapshots | Last 3 per instance | Oldest deleted | Disk + SQLite rows |
@@ -131,13 +131,13 @@ stateDiagram-v2
 
 ## Boundaries and contracts
 
-- **gRPC API** — `proto/garrison/v1/*.proto`, package `garrison.v1`. Additive changes only within v1; a breaking change creates `v2` served side by side for one minor release. `System.GetInfo` reports `daemon_version` and `api_versions` (every major.minor served); the client picks the highest major it shares. Plugin-shaped data is JSON with `schema_version`; mutating instance calls carry `expected_revision`. (ADR 0006, 0008)
+- **gRPC API** — `proto/yagura/v1/*.proto`, package `yagura.v1`. Additive changes only within v1; a breaking change creates `v2` served side by side for one minor release. `System.GetInfo` reports `daemon_version` and `api_versions` (every major.minor served); the client picks the highest major it shares. Plugin-shaped data is JSON with `schema_version`; mutating instance calls carry `expected_revision`. (ADR 0006, 0008)
 - **Local admin channel** — length-prefixed JSON over a named pipe / Unix socket, versioned by `admin_api: 1`; serves only host-local administration. (ADR 0012)
 - **Plugin manifest** — `plugin.yaml`, `manifest_version: 1`, validated by `schemas/plugin-manifest.v1.json`. Unknown `manifest_version` → plugin rejected with a visible error. (ADR 0002)
-- **Hook contract** — `hooks.js` exports named functions; input one JSON context, output one JSON result validated per hook (file edits are returned, never written); host API `garrison.*` versioned with the manifest version. (ADR 0003)
+- **Hook contract** — `hooks.js` exports named functions; input one JSON context, output one JSON result validated per hook (file edits are returned, never written); host API `yagura.*` versioned with the manifest version. (ADR 0003)
 - **Config formats** — `ini`, `ue-ini`, `json`, `xml`, `vdf`, `dayz-cfg`, `kv`, each with a byte-identical round-trip guarantee and a corpus of real files. (ADR 0004)
 - **`instance.json`** — `format_version: 1`, no secrets, read only by import. (ADR 0008)
-- **Relay files** — `relay.json` and `exit.json` in `<instance>/.garrison/run/`, `format_version: 1`, written by the relay, read by the supervisor. (ADR 0009)
+- **Relay files** — `relay.json` and `exit.json` in `<instance>/.yagura/run/`, `format_version: 1`, written by the relay, read by the supervisor. (ADR 0009)
 - **SteamCMD** — `+force_install_dir`, `+login`, `+app_update`/`+workshop_download_item`, `+quit` as arguments; output-pattern table in `steam/patterns.yaml`. (ADR 0010)
 - **OS** — CreateProcess/LogonUser, DPAPI, NetSecurity cmdlets, WinSW config, NTFS ACLs and junctions; Linux equivalents behind the same interfaces. (ADR 0009, 0011, 0012, 0013)
 
@@ -145,7 +145,7 @@ stateDiagram-v2
 
 | Component | Dies or fails mid-operation → | Recovery | Retry safe? | Who finds out |
 |---|---|---|---|---|
-| Daemon process | Operations cut; SteamCMD dies with its job; game servers keep running under their relays | Startup: kill stray SteamCMD under Garrison dirs; mark `queued`/`running` operations `interrupted`; re-derive states (`installing` → `not_installed`, `updating` → `error: update_interrupted`, `starting`/`running`/`stopping` → re-attach or `stopped`); re-run mod staging and firewall reconcile idempotently; rewrite every `instance.json` | Yes, admin retries | Client: `interrupted` operations and per-instance notices |
+| Daemon process | Operations cut; SteamCMD dies with its job; game servers keep running under their relays | Startup: kill stray SteamCMD under Yagura dirs; mark `queued`/`running` operations `interrupted`; re-derive states (`installing` → `not_installed`, `updating` → `error: update_interrupted`, `starting`/`running`/`stopping` → re-attach or `stopped`); re-run mod staging and firewall reconcile idempotently; rewrite every `instance.json` | Yes, admin retries | Client: `interrupted` operations and per-instance notices |
 | Launcher / relay | Launcher fails: start fails with the Win32 error. Relay killed: server loses its stdout pipe | Server alive → `running` with `capture: broken`; server dead → crash handling via `exit.json` or `lost_while_daemon_down` | Yes | Client notice + log source status |
 | Game server | Exits without a stop request | Restart policy (≤3 in 10 min, then `error: crash_loop`) | Policy-limited | Client `crashed` / `crash_loop` notices with last 50 lines |
 | Hook worker | Timeout, OOM, exception, native hang | Interrupt handler, then watchdog kills the isolate; operation fails | Yes, after fixing the hook | Client operation error with hook name and stack |

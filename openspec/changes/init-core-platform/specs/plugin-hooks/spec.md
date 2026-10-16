@@ -66,7 +66,7 @@ An exception thrown by a hook SHALL fail the operation with the hook name, the e
 - **THEN** the plugin is `rejected` at load with reason `hook_syntax_error` and the line, and no instance operation runs it
 
 ### Requirement: Sandboxed host API
-Hooks SHALL reach the system only through the `garrison` object: logging, reading and listing files inside the instance root (read-only, including staged mod folders), and parsing or serialising config text. Hooks SHALL NOT write files; they return file edits in their result, which the daemon applies. Hooks have no network, process, environment-variable or timer access.
+Hooks SHALL reach the system only through the `yagura` object: logging, reading and listing files inside the instance root (read-only, including staged mod folders), and parsing or serialising config text. Hooks SHALL NOT write files; they return file edits in their result, which the daemon applies. Hooks have no network, process, environment-variable or timer access.
 
 #### Scenario: File edit returned and applied by the daemon
 - **WHEN** `onPreStart` returns `{"files": [{"path": "cfggameplay.json", "format": "json", "patch": {"GeneralData": {"disableBaseDamage": true}}}]}`
@@ -74,10 +74,10 @@ Hooks SHALL reach the system only through the `garrison` object: logging, readin
 
 #### Scenario: Write attempted from a hook
 - **WHEN** a hook calls a file write function
-- **THEN** the call throws `not_supported` because `garrison.fs` has no write functions
+- **THEN** the call throws `not_supported` because `yagura.fs` has no write functions
 
 #### Scenario: Path escape refused
-- **WHEN** a hook calls `garrison.fs.readText("../../Windows/win.ini")`
+- **WHEN** a hook calls `yagura.fs.readText("../../Windows/win.ini")`
 - **THEN** the call throws `sandbox_violation` inside the hook, and no file outside the instance root is read
 
 #### Scenario: Edit into a staged mod refused
@@ -88,7 +88,7 @@ Hooks SHALL reach the system only through the `garrison` object: logging, readin
 Each host read or parse call SHALL handle at most 16 MiB and each list call at most 10,000 entries. At most 4 hooks run at once per host; time spent waiting for a worker does not count against a hook's deadline. After 2 hook workers fail to exit, hooks SHALL be refused until the daemon restarts.
 
 #### Scenario: Large file read refused
-- **WHEN** a hook reads a 100 MiB log file with `garrison.fs.readText`
+- **WHEN** a hook reads a 100 MiB log file with `yagura.fs.readText`
 - **THEN** the call throws `host_limit_exceeded` naming the 16 MiB limit
 
 #### Scenario: Waiting for a worker

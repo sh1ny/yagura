@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines how a game is described to Garrison as data: plugin discovery, manifest validation and versioning, the settings schema the client renders, launch templates, ports, and stop and health declarations.
+Defines how a game is described to Yagura as data: plugin discovery, manifest validation and versioning, the settings schema the client renders, launch templates, ports, and stop and health declarations.
 
 ## ADDED Requirements
 

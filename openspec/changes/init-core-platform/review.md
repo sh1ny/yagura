@@ -8,7 +8,7 @@
 - **Reviewed:**
   - The change: `openspec/changes/init-core-platform/proposal.md`, `design.md` (D1-D21), all 13 `specs/*/spec.md`.
   - Baseline: `openspec/architecture.md`, `openspec/strategy.md`, `docs/adr/0001`-`0013`, re-reading 0005, 0008, 0009, 0010 and 0013 as changed by the baseline review.
-  - Protocol: `docs/protocol.md`, `docs/overview.md`, `proto/garrison/v1/*.proto`.
+  - Protocol: `docs/protocol.md`, `docs/overview.md`, `proto/yagura/v1/*.proto`.
   - Validation: `openspec validate init-core-platform --strict` passes. No requirement description is over 450 characters.
   - Not available: `tasks.md` does not exist yet, so the spike task numbers the design cites (1.2, 1.3, 10.1, 11.3, 14.1, 19.3, 21.3) could not be checked.
   - Per the coordinator, where D17 and Resource Bounds refine `architecture.md` tables, the design is treated as authoritative.
@@ -22,9 +22,9 @@ Round-1 findings are resolved except as noted in Rebuttals. New findings follow.
 ### Critical (blocking)
 
 **R2-C1. A compromised server in one instance can plant a junction that a SYSTEM `app_update` of another instance writes through.**
-- *Location:* ADR 0010 Decision (the reparse-point check before and after `app_update`, justified by "instances in `installing`/`updating` have no running server, so `garrison-srv` code is not running to race the check"); ADR 0013 ACLs (`garrison-srv` modify on all instance directories); `design.md` D13 ("`app_update` checks the tree before and after"); `specs/steam-content/spec.md` "Install, update and validate apps" (no trust-boundary requirement).
-- *Problem:* Every game server runs as the same `garrison-srv` account, and that account can modify every instance directory. So while instance A is `updating`, instance B's running server is `garrison-srv` code and can write into A's tree. It can plant a junction (for example `A\steamapps` or a game subfolder pointing at `C:\Windows\System32`) after the pre-check passes. SteamCMD then runs as a child of the daemon (LocalSystem) and follows the junction natively, because it does not go through InstanceFs. The post-check detects the junction only after SYSTEM has already written attacker-chosen paths. This is the host-takeover path that ADR 0013 and D13 exist to close, and the "nobody can race" reasoning is false whenever more than one instance exists.
-- *Fix:* See Required Change 1. During install, update and validate, take `garrison-srv`'s access off the target instance root and restore it after the post-check. Optionally run SteamCMD with a token that cannot traverse junctions.
+- *Location:* ADR 0010 Decision (the reparse-point check before and after `app_update`, justified by "instances in `installing`/`updating` have no running server, so `yagura-srv` code is not running to race the check"); ADR 0013 ACLs (`yagura-srv` modify on all instance directories); `design.md` D13 ("`app_update` checks the tree before and after"); `specs/steam-content/spec.md` "Install, update and validate apps" (no trust-boundary requirement).
+- *Problem:* Every game server runs as the same `yagura-srv` account, and that account can modify every instance directory. So while instance A is `updating`, instance B's running server is `yagura-srv` code and can write into A's tree. It can plant a junction (for example `A\steamapps` or a game subfolder pointing at `C:\Windows\System32`) after the pre-check passes. SteamCMD then runs as a child of the daemon (LocalSystem) and follows the junction natively, because it does not go through InstanceFs. The post-check detects the junction only after SYSTEM has already written attacker-chosen paths. This is the host-takeover path that ADR 0013 and D13 exist to close, and the "nobody can race" reasoning is false whenever more than one instance exists.
+- *Fix:* See Required Change 1. During install, update and validate, take `yagura-srv`'s access off the target instance root and restore it after the post-check. Optionally run SteamCMD with a token that cannot traverse junctions.
 
 ### Moderate
 
@@ -54,8 +54,8 @@ Round-1 findings are resolved except as noted in Rebuttals. New findings follow.
 - *Fix:* Required Change 5.
 
 **R2-M5. Graceful stop under the service identity is not covered by any spike or scenario.**
-- *Location:* `design.md` Context (spike 1.3: Ctrl+C delivery in console mode; spike 11.3: relay console starts as `garrison-srv` on `GarrisonSrv\Default`); D2 (`signal` attaches to the server console); `specs/instance-lifecycle/spec.md` "Valheim saves on a signal stop".
-- *Problem:* In production, `garrisond signal` runs as LocalSystem and must `AttachConsole` to a console owned by `garrison-srv` on a separate window station. Spike 1.3 proves delivery only as the current user. Spike 11.3 proves only that the console starts. If the attach fails across identities, every Valheim/SCUM stop under the service becomes a kill: the round-1 C1 data loss comes back unnoticed. D2 also no longer says that the helper ignores the `CTRL_C_EVENT` it sends to its own console (ADR 0009's earlier text did), so the helper can be killed before it reports success.
+- *Location:* `design.md` Context (spike 1.3: Ctrl+C delivery in console mode; spike 11.3: relay console starts as `yagura-srv` on `YaguraSrv\Default`); D2 (`signal` attaches to the server console); `specs/instance-lifecycle/spec.md` "Valheim saves on a signal stop".
+- *Problem:* In production, `yagurad signal` runs as LocalSystem and must `AttachConsole` to a console owned by `yagura-srv` on a separate window station. Spike 1.3 proves delivery only as the current user. Spike 11.3 proves only that the console starts. If the attach fails across identities, every Valheim/SCUM stop under the service becomes a kill: the round-1 C1 data loss comes back unnoticed. D2 also no longer says that the helper ignores the `CTRL_C_EVENT` it sends to its own console (ADR 0009's earlier text did), so the helper can be killed before it reports success.
 - *Fix:* Required Change 6.
 
 **R2-M6. Residual naming drift from round-1 M3.**
@@ -66,12 +66,12 @@ Round-1 findings are resolved except as noted in Rebuttals. New findings follow.
 - *Fix:* Required Change 7.
 
 **R2-M7. `UpdateSettings.autostart` is a plain proto3 bool on a full-replace call, so any client that omits it turns autostart off.**
-- *Location:* `proto/garrison/v1/instances.proto` `UpdateSettingsRequest.autostart = 7` (and `restart_policy`, `steam_account_id` as plain strings); D14 (default on).
+- *Location:* `proto/yagura/v1/instances.proto` `UpdateSettingsRequest.autostart = 7` (and `restart_policy`, `steam_account_id` as plain strings); D14 (default on).
 - *Problem:* Proto3 cannot distinguish "false" from "not set". A client that edits only settings sends `autostart=false` and silently disables autostart, and that change also bumps the revision. The same applies to scripts and grpcurl. An empty `steam_account_id` likewise either unlinks the account or is ignored; nothing says which.
 - *Fix:* Required Change 8.
 
 **R2-M8. The instance roots that create and import depend on have no API or spec.**
-- *Location:* `design.md` D21 (`garrisond roots add`); `specs/daemon-security/spec.md` "Local admin channel is restricted to administrators" (lists only `pair`, `devices`, `status`); `specs/instance-lifecycle/spec.md` "Import a copied instance" and `specs/host-service/spec.md` "Instance on another drive" (both assume a configured root).
+- *Location:* `design.md` D21 (`yagurad roots add`); `specs/daemon-security/spec.md` "Local admin channel is restricted to administrators" (lists only `pair`, `devices`, `status`); `specs/instance-lifecycle/spec.md` "Import a copied instance" and `specs/host-service/spec.md` "Instance on another drive" (both assume a configured root).
 - *Problem:* Placing instances on another drive or importing one is untestable as specified. The command that makes it possible is not in the restricted-command list or in any requirement, so it is also unclear whether a remote client could add `C:\` as a root.
 - *Fix:* Required Change 9.
 
@@ -100,7 +100,7 @@ Round-1 findings are resolved except as noted in Rebuttals. New findings follow.
 - *Fix:* Say which key wins, or raise `key_conflict` between mods too.
 
 **R2-S6. ADR 0010's reasoning is now wrong.**
-- *Location:* ADR 0010 sentence "instances in `installing`/`updating` have no running server, so `garrison-srv` code is not running to race the check".
+- *Location:* ADR 0010 sentence "instances in `installing`/`updating` have no running server, so `yagura-srv` code is not running to race the check".
 - *Fix:* Correct it through the baseline process after Required Change 1. This is not part of this change.
 
 **R2-S7. `docs/overview.md` is stale.**
@@ -118,10 +118,10 @@ VERDICT: APPROVE_WITH_CHANGES
 ## Required Changes
 
 1. **R2-C1.**
-   - In `design.md` D13, replace "`app_update` checks the tree before and after (ADR 0010)." with: "During install, update and validate, the daemon removes `garrison-srv`'s access entry from the target instance root (the instance has no running server), runs the reparse-point check, runs `app_update`, re-runs the check, and only then restores the ADR 0013 ACL; a failure at any point leaves the ACL removed and the operation fails with `sandbox_violation` or its own reason. This holds against other instances' servers, which run as the same account."
-   - Add a Mechanism Ledger row "ACL withdrawal during SteamCMD runs | yes | other instances' servers share `garrison-srv` and could plant junctions SteamCMD (SYSTEM) follows | per-instance accounts".
+   - In `design.md` D13, replace "`app_update` checks the tree before and after (ADR 0010)." with: "During install, update and validate, the daemon removes `yagura-srv`'s access entry from the target instance root (the instance has no running server), runs the reparse-point check, runs `app_update`, re-runs the check, and only then restores the ADR 0013 ACL; a failure at any point leaves the ACL removed and the operation fails with `sandbox_violation` or its own reason. This holds against other instances' servers, which run as the same account."
+   - Add a Mechanism Ledger row "ACL withdrawal during SteamCMD runs | yes | other instances' servers share `yagura-srv` and could plant junctions SteamCMD (SYSTEM) follows | per-instance accounts".
    - In `specs/steam-content/spec.md` "Install, update and validate apps", append: "While SteamCMD writes into an instance directory, the game-server account SHALL have no access to it." Add a scenario:
-     - **WHEN** instance A is updating and instance B's server process (running as `garrison-srv`) tries to create a junction inside A's directory
+     - **WHEN** instance A is updating and instance B's server process (running as `yagura-srv`) tries to create a junction inside A's directory
      - **THEN** the attempt fails with access denied, and after the update A's directory has the game-server account's access restored.
 2. **R2-M1.** In `specs/instance-lifecycle/spec.md` "Error reasons have defined exits", replace "Other requests fail with `invalid_state`." with "Stop and Delete are allowed from any reason when no operation runs; other requests fail with `invalid_state`." In "Deleting an instance protects game data", replace "SHALL require it to be stopped" with "SHALL require it to be `stopped`, `not_installed` or `error` with no running operation". Add a scenario:
    - **WHEN** an instance in `error` with `plugin_missing` is deleted without `delete_files`
@@ -129,25 +129,25 @@ VERDICT: APPROVE_WITH_CHANGES
 3. **R2-M2.** In `design.md` D14, append "Instances in `error` are not autostarted; entering `error: crash_loop` clears the last requested state." In `specs/instance-lifecycle/spec.md` "Autostart after daemon or host restart", add a scenario:
    - **WHEN** an instance is in `error` with `crash_loop` and the daemon restarts
    - **THEN** it stays in `error` and is not started.
-4. **R2-M3.** In `design.md` D13, append "If `relay.json` fails verification, the daemon identifies the server as the verified relay's child running as `garrison-srv` (by parent PID and token user); if none is found, it terminates the verified relay, whose exit ends its console's processes, and reports `error` with reason `run_record_rejected`." In `specs/instance-lifecycle/spec.md` scenario "Forged run file", replace the THEN with:
+4. **R2-M3.** In `design.md` D13, append "If `relay.json` fails verification, the daemon identifies the server as the verified relay's child running as `yagura-srv` (by parent PID and token user); if none is found, it terminates the verified relay, whose exit ends its console's processes, and reports `error` with reason `run_record_rejected`." In `specs/instance-lifecycle/spec.md` scenario "Forged run file", replace the THEN with:
    - **THEN** the daemon refuses to terminate that process, stops the genuine server through the verified relay, reports notice `run_record_rejected`, and the system process keeps running.
 5. **R2-M4.** In `design.md` D3, replace "after it holds any SteamCMD installation lock it needs" with "per step: a step acquires the SteamCMD installation lock it needs, then a heavy slot, and releases both when the step ends; no step holds a lock or slot while waiting for another installation's lock". Add a Flow & State Gaps bullet: "Update needing two installations (app anonymous, workshop account): locks and slots are taken per step, so no circular wait."
 6. **R2-M5.**
-   - In `design.md` Context, extend spike 11.3 to read "WinSW leaving relays running, the relay console starting as `garrison-srv` on its own window station, and `garrisond signal` running as LocalSystem delivering Ctrl+C to that console (Valheim saves)".
+   - In `design.md` Context, extend spike 11.3 to read "WinSW leaving relays running, the relay console starting as `yagura-srv` on its own window station, and `yagurad signal` running as LocalSystem delivering Ctrl+C to that console (Valheim saves)".
    - In D2, append to the `signal` sentence: "the helper ignores the event itself (`SetConsoleCtrlHandler(NULL, TRUE)` in the helper only) and exits 0 after `GenerateConsoleCtrlEvent` returns."
-   - In `specs/instance-lifecycle/spec.md` scenario "Valheim saves on a signal stop", change the WHEN to "a client stops a running Valheim instance started by the installed service (server running as `garrison-srv`) whose strategy is `signal`".
+   - In `specs/instance-lifecycle/spec.md` scenario "Valheim saves on a signal stop", change the WHEN to "a client stops a running Valheim instance started by the installed service (server running as `yagura-srv`) whose strategy is `signal`".
 7. **R2-M6.**
    - In `specs/desktop-client/spec.md` scenario "Steam Guard prompt", replace "an operation emits `steam_guard_required` with kind `authenticator`" with "an operation enters `waiting_for_input` with a prompt of kind `authenticator`".
    - In `specs/instance-lifecycle/spec.md` "One operation per instance at a time", replace "At most 4 install or update operations run at once across the host" with "At most 4 heavy operations (install, update, validate, apply_mods, update_mods) run at once across the host".
 8. **R2-M7.**
-   - In `proto/garrison/v1/instances.proto` `UpdateSettingsRequest`, declare `optional bool autostart = 7;`, `optional string restart_policy = 4;` and `optional string steam_account_id = 5;`, with the comment "unset = unchanged; empty steam_account_id = unlink".
+   - In `proto/yagura/v1/instances.proto` `UpdateSettingsRequest`, declare `optional bool autostart = 7;`, `optional string restart_policy = 4;` and `optional string steam_account_id = 5;`, with the comment "unset = unchanged; empty steam_account_id = unlink".
    - Add to `specs/instance-lifecycle/spec.md` "Concurrent edits are detected by revision" a scenario:
      - **WHEN** a client saves settings without setting `autostart`
      - **THEN** the instance's `autostart` value is unchanged.
 9. **R2-M8.**
    - In `specs/daemon-security/spec.md` "Local admin channel is restricted to administrators", change "(`pair`, `devices`, `status`)" to "(`pair`, `devices`, `status`, `roots`)".
-   - Add to `specs/host-service/spec.md` "Data directory layout" the sentence "Instance roots are added and removed only with `garrisond roots add|remove` over the local admin channel; the gRPC API cannot change them." Add a scenario:
-     - **WHEN** an administrator runs `garrisond roots add D:\servers`
+   - Add to `specs/host-service/spec.md` "Data directory layout" the sentence "Instance roots are added and removed only with `yagurad roots add|remove` over the local admin channel; the gRPC API cannot change them." Add a scenario:
+     - **WHEN** an administrator runs `yagurad roots add D:\servers`
      - **THEN** creating an instance under `D:\servers` is allowed and no remote call can add or remove a root.
 10. **R2-S1, R2-S2, R2-S8.**
     - In `specs/desktop-client/spec.md` "Multiple paired daemons", add `expired` to the state list.
