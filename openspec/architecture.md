@@ -1,6 +1,6 @@
 # Yagura Architecture
 
-Yagura is two applications sharing one protocol: `yagurad`, a headless Dart daemon (AOT-compiled) that owns a host and its game servers, and the Yagura desktop client (Flutter, Windows/Linux/macOS) that manages one or more paired daemons. Games are plugins: a manifest plus optional JavaScript hooks run inside the daemon. A narrative walk-through of the main flows is in [docs/overview.md](../docs/overview.md), and the wire protocol and its security in [docs/protocol.md](../docs/protocol.md); this file is the baseline that change designs read first.
+Yagura is two applications sharing one protocol: `yagurad`, a headless Dart daemon (AOT-compiled) that owns a host and its game servers, and the Yagura desktop client (Flutter, Windows and Linux; macOS not yet decided) that manages one or more paired daemons. Games are plugins: a manifest plus optional JavaScript hooks run inside the daemon. A narrative walk-through of the main flows is in [docs/overview.md](../docs/overview.md), and the wire protocol and its security in [docs/protocol.md](../docs/protocol.md); this file is the baseline that change designs read first.
 
 ## System triage
 
