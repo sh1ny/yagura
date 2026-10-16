@@ -2,29 +2,68 @@
 
 ## Metadata
 
-- **Round:** 3
-- **Prior round:** Round 2 (whole platform, M1-M5) ended APPROVE_WITH_CHANGES with 1 Critical (SYSTEM `app_update` writing through junctions planted by another instance), 8 Moderate and 8 Suggestions. A re-check confirmed all 10 Required Changes and marked the changes applied. The change has since been cut down to M1, with M2-M5 moved to `platform-backlog`, so that verdict no longer applies. The R2-C1 fix now sits in backlog D13 and the ADR 0014 note.
-- **Reviewer:** fresh-context subagent (Claude Code, `specwright-reviewer` role). Project skills loaded and applied: `dart-setup-ffi-assets`, `dart-use-ffigen`, `dart-build-cli-app`, `flutter-apply-architecture-best-practices`.
+- **Round:** 4
+- **Prior round:** Round 3 had two reviews. The subagent review returned APPROVE_WITH_CHANGES (R3-M1..M5, R3-S1..S9). The OMP review (`review-round3-omp.md`) returned REVISE (C1, C2, M1..M10, S1..S4). The user treated round 3 as REVISE, and the author's Rebuttals table (commit 60261d2) marks every finding fixed. This round re-checks each listed fix against the artifacts at HEAD 66914e4 and then reviews the change afresh.
+- **Reviewer:** fresh-context subagent (Claude Code, `specwright-reviewer` role). The request named no specific `SKILL.md` paths, only "Dart/Flutter ones" under `.claude/skills/`. I loaded and applied `dart-setup-ffi-assets`, `dart-use-ffigen`, `dart-build-cli-app` and `flutter-apply-architecture-best-practices` from `F:\Dev\Dart\yagura\.claude\skills\`. None failed to load.
 - **Reviewed:**
   - The change: `openspec/changes/init-core-platform/proposal.md`, `design.md`, `tasks.md`, and all 9 `specs/*/spec.md`.
-  - Prior round: the round-2 `review.md`.
-  - Split check (spot-check, not a full review): `openspec/changes/platform-backlog/proposal.md`, `design.md`, `specs/*/spec.md`, and the `tasks.md` group list.
-  - Baseline: `openspec/roadmap.md`. I read ADR 0007, 0009, 0011 and 0013 in full; for the other ADRs and `openspec/architecture.md` I only grepped for console mode, dev mode, secrets and Valheim. I also read `docs/protocol.md` (reason codes), `docs/overview.md` (Valheim manifest), and the `proto/yagura/v1/*.proto` service lists.
+  - Prior round: `git show 60261d2:openspec/changes/init-core-platform/review.md` (including its Rebuttals) and `openspec/changes/init-core-platform/review-round3-omp.md`.
+  - Context:
+    - `openspec/roadmap.md` (M1 section and exit criteria).
+    - `openspec/architecture.md` (state machine, state ownership, failure and recovery, resource bounds).
+    - `docs/protocol.md`.
+    - `proto/yagura/v1/{system,plugins,instances,operations,logs,common}.proto`, plus the service lists of the others.
+    - ADRs 0008 and 0013, by grep for delete, restore and revision.
+  - Backlog, for the split only (not reviewed): the requirement lists of `openspec/changes/platform-backlog/specs/*/spec.md`, and the text of its MODIFIED/REMOVED "Stop and health declarations", "Secret settings stay unset without a secret store", "Deleting an instance protects game data" and "Development mode is localhost only".
   - Checks:
     - `openspec validate init-core-platform --strict` passes.
-    - All 134 scenarios in the 9 specs have a test-map row; I checked this by script.
-    - The spikes come first: 1.2 runs before group 2 and 1.3 before group 5.
+    - By script, all 148 scenarios in the 9 specs have a test-map row with a matching requirement and scenario name.
 
 <!-- This verdict covers only the contents reviewed. Editing proposal, specs or design afterward (other than applying Required Changes) voids it. -->
 
 ## Findings
 
-The split is mostly clean:
-- The backlog keeps D8, D13, D16, D19 and D20, the InstanceFs and process-verification requirements, roots, the secret store, `onModsStaged`/`migrateSettings`, masking, revisions and the service-identity spike 11.3.
-- Its MODIFIED requirements are M1's text plus the later additions, with nothing dropped.
-- The "M1 scope" lines on D2, D3, D7, D10 and D21 hold.
+### Re-check of the round-3 fixes
 
-The findings below are places where the M1 change still depends on behaviour only the backlog provides, or where it cannot meet its own exit criteria as written.
+Each fix listed in the Rebuttals table is present in the artifacts:
+
+- **Secrets (R3-M2 / OMP C2).**
+  - New requirement "Secret settings stay unset without a secret store".
+  - D24 and `docs/protocol.md` M1 row (`SetSecret`/`DeleteSecret` fail `secret_store_unavailable`).
+  - Task 4.3.
+  - Valheim runs with `-public 0` and no password (9.1, spike 1.3, Risks).
+  - Backlog REMOVED, with a migration note.
+- **Hook file edits (OMP C1).** D23, task 2.3 and the "Edit in an unsupported format" scenario.
+- **M3 vocabulary removed from hooks and manifest (R3-M3, R3-M4 / OMP M1).**
+  - `onPreStart` is used in "Thrown error".
+  - "Edit through a link refused" is added.
+  - `unsupported_in_this_version` covers `rcon` stop, `query` health and the `bindings`/`mods`/`rcon` sections.
+  - `steam_account_required` is defined.
+- **Valheim log source and health evaluator (R3-M1 / OMP M2).** Task 9.1 declares source `server`; the evaluator is built in 5.3 and 7.3.
+- **Protocol boundary (R3-S7 / OMP M3).**
+  - D24 table.
+  - `not_implemented`.
+  - `revision` 0.
+  - `GetHealth.not_built` (proto field 10).
+  - The 8.3 checks.
+- **Desktop connection and actions (R3-S2 / OMP M5).** Requirements "Connection to one daemon" and "Instance actions"; task 9.3.
+- **Signal helper and breakaway (R3-S3 / OMP M6).** D2 "Signal helper and jobs"; spike 1.3 runs from a console parent and on CI.
+- **SteamCMD sweep (R3-S6 / OMP M7).** Scenario "Stray SteamCMD cannot be terminated".
+- **Hook worker slots (OMP M8).** Scenario "Timed-out worker keeps its slot".
+- **Log bounds (OMP M9).** 64 KiB line cut, 4 MiB follow lag, 10,000-line pause buffer.
+- **Launch commit boundary (OMP M10).** D2 "Launch records" with `pending` run rows.
+- **Other items.**
+  - AOT bundle smoke (9.4).
+  - Dev-mode defaults.
+  - M1 scope lines on D6, D12 and D21.
+  - D22.
+  - State & Ownership rows for the restart counter and the last requested state.
+  - "Cancelled update not autostarted".
+  - The 6 s hook bound.
+  - The MSVC fallback rule.
+  - The `valheim` tag.
+
+One fix is incomplete. R3-M5 / OMP M4 moved the runtime manifest rows and the negotiation rows to the right boundary, but the same class of problem remains in other groups (R4-M1 below).
 
 ### Critical (blocking)
 
@@ -32,131 +71,112 @@ None.
 
 ### Moderate
 
-**R3-M1. The Valheim manifest sends its log to a file, but the health check and log scenarios expect it on stdout.**
-- *Location:*
-  - `tasks.md` 9.1 (`-savedir`/`-logFile` inside the instance, "log-match health").
-  - `docs/overview.md` line 85 (`-logFile {{instance}}/logs/server.log`).
-  - `specs/plugin-manifest/spec.md` scenario "Log-match health check" (health `log_match: "Game server connected"` on source `stdout`).
-  - `specs/log-streaming/spec.md` scenario "Stdout survives daemon restart" ("a Valheim server keeps writing to stdout").
-  - `openspec/roadmap.md` M1 exit criterion "reaches `running` via its log-match health check, and its log streams to the desktop client".
-- *Problem:* With `-logFile <path>`, a Unity dedicated server writes its log to that file, not to stdout. A Valheim manifest built as 9.1 describes, with its health check on `stdout` as the scenario does, never matches "Game server connected". After `start_timeout` (300 s) the instance moves to `running` with `health: unknown` (instance-lifecycle "Health check never passes"), so the M1 exit criterion fails. Task 9.1 does not name the log source the manifest must declare or which source the health check reads.
+**R4-M1. Test-map rows are still assigned to a package or group that cannot observe their THEN, so several group "green" gates cannot be met as ordered.**
+- *Location:* the `tasks.md` test map and the Verify lines of tasks 2.2, 2.4, 3.3 and 4.3.
+- *Problem:* Each group's Verify says "this group's rows are green; flip them". Several rows depend on components that a later group builds, or sit in a package that has no such component:
+  - **Rows in the `packages/yagura_js` package.** This package has only the FFI runtime (task 2.2).
+    - "Infinite loop interrupted" asserts that "the start operation fails ... and the daemon keeps answering other calls". This is also the M1 exit criterion "while the daemon keeps answering `System.GetInfo`", but there is no start operation or daemon in that package.
+    - "Manifest deadline above the cap" is manifest validation at load (`yagura_plugin`, group 3).
+    - "Oversized result" and "Allocation beyond the cap" assert that "the operation fails". The result-size cap is in the daemon's hook runner (2.4).
+  - **Group 2 hook rows whose THEN is an operation outcome.** Group 2 comes before the operation runner (group 4), Start (group 5) and Install (group 6):
+    - `pre_start_hook_adds_arguments` ("the server is launched with ...").
+    - `invalid_result_shape` ("the server is not started").
+    - `thrown_error` ("operation ends `failed` ... recorded in the operation history").
+    - `context_contents` (the context of an instance's `onPreStart`).
+    - `edit_in_an_unsupported_format` and `edit_through_a_link_refused` ("the operation fails").
+    - `hook_not_exported` ("install completes").
+    - `degraded_hook_runtime` ("`GetHealth` reports 2 leaked hook workers"; `GetHealth` is served in group 8).
+    - `syntax_error_at_load` (plugin `rejected` at load; the daemon plugin registry is task 4.3).
+  - **Group 4 rows that need group 5 or 6.**
+    - `process_exits_during_the_health_window`, `health_check_never_passes` and `stop_during_the_health_wait` need the start-time health evaluator, which task 5.3 builds.
+    - `delete_with_files_snapshots_first` and `update_cancelled_after_the_server_was_stopped` need snapshots and the update operation (task 6.3).
+    - `daemon_killed_during_an_update` asserts that no SteamCMD from before the restart survives, which is the stray sweep in task 6.2.
+  - **Group 3 rows in `packages/yagura_plugin`.**
+    - `missing_executable_for_this_os` asserts that "creating an instance of it fails with `FAILED_PRECONDITION` reason `unsupported_platform`".
+    - `derived_port_collides` asserts that "the settings change fails ... naming both instances".
+    - Both are instance-manager behaviour (task 4.3).
+- *Consequence:* The author has two options, and neither is good:
+  - Write these tests against a hand-built harness that does less than the THEN. The row goes green without proving it. For "Infinite loop interrupted" this hollows out an agent-verified exit criterion.
+  - Leave the group unfinished until later groups exist, which breaks the group order the tasks depend on.
 - *Fix:* Required Change 1.
 
-**R3-M2. `secret` settings are in M1, but M1 has nowhere ADR 0011 allows to store them.**
+**R4-M2. Deleting with files is long, non-atomic work done inside a unary call, with no defined order of steps for a crash.**
 - *Location:*
-  - `specs/plugin-manifest/spec.md` "Settings schema types and constraints" (type `secret`; scenario "Secret values are write-only").
-  - `specs/instance-lifecycle/spec.md` scenario "Secrets excluded from instance.json" (RCON password and GSLT set).
-  - `specs/plugin-hooks/spec.md` scenario "Context contents" (RCON password set).
-  - `tasks.md` 3.2 and 4.3 ("secret placeholders").
-  - `design.md` D9 ("The secret store ... join[s] the fatal steps ... in M2").
-  - ADR 0011 (secrets only through `SecretStore`, as DPAPI blobs).
-  - Backlog `daemon-security` "Secrets never leave the daemon" ("stored only through the OS-backed secret store").
-- *Problem:* M1 accepts, validates and masks secret values, but no M1 requirement, decision or task says where they are stored or how they are set. `SetSecret` is in the proto, but no M1 spec mentions it. In practice the only place left is the SQLite settings row in plaintext, which contradicts in-force ADR 0011. The backlog has no task to move M1-era plaintext values into the store and scrub them. Its "Data directory scan" scenario would then fail on any database carried over from M1.
-- *Fix:* Required Change 2. Refuse secret values in M1, so nothing exists to migrate. Do not store them in plaintext.
+  - `specs/instance-lifecycle/spec.md` "Deleting an instance protects game data".
+  - `proto/yagura/v1/instances.proto` (`rpc DeleteInstance(...) returns (Empty)`).
+  - `docs/protocol.md` ("Long work never blocks a unary call"; "Client deadlines: unary 30 s").
+  - Design Failure & Visibility, which has no delete row.
+  - Task 4.3.
+- *Problem:* `delete_files: true` runs these steps in one unary call:
+  1. Copies `data_paths` into a `pre_delete` snapshot.
+  2. Removes the database rows.
+  3. Recursively removes the instance directory (a Valheim install is about 1-2 GB in thousands of files).
 
-**R3-M3. Two M1 scenarios depend on backlog-only hooks and mods, so their tests cannot be written as specified.**
+  That breaks the protocol rule above and can exceed the client's 30 s unary deadline. Nothing defines:
+  - what the daemon does when the client cancels the call;
+  - the order of the steps if the daemon dies mid-delete;
+  - what happens to operations queued for the instance. The spec refuses delete only while an operation *runs*, so a queued Start then reaches the head of the queue for a deleted instance.
+
+  Concrete outcomes:
+  - Rows are removed first and the directory removal is cut: a half-deleted, unowned directory is left under `instances/`, and nothing reports or finishes it.
+  - The directory goes first and the rows remain: a `stopped` instance points at a half-deleted directory, and its next Start launches a broken install.
+- *Why now:* The return type is part of the wire contract D24 promises not to change. While no daemon implements v1 the change is free; after M1 it is a breaking change.
+- *Fix:* Required Change 2.
+
+**R4-M3. `log_match` on a `fixed` file source can miss the current run's line when the previous run's file was about the same size.**
 - *Location:*
-  - `specs/plugin-hooks/spec.md` scenario "Thrown error" (uses `onModsStaged`, which is not in M1's "Hook points" list; the backlog adds it through MODIFIED).
-  - Scenario "Edit into a staged mod refused" (a staged mod link resolving into the content store, which is M3).
-  - The "Hook input and output contract" text ("staged mods") and the "Sandboxed host API" text ("including staged mod folders").
-  - `tasks.md` test-map rows 11 and 26, both in group 2 (M1).
-- *Problem:*
-  - The M1 hook runner never calls `onModsStaged` and has no result schema for it. Its test would have to call an unsupported hook point, or it ends up testing `onPreStart` under a scenario that names a different hook.
-  - The staged-mod scenario needs a content store and mod staging, which do not exist until M3.
-  - The general risk the staged-mod scenario covers (a hook edit escaping through a link) is real in M1 and worth keeping, but in an M1 form.
-  - When the backlog's M3 change is taken out, it will not restore the staged-mod wording, because its plugin-hooks delta modifies only "Hook points".
+  - `specs/plugin-manifest/spec.md` scenario "Log-match health check" ("whose file still holds that line from the previous run").
+  - Design D6 ("truncation detection").
+  - Tasks 7.2 and 7.3 ("matching only lines written after the current start").
+  - Task 9.1: Valheim uses `-logFile logs/server.log` with rotation `fixed`.
+- *Problem:* The only mechanism for telling a new run's file apart from the previous run's is truncation detection. With polling, that can only mean "the size went below the stored offset". A Unity server rewrites its `-logFile` from the start on each launch, so file identity and, through Windows file-name tunnelling, creation time are not reliable signals either.
+  - Suppose the previous run was short: started, then stopped or crashed soon after "Game server connected". The new run's file grows back past the old offset at about the moment it writes that line again.
+  - If a poll first sees a size at or above the stored offset, the tailer reads only from the old offset onward. It misses the new "Game server connected" line.
+  - After `start_timeout` (300 s) the instance is `running` with `health: unknown`.
+- *Consequence:* This is the Valheim readiness path of the user-verified exit criterion, and a start/stop/start sequence (or a crash restart) reaches it. The scenario's own premise, an old file holding the line, is the setup that triggers it. Nothing in the design says how the evaluator avoids it.
 - *Fix:* Required Change 3.
-
-**R3-M4. The manifest accepts features M1 cannot run, and their M1 behaviour is not defined.**
-- *Location:*
-  - `specs/plugin-manifest/spec.md` "Stop and health declarations" (stop strategy `rcon`; health `port` and `query` via Steam A2S).
-  - `specs/steam-content/spec.md` "Login mode per plugin" (`account`, `account_optional`; the only scenario is anonymous).
-  - `tasks.md`:
-    - 3.2: reserved sections for bindings, mods and rcon are "validated in their own groups", and those groups are in the backlog.
-    - 5.3: "`rcon` comes with RCON in M4".
-    - No task implements runtime health checks at all: neither 4.3, 5.2, 5.3 nor 7.2 mentions evaluating `process`, `port`, `log_match` or `query`.
-- *Problem:* Under M1, any of these plugins loads as `loaded` and then fails in ways the specs do not define:
-  - A plugin with `stop.strategy: rcon` (any DayZ-style manifest an admin drops in) has no defined Stop path.
-  - An `account`-login plugin's Install has no defined failure.
-  - `health: query` has no implementation, so the instance waits the full 300 s and reports `health: unknown`.
-  - Unvalidated `bindings`/`mods`/`rcon` sections pass `yagura plugin lint` in M1 and only fail at M3/M4.
-
-  Separately, no task builds the start-time health evaluator, including `log_match` on the log hub, which the Valheim exit criterion needs.
-- *Fix:* Required Change 4.
-
-**R3-M5. Some test-map rows sit at a boundary that cannot observe their THEN, and one needs real Valheim on CI.**
-- *Location:* `tasks.md` test map:
-  - **Daemon behaviour mapped to the manifest package.** The THENs below describe running daemon behaviour, but their rows point at `packages/yagura_plugin/test/...`, which cannot observe it:
-    - plugin-manifest "Log-match health check": "becomes `running` when that line appears".
-    - "Long-running executable tracked": recorded PID alive, exit detected.
-    - "Bootstrapper exits": start fails `launch_failed`.
-    - "Fixed manifest picked up": "the next `Start` uses the new argument".
-    - "Broken edit keeps the old version": "existing DayZ instances keep starting".
-  - **Client behaviour mapped to a daemon test.** The daemon-protocol "API version negotiation" rows ("client shows the daemon as connected / `incompatible`", "client manages it over API 1.9") point at `apps/yagurad/test/api/...`. No M1 task builds client-side negotiation (9.3 does not mention `GetInfo` or `incompatible`).
-  - **A real-game row in the CI gate.** instance-lifecycle "Valheim saves on a signal stop" sits in group 9 at `apps/yagurad/test/instances/...`, while the roadmap requires "Every test-map row ... green on Windows CI".
-- *Problem:*
-  - Tests written at the mapped boundary either cannot assert the THEN or quietly test something smaller, and the rows still go green.
-  - The client behaviour in the negotiation scenarios is never built.
-  - The Valheim row needs the real `valheim_server.exe`, an anonymous SteamCMD download of about 1 GB, on every CI run, or it gets faked with `fake_server` and stops proving that Valheim saves. In both cases the exit criterion "every row green on Windows CI" is either flaky or hollow.
-- *Fix:* Required Change 5.
 
 ### Suggestions
 
-**R3-S1. The exit criterion and the spec disagree on the hook timeout.**
-- *Location:* the roadmap says "interrupted within 6 s"; `specs/plugin-hooks/spec.md` "Infinite loop interrupted" says "within 7 s".
-- *Problem:* A test written to the spec does not prove the exit criterion.
-- *Fix:* Assert the 6 s exit bound in the test as well, or align the roadmap to 7 s. Required Change 6.
+**R4-S1. An interrupted restore leaves a half-replaced world behind a `stopped` instance.**
+- *Location:* the "Restore a snapshot" scenario, D12, task 6.3, and Failure & Visibility (whose only snapshot row is "copy fails mid-way").
+- *Problem:* If the daemon dies while replacing `data_paths`, D9 marks the operation `interrupted`, but the instance stays `stopped`. Its next Start (or autostart) runs on mixed old and new save files. The `pre_restore` snapshot makes this recoverable, but nothing tells the admin to use it.
+- *Fix:* Restore into a staging directory next to each data path and swap with renames. Alternatively, mark the instance `error` with a `restore_interrupted` reason whose exits are a new restore or Acknowledge.
 
-**R3-S2. The desktop client's reconnect after a daemon restart is not specified.**
-- *Location:* the exit criterion says "the client shows it `running` again". D10's M1 scope covers one connection, but neither the desktop spec nor 9.3 says the client reconnects and re-subscribes to `WatchInstances`.
-- *Problem:* Without that, the user-verified criterion depends on restarting the client.
-- *Fix:* Required Change 6.
+**R4-S2. The second daemon may not be able to read the holder's PID on Windows.**
+- *Location:* host-service "Second instance refused" ("exits ... with `data_dir_locked` and the PID of the holder"); D9 (`LockFileEx` on `yagurad.lock`, "the PID inside is informational").
+- *Problem:* `LockFileEx` locks are mandatory on Windows, so other processes cannot read the locked byte range. Dart's `RandomAccessFile.lock()` with the default range locks the whole file. The second daemon's read of the PID then fails, and the scenario cannot pass as written.
+- *Fix:* Lock a byte range past the PID bytes (for example, one byte at a large offset), or write the PID to a separate file.
 
-**R3-S3. Spike 1.3 does not cover the conditions M1 actually runs in.**
-- *Location:* tasks 1.3.
-- *Problem:*
-  - The process tests run on the Windows CI runner. `CREATE_BREAKAWAY_FROM_JOB` fails with access denied when the parent's job does not allow breakaway, which CI runners and some terminals can cause.
-  - The `signal` helper is spawned by a daemon that owns a console (`run --console`). `AttachConsole` fails while the helper still shares the daemon's console, so the helper must be created detached or call `FreeConsole` first.
-- *Fix:* Run the spike's parent from a console window, and also once on the CI runner. Record the outcome of both in `docs/spikes/m1-process-model.md`.
+**R4-S3. A stop cut short by a daemon crash can be undone by the restart policy.**
+- *Location:* D9 (`stopping` → re-attach); the crash detection requirement ("exits without a stop request").
+- *Problem:* Suppose the daemon dies after sending Ctrl+C but while Valheim is still saving. After restart the server is re-attached as `running` with no stop request on record. When it then exits, that counts as a crash, and `on_crash` starts it again.
+- *Fix:* Persist "stop requested" on the run record. A re-attached run that carries it resumes `stopping`: it waits out the rest of the grace period, then kills.
 
-**R3-S4. Dev mode leaves its defaults and edge cases unstated.**
-- *Location:* `specs/daemon-security/spec.md`.
-- *Problem:* The spec does not say:
-  - what the default bind is when `--dev` is given without `--bind`;
-  - what `yagurad run --console` without `--dev` does in M1 (no TLS exists yet);
-  - whether `[::1]` and `localhost` count as loopback.
-- *Fix:* State these. Recommended: default `127.0.0.1:7443`; without `--dev` M1 exits non-zero, rather than opening a listener with no authentication.
+**R4-S4. Coalesced progress leaves sequence gaps, and nothing says how a resume treats them.**
+- *Location:* D3 ("`Progress` events are coalesced per step"); daemon-protocol "Reconnect without losing events" ("receives events from 18 onward").
+- *Problem:* Coalescing drops intermediate Progress sequence numbers inside the retained window. A test or client that checks for consecutive sequences will see a gap, and nothing says whether the gap is an `events_dropped` case.
+- *Fix:* State that gaps from coalesced Progress are never reported as `events_dropped`, and that a resume gets every retained non-progress event plus the latest Progress per step.
 
-**R3-S5. Some M1 steps and settings are named but not defined.**
-- *Location and problem:*
-  - **`apply_config` step:** `specs/instance-lifecycle/spec.md` "Update while running" and tasks 6.3 ("apply config") name this step, but bindings are M3. M1 does not say what the step does.
-  - **Snapshots root:** D12's "configurable per host" has no M1 mechanism.
-  - **D6:** the title says "without following links", but the body never defines it.
-- *Fix:* Add M1 scope lines. For example, `apply_config` runs `onPostUpdate` only, and the snapshots root is fixed at `<data>/snapshots` in M1.
+**R4-S5. The disk check for a first install has no input.**
+- *Location:* steam-content "Not enough disk space" ("twice the app's last known size").
+- *Problem:* On a fresh host, such as the M1 Valheim install, there is no last known size, so the check is undefined.
+- *Fix:* Define what happens: for example, use an optional manifest `steam.size_hint_bytes`, or skip the check with a warning when no size is known.
 
-**R3-S6. A failed stray-SteamCMD sweep still lets runs start (re-raising R2-S4).**
-- *Location:* D9 (sweep failure is a degraded step); steam-content "Stray SteamCMD after a crash" covers only success.
-- *Problem:* M1 has one anonymous installation. If a stray SteamCMD survives the sweep, the next run breaks D7's rule of one process per installation.
-- *Fix:* Mark that installation unavailable until a sweep succeeds.
+**R4-S6. A settings document echoed back with secret placeholders could be refused.**
+- *Location:* plugin-manifest "Secret settings stay unset without a secret store"; `UpdateSettingsRequest.settings`; desktop task 9.3 (form "all v1 field types").
+- *Problem:* Reading the settings returns `{"secret": true, "set": false}` for a secret field. If the form sends that object back and it counts as "a value for a `secret` setting", then every save for a plugin with a secret field fails `secret_store_unavailable`.
+- *Fix:* State that a placeholder object, or an omitted secret key, is accepted and leaves the field unset. Only a non-placeholder value is refused.
 
-**R3-S7. Unbuilt RPCs in M1 services have no defined response.**
-- *Location:* task 8.2.
-- *Problem:* 8.2 serves the full `Instances` service. That service includes `SetSecret`, `DeleteSecret`, `ImportInstance`, `ExportInstance` and `ApplyConfig`, which M1 does not build. Their response is not specified.
-- *Fix:* Return `UNIMPLEMENTED` with a reason documented in `docs/protocol.md`, so the 8.3 reason-code test covers it.
+**R4-S7. Calls to unserved services get no `ErrorDetail`.**
+- *Location:* D24 ("services M1 does not serve are unknown to the server"); daemon-protocol "Structured errors" ("Every failed call SHALL return ... an error detail").
+- *Problem:* `package:grpc` answers an unknown service with `UNIMPLEMENTED` before any interceptor sees the method, so it attaches no `ErrorDetail`. A call to `Mods.ListMods` breaks the requirement as written.
+- *Fix:* Scope the requirement to served services, or serve stub services that answer `not_implemented`.
 
-**R3-S8. Later-milestone wording remains in M1 specs, and these texts become the main specs on archive.**
-- *Location:*
-  - Purpose texts of `daemon-security` (paired devices, mTLS), `host-service` ("starts at boot"), `steam-content` (workshop, accounts, Steam Guard) and `desktop-client` ("several daemons", prompts, consoles).
-  - "mods" in the "Durable state" requirement.
-  - "mod update counts" in "Instance state and event stream".
-  - "including any pending prompt" in "Missed events no longer retained".
-  - `content/` in "Default layout created".
-- *Fix:* Trim these to M1 wording, so `openspec/specs/` records only built behaviour, as the roadmap intends.
-
-**R3-S9. The restart counter has no row in State & Ownership.**
-- *Location:* design State & Ownership.
-- *Problem:* The crash-loop restart counter and window (owner, memory or SQLite, reset on Acknowledge/Start) are missing. Whether the counter survives a daemon restart decides whether the crash-loop guard holds across restarts.
-- *Fix:* Add the row.
+**R4-S8. Small inconsistencies the write-back (task 9.6) should catch.**
+- `Snapshot.reason` in `instances.proto` lists `pre_update | pre_delete | manual`. It lacks `pre_restore`, which the spec requires, and M1 has no method that creates a `manual` snapshot.
+- The architecture state diagram allows `DeleteInstance` only from `stopped`. The spec also allows it from `not_installed` and `error`.
+- "PID reused by another process" expects the instance `stopped`. With `autostart` on by default, "Host rebooted" then starts it. The scenario should say autostart is off, or expect the autostart.
 
 ## Verdict
 
@@ -164,75 +184,42 @@ VERDICT: APPROVE_WITH_CHANGES
 
 ## Required Changes
 
-1. **R3-M1.**
-   - In `tasks.md` 9.1, replace "log-match health" with "a log source `server` for `logs/server.log` (`utf-8`, rotation `fixed`), and health `log_match: \"Game server connected\"` on source `server`".
-   - In `specs/plugin-manifest/spec.md` scenario "Log-match health check", replace "on source `stdout`" with "on its declared log source".
-   - In `specs/log-streaming/spec.md` scenario "Stdout survives daemon restart", replace "a Valheim server keeps writing to stdout" with "a server whose log source is `stdout` keeps writing to it".
-2. **R3-M2.**
-   - In `design.md` D9 (or a new M1 scope note under Context), add: "M1 has no secret store: setting a value for a `secret` setting, through settings or `SetSecret`, fails `FAILED_PRECONDITION` with reason `secret_store_unavailable`, and no secret value is persisted anywhere; secret settings stay unset until M2."
-   - In `specs/plugin-manifest/spec.md`, replace scenario "Secret values are write-only" with:
-     - **WHEN** a client submits a value for a `secret` setting
-     - **THEN** the call fails with `FAILED_PRECONDITION` reason `secret_store_unavailable`, nothing is saved, and reading the settings returns the field as `{"secret": true, "set": false}`
-   - In `specs/instance-lifecycle/spec.md` scenario "Secrets excluded from instance.json", change the WHEN to "an instance's plugin declares a `secret` setting `rconPassword`" and the THEN to "`instance.json` contains `\"rconPassword\": {\"secret\": true}` and no other value for it".
-   - In `specs/plugin-hooks/spec.md` scenario "Context contents", replace "with an RCON password set" with "whose plugin declares a `secret` setting `rconPassword`".
-   - In task 9.1, state how the Valheim manifest handles the server password in M1 without a `secret` value.
-3. **R3-M3.**
-   - In `specs/plugin-hooks/spec.md` scenario "Thrown error", replace `onModsStaged` with `onPreStart`.
-   - Replace scenario "Edit into a staged mod refused" with "Edit through a link refused":
-     - **WHEN** a hook returns a file edit for `cfg/server.json` where `cfg` is a junction to a directory outside the instance root
-     - **THEN** the operation fails with `sandbox_violation` naming the path, and no file outside the instance root changes
-   - Update test-map row 26 to match.
-   - Remove "staged mods" from the "Hook input and output contract" text and "including staged mod folders" from the "Sandboxed host API" text.
-   - In `openspec/changes/platform-backlog/specs/plugin-hooks/spec.md`, add MODIFIED copies of "Hook input and output contract" and "Sandboxed host API" that restore the staged-mod wording and the original "Edit into a staged mod refused" scenario.
-4. **R3-M4.**
-   - In `specs/plugin-manifest/spec.md` "Stop and health declarations", append: "A plugin that declares stop strategy `rcon`, health `query`, or a `bindings`, `mods` or `rcon` section is `rejected` at load with reason `unsupported_in_this_version` until the milestone that builds it." Add a scenario:
-     - **WHEN** a manifest declares `stop: {strategy: rcon}`
-     - **THEN** the plugin is `rejected` with `unsupported_in_this_version` naming `stop.strategy`
-   - In `specs/steam-content/spec.md` "Login mode per plugin", add a scenario:
-     - **WHEN** an instance of a plugin with `login: account` is installed
-     - **THEN** the operation fails with `FAILED_PRECONDITION` reason `steam_account_required` before SteamCMD runs
-   - State that `account_optional` installs anonymously.
-   - Add `unsupported_in_this_version` to `docs/protocol.md`.
-   - In `tasks.md` 3.2, replace "validated in their own groups" with "rejected with `unsupported_in_this_version` in M1".
-   - In 5.3, add "health checks `process`, `port` and `log_match` (on the log hub) with `start_timeout` and `health: unknown`".
-5. **R3-M5.**
-   - In the `tasks.md` test map, move these rows to `apps/yagurad/test/...` in the group that builds the behaviour:
-     - group 5: "Log-match health check", "Long-running executable tracked" and "Bootstrapper exits";
-     - group 4: "Fixed manifest picked up" and "Broken edit keeps the old version".
-   - Move the three "API version negotiation" rows to `apps/yagura_desktop/test/api_version_negotiation_test.dart` (group 9). Add to 9.3: "`System.GetInfo` on connect, choose the highest shared major, show `incompatible` and stop calling when none is shared".
-   - Tag "Valheim saves on a signal stop" `valheim` and run it in 9.6 on a Windows machine with Valheim installed.
-   - Change the roadmap M1 criterion to "Every test-map row of `init-core-platform` except those tagged `valheim` is green on Windows CI (agent)".
-6. **R3-S1, R3-S2.**
-   - In `specs/plugin-hooks/spec.md` "Infinite loop interrupted", replace "within 7 s" with "within 6 s". The interrupt fires at the 5 s deadline; the 7 s watchdog covers native hangs only.
-   - Add to task 9.3: "reconnect with backoff after the connection drops and re-subscribe to `WatchInstances`".
+1. **R4-M1: test map groups and boundaries.** In `tasks.md`, make these test-map edits; leave every other row unchanged.
+   - **Rows moved out of `packages/yagura_js`:**
+     - "Infinite loop interrupted" → `apps/yagurad/test/hooks/hook_deadline_test.dart`, group 8.
+     - "Manifest deadline above the cap" → `packages/yagura_plugin/test/hook_declarations_test.dart`, group 3.
+     - "Allocation beyond the cap" and "Oversized result" → `apps/yagurad/test/hooks/hook_memory_cap_test.dart`, group 5.
+     - In task 3.2, add `hooks.timeout_seconds` (max 60) to the schema.
+   - **Group 2 rows moved to later groups:**
+     - Group 5: `thrown_error`, `context_contents`, `invalid_result_shape`, `pre_start_hook_adds_arguments`, `edit_in_an_unsupported_format`, `edit_through_a_link_refused`.
+     - Group 6: `hook_not_exported`.
+     - Group 8: `degraded_hook_runtime`.
+     - Group 4: `syntax_error_at_load`.
+   - **Group 4 rows moved to later groups:**
+     - Group 5: `process_exits_during_the_health_window`, `health_check_never_passes`, `stop_during_the_health_wait`.
+     - Group 6: `delete_with_files_snapshots_first`, `update_cancelled_after_the_server_was_stopped`, `daemon_killed_during_an_update`.
+   - **Group 3 rows moved to the daemon:**
+     - `missing_executable_for_this_os` and `derived_port_collides` → `apps/yagurad/test/instances/...`, group 4.
+   - **Task text:**
+     - Task 2.4 keeps "every row of this group". Group 2's remaining rows (read limits, worker slots, listing, the file-edit writer, write and path-escape refusal) can be observed by the hook runner and writer alone.
+     - Tasks 5.3, 6.3 and 8.2 already flip "this group's rows", so the moved rows are covered there.
+2. **R4-M2: delete as an operation.**
+   - Change `rpc DeleteInstance(DeleteInstanceRequest) returns (Operation)` in `proto/yagura/v1/instances.proto`, and add `DeleteInstance` to the "Unary returning an `Operation`" row in `docs/protocol.md`.
+   - In `specs/instance-lifecycle/spec.md` "Deleting an instance protects game data", add: "Delete runs as an operation on the instance's queue and is refused with `invalid_state` while another operation is queued or running. With `delete_files`, the daemon takes the `pre_delete` snapshot, writes a `.yagura/deleting` marker into the instance directory, removes the database rows, then removes the directory. At startup, a directory under an instance root that has the marker and no instance row is removed again."
+   - Add a scenario:
+     - **WHEN** the daemon is killed while removing an instance directory after its rows were deleted
+     - **THEN** after restart the instance is not listed, the remaining directory is removed, and its `pre_delete` snapshot is listed by `ListOrphanSnapshots`
+   - Map the scenario in the test map (group 6).
+   - Add a "Delete" row to design Failure & Visibility.
+   - Update task 4.3 ("delete as an operation with the marker order") and the "Delete ..." scenarios so their THENs are read from the operation's result.
+3. **R4-M3: current-run detection for `fixed` sources.**
+   - In design D6 (or a sentence in task 7.3), add: "Before each Start, for every `fixed` file source the evaluator records the file's size and a hash of its first 4 KiB. A later poll that finds a smaller size or a different first-4-KiB hash treats the file as rewritten and reads it from offset 0. `log_match` considers only lines read after this point."
+   - In `specs/plugin-manifest/spec.md`, add a scenario under "Stop and health declarations":
+     - **WHEN** the previous run's log file is 40 KiB and still holds the match line, and the new run rewrites the file from the start past 40 KiB before the next poll
+     - **THEN** the instance becomes `running` on the new run's line
+   - Map it in the test map (`apps/yagurad/test/instances/log_match_health_check_test.dart`, group 7).
 
 CHANGES_APPLIED: no
 
 ## Rebuttals
 
-<!-- Author: fixed (cite) or rebutted (reason) per finding. A Critical/Moderate rebuttal counts only once marked "accepted by reviewer". -->
-
-The user treated round 3 as REVISE, taking this review together with the OMP review in `review-round3-omp.md` (R3-C1/C2, R3-M1..M10 and R3-S1..S4 there are marked "OMP" below). Every finding of both was fixed; none is rebutted. Round 4 reviews the result.
-
-| Finding | Response |
-|---|---|
-| R3-M1 (Valheim log vs health) / OMP M2 | Fixed. Task 9.1 declares log source `server` (`logs/server.log`) with `log_match` on it; "Log-match health check" uses the declared source and matches only lines of the current run; "Stdout survives daemon restart" no longer names Valheim; the `log_match` evaluator is task 7.3 and the `process`/`port` evaluator with `start_timeout`, exit and cancellation is in 5.3. |
-| R3-M2 (secrets) / OMP C2 | Fixed. New requirement "Secret settings stay unset without a secret store" (`secret_store_unavailable` for create, settings update, `SetSecret`, `DeleteSecret`; secret defaults rejected at load); "Context contents" and "Secrets excluded from instance.json" use declared, unset secrets; D24; task 4.3; Valheim runs with `-public 0` and no password (9.1, checked by spike 1.3, risk listed). Backlog: MODIFIED settings schema with "Secret values are write-only" and REMOVED for the M1 requirement. |
-| R3-M3 (M3 references in hooks) / OMP M1 | Fixed. "Thrown error" uses `onPreStart`; "Edit through a link refused" replaces the staged-mod scenario; "staged mods" removed from the contract and host API. Backlog: MODIFIED "Hook input and output contract" and "Sandboxed host API" restore the M3 wording and scenarios. |
-| R3-M4 (manifest features M1 cannot run) / OMP M1 | Fixed. "Stop and health declarations" rejects `rcon` stop, `query` health and `bindings`/`mods`/`rcon` sections with `unsupported_in_this_version` (scenario "Unsupported stop strategy"); `account` installs fail `steam_account_required` and `account_optional` installs anonymously ("Account login not available"); task 3.2; reasons added to `docs/protocol.md`; templates over `mods` replaced by a `string_list` setting (backlog restores `mods`). |
-| R3-M5 (test boundaries) / OMP M4 | Fixed. Runtime manifest rows moved to daemon tests (groups 4, 5, 7); negotiation rows moved to `apps/yagura_desktop` (group 9) with client negotiation in 9.3; the Valheim row is tagged `valheim` and runs in 9.7; the roadmap criterion excludes `valheim` rows from CI and requires them on a Valheim machine; Linux CI runs tests not tagged `windows`/`valheim` (9.5); the MSVC fallback needs the user to amend the criterion (1.2, Risks, roadmap). "Valheim save directory" and "Long-running executable tracked" reworded to what their tests observe. |
-| R3-S1 / OMP M4 (6 s vs 7 s) | Fixed. "Infinite loop interrupted" asserts 6 s. |
-| R3-S2 / OMP M5 (reconnect, client actions) | Fixed. New requirements "Connection to one daemon" (negotiation, backoff reconnect, fresh snapshot) and "Instance actions" (create, install, start, stop, delete); task 9.3. Backlog: REMOVED "Connection to one daemon" in favour of "Multiple paired daemons", which now keeps negotiation and resync. |
-| R3-S3 / OMP M6 (signal console, breakaway) | Fixed. D2 "Signal helper and jobs": helper spawned `DETACHED_PROCESS`, ignore handler after attaching, Win32 errors returned; refused breakaway fails `launch_failed`, never dropped. Spike 1.3 runs from a console parent and once on the CI runner. |
-| R3-S4 (dev mode defaults) | Fixed. Default `127.0.0.1:7443`, `::1` and all-loopback `localhost` accepted, no `--dev` exits `secure_mode_unavailable`; scenarios "Dev mode default bind" and "Started without dev mode"; backlog MODIFIED drops the M1-only refusal. |
-| R3-S5 / OMP S3 (`apply_config`, snapshots root, D6) | Fixed. `apply_config` runs `onPostUpdate` and applies its edits (spec, 6.3); snapshots root fixed at `<data>/snapshots` (D12 M1 scope); D6 retitled and the M1 path rule is the new D22; D21 M1 scope states the allowed `instances/` subtree. |
-| R3-S6 / OMP M7 (failed SteamCMD sweep) | Fixed. Installation unavailable with `steamcmd_unavailable` until a sweep retried every 60 s succeeds (spec, D9, 6.2, Failure & Visibility); scenario "Stray SteamCMD cannot be terminated". |
-| R3-S7 / OMP M3 (unbuilt RPCs) | Fixed. Requirement "Methods a daemon version does not implement" (`UNIMPLEMENTED` / `not_implemented`), D24 method table, `revision` 0 with `expected_revision` unchecked, `GetHealth.not_built` (proto field 10), "Methods by daemon version" in `docs/protocol.md`; 8.3 checks emitted reasons one way and the method table against the server. |
-| R3-S8 / OMP S3 (later wording in M1 specs) | Fixed. Purposes of daemon-security, host-service, steam-content and desktop-client trimmed; "mods" removed from durable state, mod update counts and pending prompts from daemon-protocol, `content/` from the layout (backlog MODIFIED requirements restore them); T1 is now an M1 process view. |
-| R3-S9 / OMP S1 (restart counter, last requested state) | Fixed. State & Ownership rows for the restart counter (crash timestamps in SQLite) and the last requested state; D14 and the autostart requirement define clearing (scenario "Cancelled update not autostarted"). |
-| OMP C1 (hook file edits need the binder) | Fixed. D23 and task 2.3: lossless JSON tree in `yagura_formats` and a file-edit writer (resolved path, atomic, all or nothing) before the group-2 green gate; other formats fail `unsupported_in_this_version` (scenario "Edit in an unsupported format"); the "no external edit" clause moved to the backlog with hash tracking; backlog 15.3 reuses the writer. |
-| OMP M8 (hook worker bound) | Fixed. A timed-out worker keeps its slot until its isolate exits, so at most 4 isolates exist (D4, Resource Bounds, spec; scenario "Timed-out worker keeps its slot"). |
-| OMP M9 (log line, paused client) | Fixed. Lines cut at 64 KiB with `truncated: true` ("Line without a newline"); follow lag bound 1,000 lines or 4 MiB; desktop pause holds 10,000 lines ("Pause longer than the buffer"); backlog "Logs and console views" keeps the pause bound. |
-| OMP M10 (launch commit boundary) | Fixed. D2 "Launch records": `pending` run record and run directory before `launch`, relay identity written before the server starts, startup resolution; requirement text and scenario "Daemon killed during a start"; task 5.2. The relay dying in the moment between starting the server and recording it is listed as a residual risk. |
-| OMP S2 (AOT bundle smoke) | Fixed. Task 9.4 and a roadmap M1 criterion. |
-| OMP S4 (mixed backlog blocks) | Fixed. Backlog design "Extraction notes" lists each mixed MODIFIED requirement with its clauses by milestone and the rule for taking them out. |
