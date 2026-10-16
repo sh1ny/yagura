@@ -184,7 +184,7 @@ Covers: plugin-hooks → Hook host calls are bounded (worker slots, read and lis
 
 Covers: plugin-hooks → Hook deadline (manifest cap); plugin-manifest → Plugin discovery and validation; plugin-manifest → Plugin size limits; plugin-manifest → Settings schema types and constraints; plugin-manifest → Launch templates; plugin-manifest → Port declarations; plugin-manifest → Stop and health declarations (validation); plugin-manifest → Save data paths stay inside the instance.
 
-- [ ] 3.1 Write the failing tests for this group's rows.
+- [x] 3.1 Write the failing tests for this group's rows.
 - [ ] 3.2 Write `schemas/plugin-manifest.v1.json` (identity, steam, executable, ports with derived ports, settings schema types incl. object/list/secret, launch template entries, stop, health, data_paths, hooks with `hooks.timeout_seconds` (max 60), logs, optional `steam.size_hint_bytes`; a `default` on a `secret` setting rejected; `bindings`, `mods` and `rcon` sections, stop strategy `rcon` and health `query` rejected with `unsupported_in_this_version` in M1). Verify: the schema validates the Valheim manifest and rejects each invalid fixture.
 - [ ] 3.3 Implement `yagura_plugin`: loader with size limits, JSON Schema validation with line numbers, template parser/renderer (paths validated at load), settings validation with defaults and field paths, schema-version hash (design D5), data_paths containment check. Add `yagura plugin lint <dir>`. Verify: this group's rows are green; flip them.
 - [ ] 3.4 Write `docs/plugins/manifest.md` (every field, with the Valheim manifest as the walkthrough). Verify: a test lints every manifest snippet in the doc.
