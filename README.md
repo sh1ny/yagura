@@ -30,7 +30,7 @@ Prerequisites: [mise](https://mise.jdx.dev/) and Git. `mise install` installs th
 | `mise run changelog` | Regenerate `CHANGELOG.md` from local history (`cliff.toml`, strict `vX.Y.Z` tags) |
 | `mise run release-notes -- <range or --tag vX.Y.Z>` | Print release notes for a range or tag |
 
-Run `flutter pub get` once at the root to resolve the pub workspace (`apps/`, `packages/`). CI (`.github/workflows/ci.yml`) runs `format:check`, `analyze` and `test` on Windows and Linux with the same mise-pinned toolchain.
+Run `flutter pub get` once at the root to resolve the pub workspace (`apps/`, `packages/`). CI (`.github/workflows/ci.yml`) runs `format:check`, `analyze` and `test` on Windows and Linux with the same mise-pinned toolchain, on pull requests and on demand (`gh workflow run ci.yml --ref <branch>`); run the tasks locally before pushing.
 
 Agent tooling: `.mcp.json` runs the official Dart MCP server from the mise-pinned SDK (read by Claude Code and OMP). Official Dart and Flutter skills are vendored in `.claude/skills/`, with their source commits and file hashes in `.claude/skills/UPSTREAM.json`.
 
