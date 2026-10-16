@@ -1,0 +1,120 @@
+# Garrison protocol (`garrison.v1`)
+
+How the desktop client and `garrisond` talk, and how that channel is secured. The service definitions are in [`proto/garrison/v1/`](../proto/garrison/v1/); the behaviour contract is in the `daemon-protocol` and `daemon-security` specs; the decisions are ADR 0006 (gRPC) and ADR 0007 (mTLS and pairing).
+
+## Transport
+
+| Item | Value |
+|---|---|
+| RPC | gRPC over HTTP/2 (`package:grpc` on both ends) |
+| Default port | 7443/tcp (configurable `--bind`) |
+| TLS | TLS 1.3 only (1.2 refused) |
+| Keys | ECDSA P-256 for CA, server and devices |
+| Server auth | Server cert signed by the daemon CA, SAN `garrisond-<daemon-id>`; client uses the pinned CA as its only root and sets the TLS authority to that name |
+| Client auth | Client cert signed by the daemon CA, required on every method except `Pairing.Info` / `Pairing.Enroll` |
+| Dev mode | `--dev`: plaintext, loopback bind only, server reflection on |
+| Keepalive | HTTP/2 ping every 30 s from the client; daemon closes connections idle 10 min without streams |
+| Server keepalive policy | `minIntervalBetweenPingsWithoutData` 20 s, `maxBadPings` 2 (accepts the 30 s client ping); an idle stream must survive 10 minutes (test) |
+| Max message | 4 MiB request, 16 MiB response |
+
+## Certificates
+
+| Certificate | Subject | Validity | Key usage | Where the key lives |
+|---|---|---|---|---|
+| Daemon CA | `CN=Garrison CA <host>`; `basicConstraints CA:true, pathlen:0` | 20 years | keyCertSign, cRLSign | Daemon secret store (DPAPI), never exported |
+| Server | `CN=garrisond-<daemon-id>`; SAN: `garrisond-<daemon-id>`, `localhost` | 2 years, renewed at startup when < 30 days left | digitalSignature; EKU serverAuth | Daemon secret store |
+| Device | `CN=<device name>`, serial = random 128-bit | 1 year from enroll, `notBefore` 1 h in the past | digitalSignature; EKU clientAuth | Client OS keychain (generated there; only the CSR leaves) |
+
+Device renewal: within 30 days of expiry the client calls `Pairing.RenewCertificate` over its existing mTLS connection with a CSR for a new key; the daemon signs it and adds the new certificate's SHA-256 to the same device; the old certificate keeps working until it expires, and revoking the device rejects both. An expired device must pair again.
+
+Because the client connects by whatever address the admin typed, it never verifies the network address: it uses the pinned CA certificate as its only trusted root and sets the TLS authority (SNI and name check) to `garrisond-<daemon-id>`, which is the server certificate's SAN. The CA certificate itself is obtained from `Pairing.Info` at pairing and checked against the fingerprint in the pairing string. Device identity on the daemon side is the SHA-256 of the client certificate DER (`dart:io`'s `X509Certificate` exposes the DER, not the serial).
+
+## Pairing
+
+```
+garrison://<host>:<port>?code=<CODE>&ca=sha256:<64 hex>&name=<daemon name>
+```
+
+- `CODE`: 8 characters from `23456789ABCDEFGHJKMNPQRSTUVWXYZ` shown as `XXXX-XXXX` (~40 bits), single use, 10 minutes, at most one active code per daemon (issuing a new one invalidates the old).
+- Throttle: 5 wrong attempts from one address in 10 minutes block that address (`pairing_throttled`); 50 wrong attempts in total in 10 minutes invalidate the active code.
+- The pairing string travels out of band (the admin copies it from `garrisond pair`, which talks to the running service over the local admin pipe, ACL'd to SYSTEM and Administrators); that is what makes the CA fingerprint trustworthy.
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant D as Daemon
+  C->>C: parse pairing string (fail: invalid_pairing_string)
+  C->>D: TLS (no client cert, no verification yet) Pairing.Info
+  D-->>C: CA cert DER, tls_authority
+  C->>C: SHA-256(CA) == pin? (fail: fingerprint_mismatch, abort)
+  C->>D: new TLS connection, CA as sole root, authority garrisond-<id>
+  C->>C: generate P-256 key in keychain, build CSR (CN=device name)
+  C->>D: Pairing.Enroll(code, device_name, csr)
+  D->>D: code valid & unused & not throttled? (fail: pairing_code_invalid / RESOURCE_EXHAUSTED)
+  D->>D: verify CSR signature, sign device cert (EKU clientAuth), store device row, burn code, audit
+  D-->>C: device_id, client cert, CA cert
+  C->>C: store CA + client cert in keychain
+  C->>D: new mTLS connection; System.GetInfo
+```
+
+## Per-call authorization
+
+An interceptor runs on every call:
+
+1. Method in `{Pairing.Info, Pairing.Enroll}` → allowed without a client certificate.
+2. Otherwise `call.clientCertificate` must be present → else `UNAUTHENTICATED`. (TLS has already verified any presented certificate's chain to the daemon CA; see the note below.)
+3. SHA-256 of the certificate DER → device row; missing or `revoked` → `UNAUTHENTICATED` / `device_revoked`.
+4. Update `last_seen_at` / `last_address` (at most once per minute per device), attach `device_id` to the call context for audit.
+
+Note: the listener uses `requestClientCertificate: true` rather than `requireClientCertificate`, so the two pairing methods work on the same port; the interceptor enforces presence for every other method. A certificate that is presented is still chain-verified by TLS against the daemon CA (the CA is the listener's only trusted root), so an unknown certificate fails the handshake. Whether Dart's TLS stack rejects an untrusted client certificate in request (not require) mode is verified by the M2 spike; if it does not, pairing moves to a second listener on port+1 and the main listener uses `requireClientCertificate: true`.
+
+Revocation closes the revoked device's open streams within 5 s (the daemon tracks open streams per device).
+
+## Calls and streams
+
+| Pattern | Methods |
+|---|---|
+| Unary | most CRUD (`CreateInstance`, `UpdateSettings`, `SetSecret`, `SetMods`, `ListDevices`...) |
+| Unary returning an `Operation` | `Install`, `Update`, `Validate`, `Start`, `Stop`, `Restart`, `ApplyConfig`, `ApplyMods`, `CheckModUpdates`, `UpdateMods`, `Steam.AddAccount`, `Steam.ReauthAccount` |
+| Server stream | `WatchInstances` (snapshot + slim deltas with `settings_omitted`; 1,000 events or 8 MiB per subscriber), `WatchOperation` (resumable by `after_sequence`; `events_dropped` + snapshot when the gap is no longer retained), `Logs.Backlog`, `Logs.Follow` |
+| Bidirectional | `Rcon.Console` |
+
+Every mutating instance call (`UpdateSettings`, `SetSecret`, `DeleteSecret`, `SetMods`, `DeleteInstance`, `RestoreSnapshot`) carries `expected_revision`. The revision is incremented only on configuration changes (settings, ports, secrets, mods, restart policy, autostart, Steam account, snapshot restore), never on state, health, pid or queue changes; a stale revision fails `FAILED_PRECONDITION` / `revision_conflict` and the client reloads, so two admins never silently overwrite each other.
+
+Long work never blocks a unary call: it returns an `Operation` immediately. Interactive steps (Steam Guard) set the operation to `WAITING_FOR_INPUT` with a `Prompt` of kind `email`, `authenticator` or `mobile_approval`; any paired client may answer with `Operations.RespondToPrompt`, and the others see `PromptResolved`.
+
+Client deadlines: unary 30 s; `Execute` 15 s; streams have no deadline and rely on keepalive.
+
+## Plugin-shaped data
+
+`JsonDocument { json, schema_version }` carries the settings schema (from `GetPlugin`) and settings values. Rules:
+
+- `schema_version` is the plugin's settings-schema version; the daemon rejects writes for another version (`schema_version_mismatch`) so a form opened before a plugin reload cannot write stale fields.
+- Secret settings never carry values out of the daemon: `{"secret": true, "set": true|false}`. Values go in only through `SetSecret`.
+- The settings schema format is documented with the manifest JSON Schema (`schemas/plugin-manifest.v1.json`, `settings` section).
+
+## Errors
+
+Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violations`, `incident_id`, `metadata`). Reasons are stable identifiers:
+
+| Area | Reasons |
+|---|---|
+| General | `internal_error`, `invalid_json`, `schema_version_mismatch`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `prompt_resolved` |
+| Auth | `pairing_code_invalid`, `pairing_throttled`, `device_revoked`, `last_device`, `unauthenticated`, `access_denied` (admin channel) |
+| Instances | `not_installed`, `invalid_state`, `instance_running`, `instance_not_running`, `port_conflict`, `unsupported_platform`, `crash_loop`, `lost_while_daemon_down`, `update_interrupted`, `install_interrupted`, `settings_invalid`, `plugin_missing`, `instance_directory_missing`, `launch_failed`, `launch_logon_failed`, `directory_not_allowed`, `run_record_rejected`, `instance_file_stale` (warning), `autostarted` (notice) |
+| Plugins | `unsupported_manifest_version`, `file_too_large`, `hook_syntax_error`, `mods_not_supported`, `rcon_not_supported` |
+| Hooks | `hook_timeout`, `hook_out_of_memory`, `hook_result_invalid`, `hook_result_too_large`, `hook_error`, `sandbox_violation`, `host_limit_exceeded`, `hook_runtime_degraded`, `not_supported` |
+| Config | `binding_file_missing`, `config_parse_error`, `file_locked`, `external_edit` (event/warning; values of secret-bound keys masked) |
+| Steam | `steamcmd_unavailable`, `steam_account_required`, `steam_no_subscription`, `steam_unknown_error`, `steam_guard_invalid`, `steam_guard_timeout`, `steam_reauth_required`, `steam_stalled`, `gslt_required`, `insufficient_disk`, `workshop_item_unavailable` |
+| Mods | `stage_link_failed`, `key_conflict` (warning) |
+| Snapshots | `insufficient_disk` (snapshot) |
+| RCON | `rcon_auth_failed`, `rcon_unavailable` (stop fell back to kill), `timeout` |
+| Firewall | `firewall_unavailable` (warning) |
+| Host | `data_dir_locked`, `data_dir_unwritable`, `migration_failed`, `secret_store_unavailable`, `dev_mode_requires_loopback`, `elevation_required`, `systemd_required` (CLI/startup exit reasons) |
+
+## Versioning
+
+- Package `garrison.v1`; `System.GetInfo.api_versions` lists every `major.minor` served; the client uses the highest major it shares.
+- Minor bumps add fields, methods or enum values only. Clients ignore unknown enum values (treated as `*_UNSPECIFIED`) and hide features above the daemon's minor.
+- A breaking change creates `garrison.v2`; the daemon serves v1 and v2 side by side for at least one minor release.
+- Field numbers are never reused; removed fields are `reserved`.

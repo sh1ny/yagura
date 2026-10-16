@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package garrison.v1;
+
+import "google/protobuf/timestamp.proto";
+import "garrison/v1/operations.proto";
+
+service Steam {
+  rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
+  // Starts an add_steam_account operation; Steam Guard arrives as a Prompt
+  // on that operation and is answered with Operations.RespondToPrompt.
+  rpc AddAccount(AddAccountRequest) returns (Operation);
+  // Re-login for an account whose cached login expired.
+  rpc ReauthAccount(ReauthAccountRequest) returns (Operation);
+  rpc RemoveAccount(RemoveAccountRequest) returns (ListAccountsResponse);
+}
+
+message SteamAccount {
+  string id = 1;
+  string username = 2;
+  string status = 3;                  // ready | reauth_required | adding
+  bool password_remembered = 4;
+  google.protobuf.Timestamp last_login_at = 5;
+  repeated string used_by_instance_ids = 6;
+}
+
+message ListAccountsRequest {}
+
+message ListAccountsResponse {
+  repeated SteamAccount accounts = 1;
+}
+
+message AddAccountRequest {
+  string username = 1;
+  string password = 2;                // used once; kept (DPAPI) only if remember_password
+  bool remember_password = 3;
+}
+
+message ReauthAccountRequest {
+  string account_id = 1;
+  string password = 2;
+  bool remember_password = 3;
+}
+
+message RemoveAccountRequest {
+  string account_id = 1;              // refused while instances reference it
+}

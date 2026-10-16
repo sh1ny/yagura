@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package garrison.v1;
+
+import "garrison/v1/common.proto";
+
+service Plugins {
+  rpc ListPlugins(ListPluginsRequest) returns (ListPluginsResponse);
+  // Settings schema and manifest summary for rendering forms.
+  rpc GetPlugin(GetPluginRequest) returns (PluginDetail);
+  rpc ReloadPlugins(ReloadPluginsRequest) returns (ReloadPluginsResponse);
+}
+
+enum PluginStatus {
+  PLUGIN_STATUS_UNSPECIFIED = 0;
+  PLUGIN_STATUS_LOADED = 1;
+  PLUGIN_STATUS_REJECTED = 2;
+}
+
+message PluginProblem {
+  string reason = 1;  // e.g. unsupported_manifest_version, file_too_large
+  string path = 2;    // manifest path, e.g. "ports[0].protocol"
+  string file = 3;
+  uint32 line = 4;
+  string message = 5;
+}
+
+message PluginSummary {
+  string id = 1;
+  string name = 2;
+  string version = 3;
+  uint32 manifest_version = 4;
+  PluginStatus status = 5;
+  repeated string platforms = 6;     // windows, linux
+  repeated PluginProblem problems = 7;
+  bool has_hooks = 8;
+  bool supports_mods = 9;
+  string rcon_protocol = 10;         // battleye | source | webrcon | none
+  string steam_login = 11;           // anonymous | account | account_optional
+}
+
+message ListPluginsRequest {}
+
+message ListPluginsResponse {
+  repeated PluginSummary plugins = 1;
+}
+
+message GetPluginRequest {
+  string plugin_id = 1;
+}
+
+message PluginDetail {
+  PluginSummary summary = 1;
+  // Settings schema (types, constraints, groups) as JSON; schema_version
+  // changes whenever the plugin's settings schema changes.
+  JsonDocument settings_schema = 2;
+  repeated Port default_ports = 3;
+  repeated string mod_roles = 4;
+  repeated string log_sources = 5;
+}
+
+message ReloadPluginsRequest {
+  repeated string plugin_ids = 1; // empty = all
+}
+
+message PluginReloadResult {
+  string plugin_id = 1;
+  string outcome = 2; // reloaded | unchanged | reload_failed | added | removed
+  repeated PluginProblem problems = 3;
+}
+
+message ReloadPluginsResponse {
+  repeated PluginReloadResult results = 1;
+}
