@@ -219,7 +219,62 @@ VERDICT: APPROVE_WITH_CHANGES
      - **THEN** the instance becomes `running` on the new run's line
    - Map it in the test map (`apps/yagurad/test/instances/log_match_health_check_test.dart`, group 7).
 
-CHANGES_APPLIED: no
+### Re-check (round 4, after commits 8880730 and ba3c924)
+
+The reviewer re-checked `git diff 9773c10..ba3c924` against the artifacts. All three Required Changes are applied:
+
+1. **R4-M1: applied.**
+   - The test map moves every row listed in Required Change 1 to the stated file and group.
+   - Group 2 keeps only rows the hook runner and writer can observe: read and listing limits, worker slots, the file-edit writer, and write and path-escape refusal.
+   - Task 2.2 now verifies package unit tests only. Task 3.2 adds `hooks.timeout_seconds` (max 60). Task 5.3 calls `onPreStart` and `onPostStop` through the hook runner, and 6.3 calls `onPostInstall`.
+   - Each group's Covers line lists the rows moved into it.
+   - A script confirms 156 scenarios and 156 matching rows, and `openspec validate init-core-platform --strict` passes.
+2. **R4-M2: applied.**
+   - `DeleteInstance` returns `Operation`, in both the proto and the `docs/protocol.md` call table.
+   - The requirement refuses delete with `invalid_state` while another operation is queued or running.
+   - New requirement "Deleting files survives a daemon crash" defines the marker order, with scenario "Daemon killed while removing files" (group 6).
+   - The delete THENs are read from the operation's result, and a wrong confirmation creates no operation.
+   - D25 adds the cancellation cut-off and the case of a marked directory whose row survived.
+   - D9 recovery, State & Ownership, Failure & Visibility and tasks 4.3 and 6.3 are updated.
+3. **R4-M3: applied.**
+   - D6 "Current run" records the size and first-4-KiB hash before each Start.
+   - Scenario "Log file rewritten past its old size" is mapped to group 7, and task 7.2 builds the mark.
+   - There is a State & Ownership row for it.
+   - The same scenario is carried into the backlog's MODIFIED "Stop and health declarations".
+
+All eight Suggestions are also applied. Two use a different fix from the one proposed, and both hold:
+
+- **R4-S1 (error-reason option).**
+  - An interrupted restore leads to `error: restore_interrupted`, consistently across the spec, D9, D12, D17 (exits: restore or Acknowledge), Failure & Visibility, `docs/protocol.md` and the new scenario "Daemon killed during a restore" (group 6).
+  - Start is refused, and D14 never autostarts an instance in `error`, so the admin finds out and a half-replaced world is never started.
+  - The `pre_restore` snapshot is taken before any data path is replaced, so the data stays recoverable.
+- **R4-S7 (stub services).**
+  - Registering `Pairing`, `Steam`, `Mods`, `Rcon` and `Firewall` as stubs lets every call pass through the interceptor and carry an `ErrorDetail`.
+  - The requirement text, D24 (with its reason), the `docs/protocol.md` M1 row, task 8.2 and scenario "Service not built yet" (group 8) agree.
+  - It keeps D24's rejected alternative intact, because the proto stays whole. The generated stubs already come from task 1.4.
+
+The other six Suggestions are applied as proposed:
+
+- **R4-S2:** the PID is written at offset 0 and one byte at 2^32 is locked (spec, D9, task 4.2).
+- **R4-S3:** `stop_requested_at` is written before the stop strategy is sent, and re-attach resumes `stopping` (new requirement and scenario, D2, D9, task 5.3).
+- **R4-S4:** coalescing gaps are not drops (D3, scenario, also carried into the backlog).
+- **R4-S5:** `steam.size_hint_bytes` and `disk_check_skipped` are added, with a scenario and tasks 3.2, 6.2 and 9.1.
+- **R4-S6:** secret placeholders are accepted (spec, scenario, task 4.3).
+- **R4-S8:** `Snapshot.reason` gains `pre_restore`, "PID reused" sets `autostart` off, and task 9.6 writes these back.
+
+The edits introduced two small gaps. Neither blocks the Required Changes; the author can fix them with a wording edit:
+
+- **R4-S9. The delete operation's own row is not protected.**
+  - *Problem:* D25 and the delete requirement say delete "removes the database rows" but do not say that the delete operation's own row, and the instance's operation history, are kept until normal pruning. If delete removes them with the instance:
+    - `WatchOperation` on the delete would return `operation_expired`;
+    - the THENs "the delete operation succeeds, and its result names the `pre_delete` snapshot" would have nothing to read.
+  - *Fix:* State that operation rows outlive the instance and are pruned by the normal history bound.
+- **R4-S10. Two texts still use the old "while an operation runs" wording.**
+  - *Location:* D17's "any | Stop, Delete | refused only while an operation runs" row, and the "Error reasons have defined exits" text.
+  - *Problem:* Both still say "while an operation runs", but the delete requirement now refuses delete while an operation is queued *or* running.
+  - *Fix:* Align the wording for Delete.
+
+CHANGES_APPLIED: yes
 
 ## Rebuttals
 
