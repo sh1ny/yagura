@@ -7,7 +7,7 @@ Lets an admin create game server instances from plugins, install and run them, a
 ## ADDED Requirements
 
 ### Requirement: Instance creation validates settings against the plugin schema
-The daemon SHALL create an instance only when the plugin exists, the settings validate (defaults filled in), the ports collide with no other instance's ports or the daemon's API port, and the directory is allowed (under a configured instance root, overlapping no other instance or daemon directory). Creates are serialised. A new instance starts `not_installed` with the game-server account's access set on its directory.
+The daemon SHALL create an instance only when the plugin exists, the settings validate (defaults filled in), the ports collide with no other instance's ports or the daemon's API port, and the directory is allowed (under a configured instance root, overlapping no other instance or daemon directory). Creates are serialised. A new instance starts `not_installed`.
 
 #### Scenario: Valid instance created
 - **WHEN** a client creates an instance of plugin `valheim` with name `Friends` and settings that satisfy the schema
@@ -19,7 +19,7 @@ The daemon SHALL create an instance only when the plugin exists, the settings va
 
 #### Scenario: Directory outside the instance roots
 - **WHEN** a client creates an instance with directory `D:\`
-- **THEN** the call fails with `INVALID_ARGUMENT` reason `directory_not_allowed`, and no ACL is changed
+- **THEN** the call fails with `INVALID_ARGUMENT` reason `directory_not_allowed`, and no directory is created
 
 #### Scenario: Port equal to the daemon API port
 - **WHEN** a client creates an instance with a port equal to the daemon's API port
@@ -49,7 +49,7 @@ Each instance SHALL be in exactly one state: `not_installed`, `installing`, `sto
 - **THEN** the instance moves to `running` with a `health: unknown` flag and a warning event, and the process is not killed
 
 ### Requirement: One operation per instance at a time
-The daemon SHALL run at most one lifecycle operation per instance at a time and SHALL queue further requests in arrival order, reporting their queue position. At most 4 heavy operations (install, update, validate, apply_mods, update_mods) run at once across the host; further ones wait in the queue.
+The daemon SHALL run at most one lifecycle operation per instance at a time and SHALL queue further requests in arrival order, reporting their queue position. At most 4 heavy operations (install, update, validate) run at once across the host; further ones wait in the queue.
 
 #### Scenario: Concurrent requests on one instance
 - **WHEN** a client requests `Update` on an instance while its `Install` operation is running
@@ -102,11 +102,11 @@ When the daemon starts, it SHALL mark every operation left `queued` or `running`
 - **THEN** after restart the instance is `not_installed` with notice `install_interrupted` and a new install can be started
 
 ### Requirement: Updates stop and restart a running server
-An update or validate of a running instance SHALL stop it with its stop strategy, snapshot its data paths, update the app and any mods with updates, re-apply bindings, and start it again; an update of a stopped instance leaves it stopped.
+An update or validate of a running instance SHALL stop it with its stop strategy, snapshot its data paths, update the app, re-apply the configuration, and start it again; an update of a stopped instance leaves it stopped.
 
 #### Scenario: Update while running
 - **WHEN** a client updates a running instance
-- **THEN** the operation steps are `stop`, `snapshot`, `download`, `update_mods`, `apply_config`, `start`, and the instance ends `running`
+- **THEN** the operation steps are `stop`, `snapshot`, `download`, `apply_config`, `start`, and the instance ends `running`
 
 #### Scenario: Update fails after stop
 - **WHEN** the download step fails for a running instance
@@ -135,19 +135,11 @@ Game server processes SHALL keep running when the daemon stops, crashes or is up
 - **THEN** instance `A` is reported `stopped` with a `lost_while_daemon_down` event, and the unrelated process is not touched
 
 ### Requirement: Graceful stop per plugin strategy
-Stopping SHALL follow the plugin's stop strategy (`rcon` command, `signal` (Linux SIGTERM / Windows Ctrl+C to the server's console), or `kill`), wait up to the grace period, then kill the process if it is still alive, and report which step ended it.
+Stopping SHALL follow the plugin's stop strategy (`signal` (Linux SIGTERM / Windows Ctrl+C to the server's console), or `kill`), wait up to the grace period, then kill the process if it is still alive, and report which step ended it.
 
 #### Scenario: Valheim saves on a signal stop
-- **WHEN** a client stops a running Valheim instance started by the installed service (server running as `yagura-srv`) whose strategy is `signal`
+- **WHEN** a client stops a running Valheim instance started by `yagurad run --console` whose strategy is `signal`
 - **THEN** the server receives Ctrl+C, its world save file is written before the process exits, and the result reports `stopped_by: graceful`
-
-#### Scenario: RCON unavailable during stop
-- **WHEN** the stop strategy is `rcon` and the RCON session cannot authenticate
-- **THEN** the daemon waits out the grace period, kills the process, and the result reports `stopped_by: kill` with reason `rcon_unavailable`
-
-#### Scenario: Graceful RCON shutdown
-- **WHEN** a client stops a running DayZ instance whose strategy is `rcon` with `#shutdown` and grace 60 s
-- **THEN** the daemon sends `#shutdown` over RCON, the process exits within the grace period, and the operation result reports `stopped_by: graceful`
 
 #### Scenario: Grace period exceeded
 - **WHEN** the process is still alive when the grace period ends
@@ -168,27 +160,8 @@ The daemon SHALL persist instances, settings, mods and operations in its databas
 - **WHEN** an instance has an RCON password and a GSLT set
 - **THEN** `instance.json` contains `"rconPassword": {"secret": true}` placeholders and neither secret value appears anywhere in the file
 
-### Requirement: Concurrent edits are detected by revision
-Each instance SHALL carry a revision that increments only on configuration changes (settings, ports, secrets, mods, restart policy, autostart, Steam account, snapshot restore). Configuration calls SHALL include the revision the caller last read; a stale revision fails with `FAILED_PRECONDITION` reason `revision_conflict` and changes nothing.
-
-#### Scenario: Two clients edit the same instance
-- **WHEN** clients A and B both read revision 7, A saves settings (revision becomes 8), then B saves with expected revision 7
-- **THEN** B's call fails with `revision_conflict` and the current revision 8, and A's settings are unchanged
-
-#### Scenario: Runtime state does not change the revision
-- **WHEN** an instance crashes, restarts and changes health while a client has revision 7 loaded
-- **THEN** the revision is still 7 and the client's next settings save succeeds
-
-#### Scenario: Autostart unchanged when omitted
-- **WHEN** a client saves settings without setting `autostart`
-- **THEN** the instance's `autostart` value is unchanged
-
-#### Scenario: Current revision accepted
-- **WHEN** a client saves with the current revision
-- **THEN** the change is applied and the response carries the incremented revision
-
 ### Requirement: Save data is declared and snapshotted
-Instances SHALL keep save data in the plugin's `data_paths`, inside the instance directory. The daemon SHALL snapshot them before every update (unless the request skips it, which is audited) and before a delete with files, keep the last 3 per instance and pre-delete snapshots of deleted instances for 30 days, and refuse the operation when the snapshots volume lacks the space.
+Instances SHALL keep save data in the plugin's `data_paths`, inside the instance directory. The daemon SHALL snapshot them before every update (unless the request skips it, which the operation result records) and before a delete with files, keep the last 3 per instance and pre-delete snapshots of deleted instances for 30 days, and refuse the operation when the snapshots volume lacks the space.
 
 #### Scenario: Snapshot before update
 - **WHEN** an update starts for a Valheim instance whose `data_paths` is `save/`
@@ -208,25 +181,14 @@ Instances SHALL keep save data in the plugin's `data_paths`, inside the instance
 
 #### Scenario: Snapshot skipped on request
 - **WHEN** an update is requested with `skip_snapshot`
-- **THEN** no snapshot is taken, the operation result shows `snapshot: skipped`, and the audit log records the request
+- **THEN** no snapshot is taken, and the operation result shows `snapshot: skipped`
 
 #### Scenario: Pre-delete snapshot of a deleted instance
 - **WHEN** an instance was deleted with files 2 days ago
 - **THEN** its `pre_delete` snapshot is listed by `ListOrphanSnapshots` with the instance name, and it is removed 30 days after the delete
 
-### Requirement: Import and export instances
-The daemon SHALL export an instance as its directory's `instance.json` and SHALL import a directory containing a valid `instance.json` as a new instance, validating it like a create and listing the secrets that must be re-entered.
-
-#### Scenario: Import a copied instance
-- **WHEN** a client imports `D:/servers/dayz-main`, under a configured instance root and containing a valid `instance.json` for an installed plugin
-- **THEN** a new instance is created in state `stopped` pointing at that directory with the game-server account's access set, and the response lists `rconPassword` as a secret to set
-
-#### Scenario: Import with unknown plugin version
-- **WHEN** the `instance.json` names plugin `dayz` version `3.0.0` and the installed plugin's settings schema rejects its settings
-- **THEN** the import fails with `FAILED_PRECONDITION`, the error lists each invalid field, and no instance is created
-
 ### Requirement: Deleting an instance protects game data
-Deleting an instance SHALL require it to be `stopped`, `not_installed` or `error` with no running operation and SHALL remove its database rows, firewall rules and content-store references; its directory is removed only when the request sets `delete_files: true` and repeats the instance name as confirmation.
+Deleting an instance SHALL require it to be `stopped`, `not_installed` or `error` with no running operation and SHALL remove its database rows; its directory is removed only when the request sets `delete_files: true` and repeats the instance name as confirmation.
 
 #### Scenario: Delete with files snapshots first
 - **WHEN** a client deletes a stopped instance with `delete_files: true` and the correct confirmation
@@ -238,7 +200,7 @@ Deleting an instance SHALL require it to be `stopped`, `not_installed` or `error
 
 #### Scenario: Delete keeping files
 - **WHEN** a client deletes a stopped instance without `delete_files`
-- **THEN** the instance disappears from listings, its firewall rules are removed, and its directory with world saves is left on disk
+- **THEN** the instance disappears from listings and its directory with world saves is left on disk
 
 #### Scenario: Delete with wrong confirmation
 - **WHEN** a client deletes with `delete_files: true` and a confirmation that does not match the instance name
@@ -277,29 +239,3 @@ Each instance SHALL have an `autostart` setting (default on). After a daemon or 
 #### Scenario: Autostart fails
 - **WHEN** an autostarted instance's start fails
 - **THEN** the failure is handled like any failed Start and the instance is not retried beyond its restart policy
-
-### Requirement: Daemon file operations do not follow links planted in instance directories
-Every daemon file operation inside an instance directory (config writes, hook reads, key copies, staging, snapshots, restore, delete, log tailing, update checks) SHALL refuse any symbolic link or junction other than the mod links the daemon created and recorded, which must still point at their recorded content-store target.
-
-#### Scenario: Junction planted in a config folder
-- **WHEN** the game-server account replaces `yagura/` in an instance with a junction to `C:\Windows\System32` and the instance is started
-- **THEN** the start fails with `sandbox_violation` naming `yagura/`, and no file outside the instance is written
-
-#### Scenario: Recorded mod link
-- **WHEN** an instance's `@CF` junction points at its recorded content-store version
-- **THEN** staging and reads through it proceed normally
-
-#### Scenario: Delete never descends into a link
-- **WHEN** an instance with a planted junction to another directory is deleted with files
-- **THEN** the junction itself is removed and nothing under its target is deleted
-
-### Requirement: Only verified game server processes are terminated
-The daemon SHALL terminate a process only if it is the relay it launched or that relay's child running as the game-server account (the current user in console mode), regardless of what the instance's run files claim.
-
-#### Scenario: Forged run file
-- **WHEN** an instance's `relay.json` is rewritten to name the PID of a system process and a client stops the instance
-- **THEN** the daemon refuses to terminate that process, stops the genuine server through the verified relay, reports notice `run_record_rejected`, and the system process keeps running
-
-#### Scenario: Genuine server
-- **WHEN** the recorded server is the relay's child running as `yagura-srv`
-- **THEN** stop and kill act on it normally

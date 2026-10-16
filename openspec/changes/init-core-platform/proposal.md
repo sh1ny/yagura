@@ -4,46 +4,39 @@
 
 There is no tool that manages modded dedicated game servers on Windows hosts the way an admin actually works: from a desktop elsewhere, with mods that stay consistent, configs that survive manual edits, and a channel that is safe to expose. WindowsGSM couples UI and host and compiles game support into the app; panels like AMP or Pterodactyl bring web stacks, containers or licensing. Yagura splits a headless daemon from a desktop client and makes every game a data-first plugin, so a game patch is fixed by editing a file on the box.
 
-This is the umbrella change for the whole platform (strategy: `openspec/strategy.md`, baseline ADRs 0001-0013 in `openspec/architecture.md`). It defines every capability's behaviour once and phases the work in `tasks.md` by roadmap milestone: M1 Walking skeleton, M2 Secure remote host, M3 Steam accounts and mods, M4 Operations and complex configs, M5 Linux agent. Each task group names the milestone and the exit criteria it advances.
+This change is milestone M1, the Walking skeleton (`openspec/roadmap.md`; strategy in `openspec/strategy.md`, baseline ADRs 0001-0013 in `openspec/architecture.md`). It retires the two riskiest assumptions first (quickjs-ng built through a Dart build hook with MSVC, and Ctrl+C reaching a server through the relay so it saves) and builds the smallest end-to-end path: on one Windows machine, `yagurad --console --dev` installs Valheim anonymously, runs it under the relay, streams its log to a minimal desktop client over localhost gRPC, stops it with the world saved, and keeps it running across a daemon restart. The M2-M5 requirements and task groups are parked in `openspec/changes/platform-backlog/`, and each later milestone is taken out of it as its own change.
 
 ## What Changes
 
-- **Daemon (`yagurad`)**: a Dart AOT service that owns instances (create, install, update, validate, start, stop, restart, delete, import/export), runs one operation per instance at a time with streamed progress, keeps game servers alive across its own restarts and re-attaches to them, and persists state in SQLite with a portable `instance.json` per instance.
-- **Plugin platform**: game plugins as `plugin.yaml` manifests (content, executables, launch templates, ports, settings schema with nested and repeatable structures, config bindings, mods, RCON, logs, stop strategy, health) validated against a versioned JSON Schema, plus optional `hooks.js` lifecycle hooks run in a sandboxed quickjs-ng runtime with deadlines, memory caps and a fixed host API.
-- **Config bindings**: settings applied to game files through round-tripping parsers (`ini`, `ue-ini`, `json`, `xml`, `vdf`, `dayz-cfg`, `kv`) that preserve comments, order and unknown keys, with detection of manual edits.
-- **Steam content**: SteamCMD managed per account; anonymous, account and token (GSLT) flows; Steam Guard relayed to the client; cached logins; app install/update/validate and workshop downloads.
-- **Mods**: a daemon pipeline (resolve, acquire, stage, post-process, expose) configured per game by a declared strategy, with a shared, versioned, immutable content store, directory-junction staging with copy fallback, key-file handling and load-order launch arguments; update detection.
-- **Protocol**: gRPC `yagura.v1` with typed messages for fixed concepts and versioned JSON documents for plugin-shaped data; streams for operations, logs and RCON.
-- **Security**: daemon-local CA, one-time pairing codes with CA fingerprint pinning, mTLS on every call, per-device revocation, audit log, localhost-only dev mode; secrets in DPAPI/OS stores and never returned by the API.
-- **Host integration**: Windows service via WinSW, firewall rules owned by group and reconciled from instance ports; Linux systemd and firewall adapters in M5.
-- **RCON**: BattlEye, Source RCON and Rust WebRCON adapters with shared sessions, one-shot commands and an interactive console stream.
-- **Logs**: declared log sources (files with globs, rotation and encodings including UTF-16LE; captured stdout) tailed into bounded buffers and streamed with backlog.
-- **Desktop client**: Flutter app managing several paired daemons; forms rendered from plugin schemas; operation progress; Steam Guard prompts; logs and RCON console.
-- **Reference plugins**: Valheim (manifest only), DayZ, ARK:SA, SCUM, Rust.
+- **Workspace and spikes**: the Dart pub workspace with the daemon, desktop app and packages; the quickjs-ng build spike and the process-model spike; generated protocol code.
+- **Daemon (`yagurad`)**: data directory, exclusive lock, SQLite with migrations, a startup sequence that separates fatal from degraded steps; instances (create, install, update, validate, start, stop, restart, delete) with one operation per instance at a time, streamed and resumable progress, cancellation, interrupted-operation recovery, a portable `instance.json`, error reasons with defined exits, snapshots of save data, and autostart.
+- **Process model**: `launch`, `relay` and `signal` entry points that keep game servers running across daemon restarts, re-attach by PID, executable and start time, stop by Ctrl+C or kill with a grace period, and restart crashed servers by policy. Servers run as the current user in console mode.
+- **Plugin platform**: `plugin.yaml` manifests validated against a versioned JSON Schema (settings schema, launch templates, ports, stop and health, data paths), `yagura plugin lint`, reload on request, and optional `hooks.js` lifecycle hooks in a sandboxed quickjs-ng runtime with deadlines, memory caps and a read-only host API.
+- **Steam content**: one anonymous SteamCMD installation managed by the daemon, run non-interactively and bounded; app install, update and validate with progress and disk checks.
+- **Logs**: stdout capture and file sources with encodings and rotation, bounded buffers, backlog and live follow with drop markers.
+- **Protocol**: gRPC `yagura.v1` for the M1 services with version negotiation, structured errors, size limits, slim instance deltas, and JSON documents for plugin-shaped data; plaintext only in loopback dev mode.
+- **Desktop client**: a minimal Flutter app on one dev-mode connection: instance list, schema-driven settings form, operation progress, log view.
+- **Reference plugin**: Valheim, manifest only.
 
 ## Capabilities
 
 ### New Capabilities
-- `instance-lifecycle`: instances, their state machine, operations and their serialisation, persistence and `instance.json`, re-attach after daemon restart, import/export.
-- `plugin-manifest`: plugin discovery, manifest validation and versioning, settings schema declaration (types, constraints, nested and repeatable structures), launch templates, ports, stop and health declarations, reload.
+- `instance-lifecycle`: instances, their state machine, operations and their serialisation, persistence and `instance.json`, crash handling, re-attach after daemon restart, snapshots, autostart.
+- `plugin-manifest`: plugin discovery, manifest validation and versioning, settings schema declaration (types, constraints, nested and repeatable structures), launch templates, ports, stop and health declarations, data paths, reload.
 - `plugin-hooks`: lifecycle hook points, the hook input/output contract, the sandboxed host API, deadlines and memory limits, error reporting.
-- `config-bindings`: binding settings to files, supported formats, round-trip preservation, manual edit detection, apply ordering.
-- `steam-content`: SteamCMD management, account and anonymous logins, Steam Guard relay, credential retention, GSLT injection, app install/update/validate.
-- `mod-management`: mod sources, the content store, staging strategies, key files, load order, mod updates and removal.
-- `daemon-protocol`: the gRPC API contract, versioning, operation streaming, error model, plugin-shaped JSON payloads.
-- `daemon-security`: pairing, mTLS, device revocation, audit log, dev mode restrictions, secret handling at the API.
-- `firewall-rules`: owned rule naming, desired-state reconcile, port changes and instance deletion.
-- `rcon`: protocol adapters, sessions, commands, console streaming.
+- `steam-content`: SteamCMD management for anonymous logins, non-interactive runs, app install/update/validate, run bounds and cleanup.
+- `daemon-protocol`: the gRPC API contract, versioning, operation streaming, error model, plugin-shaped JSON payloads, message size limits.
+- `daemon-security`: development mode restricted to loopback (pairing, mTLS and the rest arrive in M2).
 - `log-streaming`: log source declaration, tailing, encodings, rotation, buffering, backlog and live follow.
-- `host-service`: running as a Windows service (later systemd), service install/uninstall, data directory layout, startup sequence.
-- `desktop-client`: multi-daemon management, schema-driven forms, operation progress, interactive prompts, logs and console views.
+- `host-service`: data directory layout, startup sequence, single daemon per data directory (the Windows service arrives in M2).
+- `desktop-client`: schema-driven forms and log views on a dev-mode connection (pairing and several daemons arrive in M2).
 
 ### Modified Capabilities
 <!-- None: new project. -->
 
 ## Impact
 
-- New repository layout (Dart pub workspace): `apps/yagurad`, `apps/yagura_desktop`, `packages/yagura_proto`, `packages/yagura_js`, `packages/yagura_formats`, `packages/yagura_plugin`, `proto/yagura/v1/`, `schemas/plugin-manifest.v1.json`, `plugins/{valheim,dayz,ark_sa,scum,rust}`, `tool/` (packaging, WinSW config).
-- Dependencies: `grpc`, `protobuf`, `sqlite3`, `x509`, `pointycastle`, `path`, `yaml`, `json_schema`-style validator, `win32`/`ffi`, `hooks`, `native_toolchain_c`; vendored quickjs-ng (MIT); bundled WinSW 2.x (MIT); Flutter `flutter_secure_storage`.
-- External systems: Steam (SteamCMD), Steam Web API for workshop metadata, CurseForge (ARK:SA mods are server-managed), Windows Firewall, Windows Service Control Manager.
+- New repository layout (Dart pub workspace): `apps/yagurad`, `apps/yagura_desktop`, `packages/yagura_proto`, `packages/yagura_js`, `packages/yagura_formats`, `packages/yagura_plugin`, `proto/yagura/v1/`, `schemas/plugin-manifest.v1.json`, `plugins/valheim`, `tool/`.
+- Dependencies: `grpc`, `protobuf`, `sqlite3`, `path`, `yaml`, a JSON Schema validator, `win32`/`ffi`, `hooks`, `native_toolchain_c`; vendored quickjs-ng (MIT).
+- External systems: Steam (SteamCMD, anonymous).
 - Builds on ADRs 0001-0013 (proposed in the baseline, accepted at baseline review).
