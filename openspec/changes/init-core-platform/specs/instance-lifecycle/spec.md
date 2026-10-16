@@ -131,12 +131,19 @@ Game server processes SHALL keep running when the daemon stops, crashes or is up
 - **THEN** instance `A` is reported `running` without being restarted, and its log stream resumes from the recorded file offsets
 
 #### Scenario: PID reused by another process
-- **WHEN** the daemon starts and the recorded PID of instance `A` now belongs to a process with a different executable or start time
+- **WHEN** the daemon starts and the recorded PID of instance `A`, whose `autostart` is off, now belongs to a process with a different executable or start time
 - **THEN** instance `A` is reported `stopped` with a `lost_while_daemon_down` event, and the unrelated process is not touched
 
 #### Scenario: Daemon killed during a start
 - **WHEN** the daemon is killed after instance `A`'s server process started but before the start was recorded as running
 - **THEN** after restart instance `A` is reported `running` with that server process, and no second server is started for it
+
+### Requirement: A stop survives a daemon restart
+A stop request SHALL be recorded on the run before the stop strategy is sent. After a daemon restart, a re-attached server whose run records a stop request SHALL be `stopping`: the daemon waits out the rest of the grace period, then kills it, and its exit is not a crash.
+
+#### Scenario: Daemon killed during a stop
+- **WHEN** the daemon is killed after sending Ctrl+C to instance `A`, while its server is still saving
+- **THEN** after restart instance `A` is `stopping`, becomes `stopped` when the server exits, and is not restarted
 
 ### Requirement: Graceful stop per plugin strategy
 Stopping SHALL follow the plugin's stop strategy (`signal` (Linux SIGTERM / Windows Ctrl+C to the server's console), or `kill`), wait up to the grace period, then kill the process if it is still alive, and report which step ended it.
@@ -183,6 +190,10 @@ Instances SHALL keep save data in the plugin's `data_paths`, inside the instance
 - **WHEN** an instance has 3 snapshots and the oldest is restored
 - **THEN** the restore completes from that snapshot, and pruning for the new `pre_restore` snapshot removes the oldest only after the restore ends
 
+#### Scenario: Daemon killed during a restore
+- **WHEN** the daemon is killed while a restore is replacing an instance's data paths
+- **THEN** after restart the instance is in `error` with reason `restore_interrupted`, a Start is refused with `invalid_state`, and the `pre_restore` snapshot is listed
+
 #### Scenario: Snapshot skipped on request
 - **WHEN** an update is requested with `skip_snapshot`
 - **THEN** no snapshot is taken, and the operation result shows `snapshot: skipped`
@@ -192,26 +203,33 @@ Instances SHALL keep save data in the plugin's `data_paths`, inside the instance
 - **THEN** its `pre_delete` snapshot is listed by `ListOrphanSnapshots` with the instance name, and it is removed 30 days after the delete
 
 ### Requirement: Deleting an instance protects game data
-Deleting an instance SHALL require it to be `stopped`, `not_installed` or `error` with no running operation and SHALL remove its database rows; its directory is removed only when the request sets `delete_files: true` and repeats the instance name as confirmation.
+Deleting an instance SHALL require it to be `stopped`, `not_installed` or `error` and SHALL remove its database rows; its directory is removed only when the request sets `delete_files: true` and repeats the instance name as confirmation. Delete SHALL run as an operation on the instance's queue and is refused with `invalid_state` while another operation is queued or running.
 
 #### Scenario: Delete with files snapshots first
 - **WHEN** a client deletes a stopped instance with `delete_files: true` and the correct confirmation
-- **THEN** a `pre_delete` snapshot of its data paths is written to the snapshots directory, then the instance directory is removed
+- **THEN** the delete operation succeeds, and its result names the `pre_delete` snapshot of the data paths, written to the snapshots directory before the instance directory was removed
 
 #### Scenario: Delete an instance whose plugin is missing
 - **WHEN** an instance in `error` with `plugin_missing` is deleted without `delete_files`
-- **THEN** it disappears from listings and its directory is left on disk
+- **THEN** the delete operation succeeds, the instance disappears from listings, and its directory is left on disk
 
 #### Scenario: Delete keeping files
 - **WHEN** a client deletes a stopped instance without `delete_files`
-- **THEN** the instance disappears from listings and its directory with world saves is left on disk
+- **THEN** the delete operation succeeds, the instance disappears from listings, and its directory with world saves is left on disk
 
 #### Scenario: Delete with wrong confirmation
 - **WHEN** a client deletes with `delete_files: true` and a confirmation that does not match the instance name
-- **THEN** the call fails with `INVALID_ARGUMENT` and nothing is deleted
+- **THEN** the call fails with `INVALID_ARGUMENT`, no operation is created, and nothing is deleted
+
+### Requirement: Deleting files survives a daemon crash
+With `delete_files`, the daemon SHALL take the `pre_delete` snapshot, write a `.yagura/deleting` marker into the instance directory, remove the database rows, then remove the directory. At startup, a directory under an instance root that has the marker and no instance row SHALL be removed again.
+
+#### Scenario: Daemon killed while removing files
+- **WHEN** the daemon is killed while removing an instance directory after the instance's rows were deleted
+- **THEN** after restart the instance is not listed, the remaining directory is removed, and its `pre_delete` snapshot is listed by `ListOrphanSnapshots`
 
 ### Requirement: Error reasons have defined exits
-An instance in `error` SHALL carry a reason, and only the exits defined for that reason are allowed: `crash_loop` leaves by Start or Acknowledge; `update_interrupted` and update failures by Update, Validate or Acknowledge; `settings_invalid` by saving valid settings; `plugin_missing` by a reload that restores the plugin. Stop and Delete are allowed from any reason when no operation runs; other requests fail with `invalid_state`.
+An instance in `error` SHALL carry a reason, and only the exits defined for that reason are allowed: `crash_loop` leaves by Start or Acknowledge; `update_interrupted` and update failures by Update, Validate or Acknowledge; `restore_interrupted` by a restore or Acknowledge; `settings_invalid` by saving valid settings; `plugin_missing` by a reload that restores the plugin. Stop and Delete are allowed from any reason when no operation runs; other requests fail with `invalid_state`.
 
 #### Scenario: Acknowledge a crash loop
 - **WHEN** a client acknowledges an instance in `error` with `crash_loop`

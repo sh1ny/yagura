@@ -40,7 +40,7 @@ The daemon SHALL invoke SteamCMD only with `+command` arguments ending in `+quit
 - **THEN** the operation fails with `steam_unknown_error` and carries the last 50 output lines, and the daemon does not retry
 
 ### Requirement: Install, update and validate apps
-The daemon SHALL install and update an instance's app with `app_update <app_id>` (with the plugin's `branch` and optional beta password) into the instance directory, report download progress, and support a `validate` option. Before downloading it SHALL check free disk space.
+The daemon SHALL install and update an instance's app with `app_update <app_id>` (with the plugin's `branch` and optional beta password) into the instance directory, report download progress, and support a `validate` option. Before downloading it SHALL check free disk space against twice the app's last known size on this host, or twice the manifest's `steam.size_hint_bytes` when there is none; with neither, the check is skipped and the operation shows warning `disk_check_skipped`.
 
 #### Scenario: Update reports progress
 - **WHEN** an update downloads 1.2 GB
@@ -53,6 +53,10 @@ The daemon SHALL install and update an instance's app with `app_update <app_id>`
 #### Scenario: Not enough disk space
 - **WHEN** the volume has less free space than twice the app's last known size
 - **THEN** the operation fails with `insufficient_disk` naming the volume, free bytes and required bytes, before SteamCMD downloads anything
+
+#### Scenario: First install without a known size
+- **WHEN** an app is installed for the first time on this host and its manifest has no `steam.size_hint_bytes`
+- **THEN** the install runs without the disk check, and the operation shows warning `disk_check_skipped`
 
 ### Requirement: SteamCMD runs are bounded and cleaned up
 A SteamCMD step SHALL fail after 15 minutes without download progress or 12 hours in total. SteamCMD processes SHALL end when the daemon ends, and at startup the daemon SHALL terminate any SteamCMD process running from its SteamCMD directories before accepting operations. If one cannot be terminated, that installation is unavailable: operations that need it fail with `steamcmd_unavailable` and start no SteamCMD process until a sweep, retried every 60 s, succeeds.

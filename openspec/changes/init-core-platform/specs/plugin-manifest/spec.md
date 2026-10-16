@@ -55,11 +55,15 @@ The manifest's `settings` SHALL support the types `string`, `integer`, `number`,
 - **THEN** validation fails with `INVALID_ARGUMENT` naming `itemStackOverrides[1].class`
 
 ### Requirement: Secret settings stay unset without a secret store
-A `default` on a `secret` setting SHALL be rejected at load. This version has no secret store, so a value for a `secret` setting SHALL be refused with `FAILED_PRECONDITION` reason `secret_store_unavailable`, and secret settings stay unset.
+A `default` on a `secret` setting SHALL be rejected at load. This version has no secret store, so a value for a `secret` setting SHALL be refused with `FAILED_PRECONDITION` reason `secret_store_unavailable`, and secret settings stay unset. An omitted secret key or the placeholder the daemon returns for it is not a value: it is accepted and leaves the field unset.
 
 #### Scenario: Secret values refused
 - **WHEN** a client submits a value for a `secret` setting, when creating an instance or updating its settings
 - **THEN** the call fails with `FAILED_PRECONDITION` reason `secret_store_unavailable`, nothing is saved, and reading the settings returns the field as `{"secret": true, "set": false}`
+
+#### Scenario: Settings saved with the secret placeholder
+- **WHEN** a client saves settings it read from the daemon, with a changed port and the secret field still `{"secret": true, "set": false}`
+- **THEN** the save succeeds, the port is changed, and the secret field stays unset
 
 ### Requirement: Launch templates
 The manifest SHALL declare the executable per OS and the launch arguments as templates over `settings`, `ports`, `paths` and `os`, supporting conditional entries and list joins. The daemon renders them at start into an argument list without passing through a shell.
@@ -93,6 +97,10 @@ The manifest SHALL declare a stop strategy (`signal` or `kill`, with grace secon
 #### Scenario: Log-match health check
 - **WHEN** a Valheim instance starts with health `log_match: "Game server connected"` on its log source `server`, whose file still holds that line from the previous run
 - **THEN** the instance becomes `running` when the line is written during this run, not because of the old line
+
+#### Scenario: Log file rewritten past its old size
+- **WHEN** the previous run's log file is 40 KiB and still holds the match line, and the new run rewrites the file from the start past 40 KiB before the next poll
+- **THEN** the instance becomes `running` on the new run's line
 
 #### Scenario: Unsupported stop strategy
 - **WHEN** a manifest declares `stop: {strategy: rcon}`

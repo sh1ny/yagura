@@ -17,7 +17,8 @@ service Instances {
   rpc UpdateSettings(UpdateSettingsRequest) returns (Instance);
   rpc SetSecret(SetSecretRequest) returns (Instance);
   rpc DeleteSecret(DeleteSecretRequest) returns (Instance);
-  rpc DeleteInstance(DeleteInstanceRequest) returns (Empty);
+  // Runs on the instance's queue; with delete_files: snapshot, marker, rows, directory.
+  rpc DeleteInstance(DeleteInstanceRequest) returns (Operation);
   rpc ImportInstance(ImportInstanceRequest) returns (ImportInstanceResponse);
   rpc ExportInstance(ExportInstanceRequest) returns (ExportInstanceResponse);
 
@@ -196,7 +197,7 @@ message Snapshot {
   string id = 1;
   string instance_id = 5;
   string instance_name = 6;
-  string reason = 2;                  // pre_update | pre_delete | manual
+  string reason = 2;                  // pre_update | pre_delete | pre_restore
   google.protobuf.Timestamp created_at = 3;
   uint64 size_bytes = 4;
 }

@@ -38,13 +38,14 @@ Unverified assumptions, each closed by a spike task in `tasks.md`: MSVC compile 
 - **Choice:** `yagurad` dispatches on its first argument: `run` (default; `--console` for development without a service account), `launch`, `relay`, `signal`. `launch` (service mode) logs on `yagura-srv`, loads its profile, builds its environment, and starts the relay with `CREATE_NEW_CONSOLE | CREATE_BREAKAWAY_FROM_JOB` (no `CREATE_NEW_PROCESS_GROUP`) on window station/desktop `YaguraSrv\Default`; it writes `{relay_pid, relay_created}` as one JSON line to its stdout and exits. `relay` calls `SetConsoleCtrlHandler(NULL, FALSE)` to clear any inherited ignore flag, installs a handler that returns TRUE for itself, starts the server without `CREATE_NEW_PROCESS_GROUP` on the same console with stdout/stderr pipes, writes `relay.json` (relay and server PID, start times, executable paths; no command line) and later `exit.json`. `signal --console-of <server pid>` (falling back to the relay pid) attaches and calls `GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)`; the helper ignores the event itself (`SetConsoleCtrlHandler(NULL, TRUE)` in the helper only) and exits 0 after `GenerateConsoleCtrlEvent` returns. On Linux, `launch` asks systemd for a transient scope (`StartTransientUnit`) and `signal` sends SIGTERM to the server. Win32 calls sit behind a `ProcessHost` interface.
 - **Signal helper and jobs:** the daemon spawns `signal` with `DETACHED_PROCESS`, so the helper has no console of its own and `AttachConsole` can succeed; it installs its ignore handler only after attaching, and exits non-zero with the Win32 error when attaching or `GenerateConsoleCtrlEvent` fails, which the stop treats as a failed graceful step (grace period, then kill). If `CREATE_BREAKAWAY_FROM_JOB` is refused because an enclosing job forbids breakaway, Start fails `launch_failed` naming breakaway; the daemon never drops the flag, because a server inside the daemon's job would die with it.
 - **Launch records:** each Start gets a run id and a run directory `.yagura/run/<run-id>/`, recorded in SQLite as `pending` before `launch` is spawned. The relay writes its own identity (PID, start time, executable) into `relay.json` before it starts the server and adds the server's identity after; the supervisor marks the run `running` once it has verified both. At startup a `pending` run is resolved from its directory: the daemon waits up to 10 s for a live relay to record its server, re-attaches a verified server, kills a verified relay that recorded none, and otherwise marks the run lost and the instance `stopped`. No new run starts for an instance while one is unresolved.
+- **Stop records:** a Stop writes `stop_requested_at` on the run record before the stop strategy is sent. A run re-attached at startup that carries it resumes `stopping` with the rest of its grace period, then kills; its exit records `stopped_by` and never counts as a crash.
 - **M1 scope:** `run --console`, `launch` with `CreateProcessW` as the current user (no service, no window station), `relay` and `signal` on Windows. The `yagura-srv` logon path is M2 and the Linux path M5.
 - **Rejected:** separate helper executables because they add build and signing targets while sharing all their code with the daemon.
 - **Reversal cost:** low.
 
 ### D3: Operations are persisted rows driven by an in-memory runner
 
-- **Choice:** each request inserts an operation row (`queued`) and enqueues it on the instance's FIFO (10 queued max, `queue_full`). Heavy operations are `install`, `update`, `validate`, `apply_mods` and `update_mods`; one of 4 host heavy slots is taken only when the operation is about to start real work, per step: a step acquires the SteamCMD installation lock it needs, then a heavy slot, and releases both when the step ends; no step holds a lock or slot while waiting for another installation's lock; while waiting the operation reports step `waiting_for_steamcmd` with its position. Events get per-operation sequence numbers; `Progress` events are coalesced per step (only the latest is retained), other events are retained up to 2,000 per operation. A resume below the retained window starts with `events_dropped{from,to}` followed by the current `Operation`. Terminal state is persisted; at startup unfinished operations become `interrupted` (D9).
+- **Choice:** each request inserts an operation row (`queued`) and enqueues it on the instance's FIFO (10 queued max, `queue_full`). Heavy operations are `install`, `update`, `validate`, `apply_mods` and `update_mods`; one of 4 host heavy slots is taken only when the operation is about to start real work, per step: a step acquires the SteamCMD installation lock it needs, then a heavy slot, and releases both when the step ends; no step holds a lock or slot while waiting for another installation's lock; while waiting the operation reports step `waiting_for_steamcmd` with its position. Events get per-operation sequence numbers; `Progress` events are coalesced per step (only the latest is retained), other events are retained up to 2,000 per operation. A resume below the retained window starts with `events_dropped{from,to}` followed by the current `Operation`. Gaps left by coalescing are not drops: a resume gets every retained event that is not progress plus the latest progress of each step, with no `events_dropped`. Terminal state is persisted; at startup unfinished operations become `interrupted` (D9).
 - **M1 scope:** the heavy operations are `install`, `update` and `validate`; `apply_mods` and `update_mods` join with mods in M3.
 - **Rejected:** a durable, resumable job queue because SteamCMD runs, hooks and spawns are not resumable and half-resumed work is riskier than an explicit retry.
 - **Reversal cost:** low.
@@ -64,6 +65,7 @@ Unverified assumptions, each closed by a spike task in `tasks.md`: MSVC compile 
 ### D6: Log tailers poll files
 
 - **Choice:** each source is tailed by polling (250 ms while followed, 2 s otherwise), truncation detection, `newest` switching by creation time, offsets persisted every 10 s.
+- **Current run:** before each Start, for every `fixed` file source the evaluator records the file's size and a SHA-256 of its first 4 KiB. A later poll that finds a smaller size or a different first-4-KiB hash treats the file as rewritten and reads it from offset 0. `log_match` considers only lines read after this point, so a rewrite that grows past the old size before the next poll is still seen.
 - **Rejected:** `FileSystemEntity.watch` because change notifications are unreliable for appended data on some Windows volumes.
 - **Reversal cost:** low.
 
@@ -76,7 +78,7 @@ Unverified assumptions, each closed by a spike task in `tasks.md`: MSVC compile 
 
 ### D9: Startup separates fatal steps from degraded ones
 
-- **Choice:** fatal (exit non-zero, nothing served): data-directory lock (`LockFileEx`/`flock` on `yagurad.lock`, released by the OS when the holder dies; the PID inside is informational), database open and migration. The secret store and daemon identity join the fatal steps, and firewall reconcile the degraded ones, in M2. Degraded (listener still opens, notice + `GetHealth` flag): stray SteamCMD sweep (if a stray cannot be terminated, that installation is unavailable and operations needing it fail `steamcmd_unavailable` without spawning; the Steam service retries the sweep every 60 s), plugin load failures, state recovery (`installing` → `not_installed`; `updating` → `error: update_interrupted`; `starting`/`running`/`stopping` → re-attach by PID, executable and start time, else `stopped` or crash handling), log tailing, autostart (D14), `instance.json` rewrite. Per-instance failures affect only that instance.
+- **Choice:** fatal (exit non-zero, nothing served): data-directory lock (`LockFileEx`/`flock` on `yagurad.lock`, released by the OS when the holder dies; the holder writes its PID at offset 0 and locks one byte at offset 2^32, so a refused daemon can read the PID, which is informational), database open and migration. The secret store and daemon identity join the fatal steps, and firewall reconcile the degraded ones, in M2. Degraded (listener still opens, notice + `GetHealth` flag): stray SteamCMD sweep (if a stray cannot be terminated, that installation is unavailable and operations needing it fail `steamcmd_unavailable` without spawning; the Steam service retries the sweep every 60 s), plugin load failures, state recovery (`installing` → `not_installed`; `updating` → `error: update_interrupted`; `starting`/`running`/`stopping` → re-attach by PID, executable and start time, else `stopped` or crash handling; a run with a stop request resumes `stopping` (D2); an interrupted restore → `error: restore_interrupted`; an instance directory with a `.yagura/deleting` marker and no row is removed (D25)), log tailing, autostart (D14), `instance.json` rewrite. Per-instance failures affect only that instance.
 - **Rejected:** "any failure before the listener exits" because a stopped firewall service would make WinSW restart the daemon in a loop and the admin could not connect to see why.
 - **Reversal cost:** low.
 
@@ -95,7 +97,7 @@ Unverified assumptions, each closed by a spike task in `tasks.md`: MSVC compile 
 
 ### D12: Snapshots are directory copies on the snapshots volume
 
-- **Choice:** snapshots copy `data_paths` into `<snapshots root>/<instance>/<id>/` (default `<data>/snapshots`, configurable per host) with a manifest; the free-space check is made on the snapshots volume. Retention: last 3 per instance; a snapshot being restored is pinned against pruning until the restore ends; `pre_delete` snapshots of deleted instances are kept 30 days and listed through `ListOrphanSnapshots`. `skip_snapshot` on Update is allowed and recorded in the operation result as `snapshot: skipped`; the audit entry comes with the audit log in M2.
+- **Choice:** snapshots copy `data_paths` into `<snapshots root>/<instance>/<id>/` (default `<data>/snapshots`, configurable per host) with a manifest; the free-space check is made on the snapshots volume. Retention: last 3 per instance; a snapshot being restored is pinned against pruning until the restore ends; a restore takes its `pre_restore` snapshot before it replaces any data path, and one interrupted by a daemon crash leaves the instance in `error: restore_interrupted` (D17), so a half-replaced world is never started; `pre_delete` snapshots of deleted instances are kept 30 days and listed through `ListOrphanSnapshots`. `skip_snapshot` on Update is allowed and recorded in the operation result as `snapshot: skipped`; the audit entry comes with the audit log in M2.
 - **M1 scope:** the snapshots root is fixed at `<data>/snapshots`; making it configurable comes with the local admin channel in M2.
 - **Rejected:** zip archives because compressing multi-GB worlds would dominate update time.
 - **Reversal cost:** low.
@@ -123,6 +125,8 @@ Unverified assumptions, each closed by a spike task in `tasks.md`: MSVC compile 
 | `crash_loop` | Acknowledge | `stopped` |
 | `update_interrupted`, update failure | Update, Validate | `updating` |
 | `update_interrupted`, update failure | Acknowledge | `stopped` (warning kept: files may be inconsistent) |
+| `restore_interrupted` | RestoreSnapshot | `stopped` once the restore ends |
+| `restore_interrupted` | Acknowledge | `stopped` (warning kept: data paths may be mixed) |
 | `settings_invalid` | UpdateSettings with valid settings | `stopped` |
 | `plugin_missing` | ReloadPlugins that restores the plugin | `stopped` |
 | any | Stop, Delete | refused only while an operation runs |
@@ -160,19 +164,26 @@ Start from `error: settings_invalid` or `plugin_missing` fails `invalid_state`. 
 
 ### D24: The M1 API surface
 
-- **Choice:** M1 serves `System`, `Plugins`, `Instances`, `Operations` and `Logs`. Methods of those services that M1 does not build fail `UNIMPLEMENTED` with reason `not_implemented`; services M1 does not serve are unknown to the server. `docs/protocol.md` lists the methods each version implements.
+- **Choice:** M1 serves `System`, `Plugins`, `Instances`, `Operations` and `Logs`. Methods of those services that M1 does not build fail `UNIMPLEMENTED` with reason `not_implemented`. The other v1 services (`Pairing`, `Steam`, `Mods`, `Rcon`, `Firewall`) are registered as stubs whose every method fails the same way, because `package:grpc` answers an unknown service before any interceptor runs and would send no `ErrorDetail`. `docs/protocol.md` lists the methods each version implements.
 
 | Service | Implemented in M1 | Not in M1 |
 |---|---|---|
 | System | `GetInfo`, `GetHealth` | `ListAudit` (M2) |
 | Plugins | all | — |
-| Instances | `ListInstances`, `GetInstance`, `WatchInstances`, `CreateInstance`, `UpdateSettings`, `DeleteInstance`, `Install`, `Update`, `Validate`, `Start`, `Stop`, `Restart`, `Acknowledge`, snapshots | `SetSecret`, `DeleteSecret` (fail `FAILED_PRECONDITION` / `secret_store_unavailable`), `ImportInstance`, `ExportInstance` (M4), `ApplyConfig` (M3) |
+| Instances | `ListInstances`, `GetInstance`, `WatchInstances`, `CreateInstance`, `UpdateSettings`, `DeleteInstance` (an operation, D25), `Install`, `Update`, `Validate`, `Start`, `Stop`, `Restart`, `Acknowledge`, snapshots | `SetSecret`, `DeleteSecret` (fail `FAILED_PRECONDITION` / `secret_store_unavailable`), `ImportInstance`, `ExportInstance` (M4), `ApplyConfig` (M3) |
 | Operations | `GetOperation`, `ListOperations`, `WatchOperation`, `CancelOperation` | `RespondToPrompt` (M3) |
 | Logs | all | — |
+| Pairing, Steam, Mods, Rcon, Firewall | — | all (stubs; M2-M4) |
 
 M1 sets every instance `revision` to 0 and does not check `expected_revision`, so the last write wins; revision checks arrive with remote clients in M2. `GetHealth` lists components a version does not have in `not_built` (M1: `secret_store`, `firewall`); their `*_ok` fields are false and carry no meaning.
 - **Rejected:** serving only the methods M1 builds from a trimmed proto because the wire contract would then change in every milestone.
 - **Reversal cost:** low.
+
+### D25: Delete is an operation with a crash-safe order
+
+- **Choice:** `DeleteInstance` returns an `Operation` on the instance's queue and is refused with `invalid_state` while another operation is queued or running; a wrong confirmation fails the call before an operation exists. With `delete_files` the steps are: `pre_delete` snapshot, `.yagura/deleting` marker written into the instance directory, database rows removed, directory removed. Cancellation is honoured only before the rows are removed; after that the delete runs to the end. At startup a marked directory with no instance row is removed again (D9), and a marked directory whose row still exists is left alone with its marker removed, because the rows were never deleted.
+- **Rejected:** a unary call returning `Empty`, because copying a snapshot and removing a 1-2 GB directory blocks the call past the 30 s client deadline and has no defined outcome on cancel or crash.
+- **Reversal cost:** low before M1 ships the v1 contract; a breaking change after.
 
 ## Diagrams (FULL)
 
@@ -253,7 +264,7 @@ The system table is in `openspec/architecture.md`. Additions and refinements:
 |---|---|---|---|---|
 | Per-instance operation queue | Operation runner | Daemon process | Unfinished rows become `interrupted` at startup (D9) | SQLite (terminal), memory (order) |
 | Operation events | Operation runner | Until the operation is pruned | Progress coalesced per step; others ≤ 2,000; `events_dropped` on gaps (D3) | Memory; terminal persisted |
-| Run record (`pending` → `running` → ended) | Process supervisor | One run | Created before `launch`; resolved at startup from the run directory (D2) | SQLite + run directory |
+| Run record (`pending` → `running` → ended), stop request | Process supervisor | One run | Created before `launch`; resolved at startup from the run directory; `stop_requested_at` written before the stop strategy is sent (D2) | SQLite + run directory |
 | Relay record | Process supervisor | One run | From `relay.json` (relay identity, written before the server starts) and the launcher report | Verified copy in SQLite |
 | Server record | Process supervisor | One run | Accepted from `relay.json` when PID, executable and start time match (parent and token checks join in M2) | Verified copy in SQLite |
 | Last requested state (for autostart) | Instance manager | Instance lifetime | Set on successful Start; cleared by Stop, Delete, or an operation that ends with the server stopped (D14) | SQLite |
@@ -262,6 +273,8 @@ The system table is in `openspec/architecture.md`. Additions and refinements:
 | Snapshot rows + files | Snapshots | Last 3 per instance; orphans 30 days | Pinned while restoring (D12) | Disk + SQLite |
 | Hook worker slots (active, timed out, leaked) | Hook runner | Daemon process | A timed-out worker keeps its slot until its isolate exits; leaked count reset on restart (D4) | Memory |
 | SteamCMD installation availability | Steam service | Daemon process | Unavailable while a stray could not be terminated; sweep retried every 60 s (D9) | Memory |
+| Current-run mark of a `fixed` log source (size, first-4-KiB hash) | Health evaluator | One start | Taken before each Start; a smaller size or a different hash means rewritten, read from 0 (D6) | Memory |
+| Delete marker (`.yagura/deleting`) | Instance manager | One delete | Written before the rows are removed; a marked directory without a row is removed at startup (D25) | Instance directory |
 | Instance roots | Instance manager (default root in M1; admin channel from M2) | Host | — | SQLite |
 
 ## Failure & Visibility (FULL)
@@ -277,6 +290,9 @@ System-level rows are in `openspec/architecture.md` (Failure and recovery). Addi
 | Signal helper | Attach or Ctrl+C fails | Graceful step counted as failed; kill after the grace period; `stopped_by: kill` | Yes | Operation result |
 | Stray SteamCMD sweep | A stray cannot be terminated | Installation unavailable, `steamcmd_unavailable`; sweep retried every 60 s | Yes | Client notice |
 | Hook file edit | Parse or write fails | No edit of that hook result is applied; operation fails | Yes | Client error |
+| Delete with files | Daemon dies after the rows were removed | Marked directory removed again at startup; `pre_delete` snapshot listed as an orphan (D25) | Yes | Instance gone from listings; orphan snapshot listed |
+| Restore | Daemon dies while replacing data paths | Instance `error: restore_interrupted`; Start refused; restore again or Acknowledge (D17) | Yes | Client notice; instance error reason |
+| Stop | Daemon dies after the stop strategy was sent | Re-attached run resumes `stopping`, kill after the rest of the grace period; not a crash (D2) | Yes | Client notice |
 | Snapshot | Copy fails mid-way | Partial snapshot directory deleted; operation fails before any destructive step | Yes | Client error |
 | Autostart | Start fails after reboot | Normal Start failure handling; no retry loop beyond the restart policy | Yes | Client notice |
 | `instance.json` write | Fails after DB commit | Call succeeds; warning event; rewritten at next change and at startup | Yes | Client warning |

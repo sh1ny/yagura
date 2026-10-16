@@ -223,3 +223,19 @@ CHANGES_APPLIED: no
 
 ## Rebuttals
 
+
+All three Required Changes and all eight Suggestions were applied as fixes; none is rebutted.
+
+| Finding | Response |
+|---|---|
+| R4-M1 (test rows that cannot observe their outcome) | Fixed as listed in Required Change 1: the `yagura_js` rows moved to the daemon (groups 5, 8) and to `yagura_plugin` (group 3); group 2 keeps only the runner and writer rows; the health, cancellation, update and delete rows moved to groups 5 and 6; the two `yagura_plugin` rows moved to daemon tests in group 4. Task 2.2 now verifies package unit tests, 3.2 adds `hooks.timeout_seconds` (max 60), and each group's Covers line lists the moved requirements. 156 scenarios, 156 rows. |
+| R4-M2 (delete blocks a unary call) | Fixed. `DeleteInstance` returns `Operation` (proto, `docs/protocol.md`); the requirement runs delete on the queue and refuses it with `invalid_state` while another operation is queued or running; new requirement "Deleting files survives a daemon crash" with the marker order and scenario "Daemon killed while removing files" (group 6); the delete THENs read the operation result; new D25 (cancellation only before the rows go; marked directory with a row left alone); D9 recovery, State & Ownership and Failure & Visibility rows; tasks 4.3 and 6.3. |
+| R4-M3 (Valheim readiness missed on rewrite) | Fixed. D6 "Current run": size and first-4-KiB hash per `fixed` source before each Start; scenario "Log file rewritten past its old size" (group 7, also carried into the backlog MODIFIED block); State & Ownership row; task 7.2. |
+| R4-S1 (interrupted restore) | Fixed. `pre_restore` is taken before any data path is replaced; a restore cut by a crash leaves `error: restore_interrupted` (exits: restore or Acknowledge) in the spec, D9, D12, D17 and Failure & Visibility; scenario "Daemon killed during a restore"; reason added to `docs/protocol.md`; task 6.3. |
+| R4-S2 (PID unreadable under `LockFileEx`) | Fixed. The holder writes its PID at offset 0 and locks one byte at offset 2^32 (host-service requirement, D9, task 4.2). |
+| R4-S3 (stop undone by restart policy) | Fixed. New requirement "A stop survives a daemon restart" with scenario "Daemon killed during a stop" (group 5); D2 "Stop records" (`stop_requested_at` before the strategy is sent), D9 recovery, State & Ownership and Failure & Visibility rows; tasks 5.2 and 5.3. |
+| R4-S4 (coalesced progress gaps) | Fixed. D3 states coalescing gaps are not drops; scenario "Resume across coalesced progress" (group 8, carried into the backlog); task 8.2. |
+| R4-S5 (disk check on first install) | Fixed. Twice the last known size, else twice the optional manifest `steam.size_hint_bytes`, else skipped with warning `disk_check_skipped`; scenario "First install without a known size"; tasks 3.2, 6.2 and 9.1 (Valheim hint from spike 1.3); warning listed in `docs/protocol.md`. |
+| R4-S6 (secret placeholder echoed back) | Fixed. An omitted key or the read placeholder is accepted and leaves the field unset; scenario "Settings saved with the secret placeholder" (group 4); task 4.3. |
+| R4-S7 (no `ErrorDetail` for unserved services) | Fixed by serving stubs: `Pairing`, `Steam`, `Mods`, `Rcon` and `Firewall` are registered and every method fails `not_implemented` with a detail (D24, requirement text, `docs/protocol.md`, task 8.2); scenario "Service not built yet" (group 8). |
+| R4-S8 (small inconsistencies) | Fixed. `Snapshot.reason` lists `pre_update`, `pre_delete` and `pre_restore` (no `manual`); "PID reused by another process" now has `autostart` off; task 9.6 writes back delete from `stopped`, `not_installed` and `error`, delete as an operation, stop records and `restore_interrupted` into the architecture state diagram. |

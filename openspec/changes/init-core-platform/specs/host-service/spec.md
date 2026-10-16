@@ -29,7 +29,7 @@ On start the daemon SHALL lock the data directory, open and migrate the database
 - **THEN** the transaction rolls back, the database is unchanged, the daemon exits non-zero with `migration_failed` and the migration number, and running game servers are untouched
 
 ### Requirement: Single daemon per data directory
-The daemon SHALL hold an operating-system exclusive lock on a lock file in its data directory, which the OS releases when the holder exits, and refuse to start if another process holds it.
+The daemon SHALL hold an operating-system exclusive lock on a lock file in its data directory, which the OS releases when the holder exits, and refuse to start if another process holds it. The lock SHALL cover only a byte range past the holder's PID, which the holder writes at the start of the file, so a refused daemon can read it.
 
 #### Scenario: Second instance refused
 - **WHEN** a second `yagurad` starts against the same data directory

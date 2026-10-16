@@ -75,7 +75,7 @@ Revocation closes the revoked device's open streams within 5 s (the daemon track
 | Pattern | Methods |
 |---|---|
 | Unary | most CRUD (`CreateInstance`, `UpdateSettings`, `SetSecret`, `SetMods`, `ListDevices`...) |
-| Unary returning an `Operation` | `Install`, `Update`, `Validate`, `Start`, `Stop`, `Restart`, `ApplyConfig`, `ApplyMods`, `CheckModUpdates`, `UpdateMods`, `Steam.AddAccount`, `Steam.ReauthAccount` |
+| Unary returning an `Operation` | `DeleteInstance`, `RestoreSnapshot`, `Install`, `Update`, `Validate`, `Start`, `Stop`, `Restart`, `ApplyConfig`, `ApplyMods`, `CheckModUpdates`, `UpdateMods`, `Steam.AddAccount`, `Steam.ReauthAccount` |
 | Server stream | `WatchInstances` (snapshot + slim deltas with `settings_omitted`; 1,000 events or 8 MiB per subscriber), `WatchOperation` (resumable by `after_sequence`; `events_dropped` + snapshot when the gap is no longer retained), `Logs.Backlog`, `Logs.Follow` |
 | Bidirectional | `Rcon.Console` |
 
@@ -101,11 +101,11 @@ Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violation
 |---|---|
 | General | `not_implemented`, `internal_error`, `invalid_json`, `schema_version_mismatch`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `prompt_resolved` |
 | Auth | `pairing_code_invalid`, `pairing_throttled`, `device_revoked`, `last_device`, `unauthenticated`, `access_denied` (admin channel) |
-| Instances | `not_installed`, `invalid_state`, `instance_running`, `instance_not_running`, `port_conflict`, `unsupported_platform`, `crash_loop`, `lost_while_daemon_down`, `update_interrupted`, `install_interrupted`, `settings_invalid`, `plugin_missing`, `instance_directory_missing`, `launch_failed`, `launch_logon_failed`, `directory_not_allowed`, `run_record_rejected`, `instance_file_stale` (warning), `autostarted` (notice) |
+| Instances | `not_installed`, `invalid_state`, `instance_running`, `instance_not_running`, `port_conflict`, `unsupported_platform`, `crash_loop`, `lost_while_daemon_down`, `update_interrupted`, `install_interrupted`, `restore_interrupted`, `settings_invalid`, `plugin_missing`, `instance_directory_missing`, `launch_failed`, `launch_logon_failed`, `directory_not_allowed`, `run_record_rejected`, `instance_file_stale` (warning), `autostarted` (notice) |
 | Plugins | `unsupported_manifest_version`, `file_too_large`, `hook_syntax_error`, `unsupported_in_this_version`, `mods_not_supported`, `rcon_not_supported` |
 | Hooks | `hook_timeout`, `hook_out_of_memory`, `hook_result_invalid`, `hook_result_too_large`, `hook_error`, `sandbox_violation`, `host_limit_exceeded`, `hook_runtime_degraded`, `not_supported`, `unsupported_in_this_version` (file-edit format) |
 | Config | `binding_file_missing`, `config_parse_error`, `file_locked`, `external_edit` (event/warning; values of secret-bound keys masked) |
-| Steam | `steamcmd_unavailable`, `steam_account_required`, `steam_no_subscription`, `steam_unknown_error`, `steam_guard_invalid`, `steam_guard_timeout`, `steam_reauth_required`, `steam_stalled`, `gslt_required`, `insufficient_disk`, `workshop_item_unavailable` |
+| Steam | `steamcmd_unavailable`, `steam_account_required`, `disk_check_skipped` (warning), `steam_no_subscription`, `steam_unknown_error`, `steam_guard_invalid`, `steam_guard_timeout`, `steam_reauth_required`, `steam_stalled`, `gslt_required`, `insufficient_disk`, `workshop_item_unavailable` |
 | Mods | `stage_link_failed`, `key_conflict` (warning) |
 | Snapshots | `insufficient_disk` (snapshot) |
 | RCON | `rcon_auth_failed`, `rcon_unavailable` (stop fell back to kill), `timeout` |
@@ -121,8 +121,8 @@ Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violation
 
 ## Methods by daemon version
 
-The whole `yagura.v1` contract is defined up front; each daemon version implements part of it. A method of a served service that a version does not implement fails `UNIMPLEMENTED` with reason `not_implemented`; a service a version does not serve is unknown to its server. `GetHealth.not_built` names the components a version does not have.
+The whole `yagura.v1` contract is defined up front; each daemon version implements part of it. A method that a version does not implement fails `UNIMPLEMENTED` with reason `not_implemented`; services a version does not build are registered as stubs, so their methods fail the same way with an `ErrorDetail`. `GetHealth.not_built` names the components a version does not have.
 
 | Version | Services served | Methods not implemented |
 |---|---|---|
-| M1 (walking skeleton, dev mode only) | `System`, `Plugins`, `Instances`, `Operations`, `Logs` | `System.ListAudit`; `Instances.ImportInstance`, `ExportInstance`, `ApplyConfig`; `Operations.RespondToPrompt`. `Instances.SetSecret` and `DeleteSecret` fail `FAILED_PRECONDITION` / `secret_store_unavailable`. `revision` is always 0 and `expected_revision` is not checked. `not_built`: `secret_store`, `firewall`. |
+| M1 (walking skeleton, dev mode only) | `System`, `Plugins`, `Instances`, `Operations`, `Logs` (`Pairing`, `Steam`, `Mods`, `Rcon`, `Firewall` as stubs) | Every method of the stub services; `System.ListAudit`; `Instances.ImportInstance`, `ExportInstance`, `ApplyConfig`; `Operations.RespondToPrompt`. `Instances.SetSecret` and `DeleteSecret` fail `FAILED_PRECONDITION` / `secret_store_unavailable`. `revision` is always 0 and `expected_revision` is not checked. `not_built`: `secret_store`, `firewall`. |
