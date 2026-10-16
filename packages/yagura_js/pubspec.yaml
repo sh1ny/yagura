@@ -1,0 +1,13 @@
+name: yagura_js
+description: "quickjs-ng bindings over FFI for plugin hooks."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.13.5
+
+resolution: workspace
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.25.0

@@ -2,7 +2,7 @@
 
 Self-hosted game server manager: a headless Dart daemon (`yagurad`) that installs, configures and runs dedicated servers on Windows (Linux later, no Docker), and a Flutter desktop client that manages several daemons over mTLS gRPC. Every game is a plugin: a YAML manifest plus optional JavaScript hooks. "Yagura" is a working name.
 
-Planning is done with [Specwright](https://github.com/sh1ny/specwright) on OpenSpec 1.14.1. No code exists yet.
+Planning is done with [Specwright](https://github.com/sh1ny/specwright) on OpenSpec 1.14.1. M1 (`init-core-platform`) is being implemented.
 
 ## Read in this order
 
@@ -22,12 +22,14 @@ Prerequisites: [mise](https://mise.jdx.dev/) and Git. `mise install` installs th
 
 | Task | What it does |
 |---|---|
+| `mise run analyze` | Static analysis of the whole workspace |
+| `mise run test` | Every package's tests (`dart test`, `flutter test` for the desktop app); forward runner options after `--` |
 | `mise run format` | Format Dart source |
 | `mise run format:check` | Fail if any Dart file is not formatted |
 | `mise run changelog` | Regenerate `CHANGELOG.md` from local history (`cliff.toml`, strict `vX.Y.Z` tags) |
 | `mise run release-notes -- <range or --tag vX.Y.Z>` | Print release notes for a range or tag |
 
-`analyze` and `test` arrive with the pub workspace (task 1.1).
+Run `flutter pub get` once at the root to resolve the pub workspace (`apps/`, `packages/`). CI (`.github/workflows/ci.yml`) runs `format:check`, `analyze` and `test` on Windows and Linux with the same mise-pinned toolchain.
 
 Agent tooling: `.mcp.json` runs the official Dart MCP server from the mise-pinned SDK (read by Claude Code and OMP). Official Dart and Flutter skills are vendored in `.claude/skills/`, with their source commits and file hashes in `.claude/skills/UPSTREAM.json`.
 

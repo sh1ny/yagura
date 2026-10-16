@@ -191,5 +191,11 @@
       "commit": "b60d0736a33a0de7d3f4ea2a7ad740ca0daa5c94",
       "gitBlob": "272031181bc8d8598c934a14b1d12cf08c7aa1bc"
     }
-  ]
+  ],
+  "dependencySkills": {
+    "tool": "skills 1.0.4 (dart run skills@1.0.4 get --agent claude --all)",
+    "lastRun": "2026-10-17",
+    "note": "Skills shipped by workspace dependencies. Re-run after adding a dependency to any workspace package.",
+    "packages": []
+  }
 }

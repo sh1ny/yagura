@@ -2,6 +2,14 @@
 flutter = "3.47.7"
 "aqua:orhun/git-cliff" = "2.14.2"
 
+[tasks.analyze]
+description = "Run static analysis over the whole workspace"
+run = "flutter analyze"
+
+[tasks.test]
+description = "Run every package's tests (dart test, flutter test for the desktop app); forward runner options after --"
+run = "dart run tool/test.dart"
+
 [tasks.format]
 description = "Format Dart source"
 run = "dart format ."

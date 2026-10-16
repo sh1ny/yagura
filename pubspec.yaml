@@ -1,0 +1,17 @@
+name: yagura_workspace
+description: "Pub workspace root for Yagura (design D1)."
+publish_to: 'none'
+
+environment:
+  sdk: ^3.13.5
+
+workspace:
+  - apps/yagurad
+  - apps/yagura_desktop
+  - packages/yagura_proto
+  - packages/yagura_js
+  - packages/yagura_formats
+  - packages/yagura_plugin
+
+dev_dependencies:
+  lints: ^6.1.0
