@@ -8,11 +8,12 @@ Each milestone is one change. `init-core-platform` carries M1. The requirements,
 
 ## Now: M1 - Walking skeleton
 
-**Outcome:** On a Windows machine, `yagurad --console --dev` installs a Valheim server with SteamCMD, starts it under the relay, streams its log to a minimal desktop client over localhost gRPC, stops it gracefully with the world saved, and keeps it running across a daemon restart. The Valheim plugin is a manifest with no hooks; a test plugin proves JS hooks run with deadlines and memory caps.
+**Outcome:** On a Windows machine, `yagurad run --console --dev` installs a Valheim server with SteamCMD, starts it under the relay, streams its log to a minimal desktop client over localhost gRPC, stops it gracefully with the world saved, and keeps it running across a daemon restart. The Valheim plugin is a manifest with no hooks; a test plugin proves JS hooks run with deadlines and memory caps.
 
 **Exit criteria:**
-- quickjs-ng compiles through the Dart build hook with MSVC on Windows and `yagura_js` tests pass there (agent)
-- Every test-map row of `init-core-platform` is green on Windows CI (agent)
+- quickjs-ng compiles through the Dart build hook with MSVC on Windows and `yagura_js` tests pass there (agent); a clang-cl or prebuilt fallback meets this only if the user amends this criterion
+- Every test-map row of `init-core-platform` not tagged `valheim` is green on Windows CI, and the `valheim` rows pass on a Windows machine with Valheim installed (agent)
+- The compiled `yagurad` bundle, run from outside the repository, evaluates a hook and starts, stops and re-attaches a test server (agent)
 - A hook with `while(true){}` is interrupted within 6 s while the daemon keeps answering `System.GetInfo` (agent)
 - Valheim installs anonymously, starts, reaches `running` via its log-match health check, and its log streams to the desktop client (user)
 - Stopping Valheim from the client delivers Ctrl+C through the relay and the world file timestamp updates before the process exits (user)
