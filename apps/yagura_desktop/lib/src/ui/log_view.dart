@@ -20,6 +20,10 @@ class LogViewController extends ChangeNotifier {
   StreamSubscription<LogBatch>? _backlogSub;
   StreamSubscription<LogBatch>? _followSub;
   bool _backlogDone = false;
+
+  /// Highest sequence the backlog delivered; sequences grow across an
+  /// instance's sources, so live lines at or below it are already shown.
+  int _backlogLast = 0;
   bool _disposed = false;
   String _search = '';
 
@@ -58,11 +62,29 @@ class LogViewController extends ChangeNotifier {
     _backlogSub = connection
         .backlog(instanceId)
         .listen(
-          _ingest,
+          (batch) {
+            for (final entry in batch.entries) {
+              final sequence = entry.sequence.toInt();
+              if (sequence > _backlogLast) _backlogLast = sequence;
+            }
+            _ingest(batch);
+          },
           onError: _onError,
           onDone: () {
             _backlogDone = true;
-            _liveBeforeBacklog.forEach(_ingest);
+            for (final batch in _liveBeforeBacklog) {
+              // The daemon also delivers lines that arrived between the two
+              // requests to the follower.
+              _ingest(
+                LogBatch(
+                  dropped: batch.dropped,
+                  entries: [
+                    for (final e in batch.entries)
+                      if (e.sequence.toInt() > _backlogLast) e,
+                  ],
+                ),
+              );
+            }
             _liveBeforeBacklog.clear();
           },
         );

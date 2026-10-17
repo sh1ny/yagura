@@ -359,7 +359,14 @@ class _SettingsFormState extends State<SettingsForm> {
           ),
         );
       case ObjectField():
-        final child = _childMap(container, name);
+        // An optional object stays unset until the admin enables it, so its
+        // required children are not checked for an object nobody asked for.
+        final existing = container[name];
+        final child = existing is Map<String, Object?>
+            ? existing
+            : field.required
+            ? _childMap(container, name)
+            : null;
         return Card(
           margin: const EdgeInsets.symmetric(vertical: 6),
           child: Padding(
@@ -367,12 +374,37 @@ class _SettingsFormState extends State<SettingsForm> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  field.title,
-                  style: Theme.of(context).textTheme.titleSmall,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        field.title,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                    if (!field.required && child == null)
+                      TextButton(
+                        key: ValueKey('object:enable:$path'),
+                        onPressed: () => setState(() {
+                          container[name] = <String, Object?>{};
+                          _edited(path);
+                        }),
+                        child: const Text('Set'),
+                      ),
+                    if (!field.required && child != null)
+                      TextButton(
+                        key: ValueKey('object:unset:$path'),
+                        onPressed: () => setState(() {
+                          container.remove(name);
+                          _edited(path);
+                        }),
+                        child: const Text('Unset'),
+                      ),
+                  ],
                 ),
                 if (field.description.isNotEmpty) Text(field.description),
-                ..._groups(context, field.fields, path, child),
+                if (child != null)
+                  ..._groups(context, field.fields, path, child),
               ],
             ),
           ),
@@ -587,7 +619,7 @@ String? _validateNumber(
 }) {
   if (text.trim().isEmpty) return required ? 'Required' : null;
   final value = parse(text.trim());
-  if (value == null) return invalid;
+  if (value == null || !value.isFinite) return invalid;
   if (min != null && value < min) return 'Must be at least $min';
   if (max != null && value > max) return 'Must be at most $max';
   return null;
@@ -677,7 +709,10 @@ Map<String, Object?> _prune(
     final empty = switch (pruned) {
       null => true,
       Map<String, Object?>(isEmpty: true) => true,
-      List<Object?>(isEmpty: true) => field is! UnknownField,
+      // An emptied string list is a request to have none, not to use the
+      // default.
+      List<Object?>(isEmpty: true) =>
+        field is! UnknownField && field is! StringListField,
       _ => false,
     };
     if (!empty) result[key] = pruned;

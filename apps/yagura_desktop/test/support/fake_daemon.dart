@@ -41,6 +41,9 @@ class FakeDaemon implements DaemonTransport {
   final List<StreamController<LogBatch>> _followers = [];
   final List<LogBatch> backlogBatches = [];
 
+  /// When set, `Backlog` sends nothing until this completes.
+  Completer<void>? backlogGate;
+
   /// `afterSequence` of each `WatchOperation` call.
   final List<int> watchOperationResumes = [];
 
@@ -182,7 +185,11 @@ class FakeDaemon implements DaemonTransport {
     calls.add('UpdateSettings:${request.instanceId}');
     updates.add(request);
     if (updateFailure case final failure?) throw failure;
-    return instances.firstWhere((i) => i.id == request.instanceId);
+    final current = instances.firstWhere((i) => i.id == request.instanceId);
+    if (request.expectedRevision != current.revision) {
+      throw const DaemonCallException(code: 9, reason: 'revision_conflict');
+    }
+    return current;
   }
 
   @override
@@ -215,7 +222,12 @@ class FakeDaemon implements DaemonTransport {
   @override
   Stream<LogBatch> backlog(String instanceId) {
     calls.add('Backlog:$instanceId');
-    return Stream.fromIterable(backlogBatches);
+    final gate = backlogGate;
+    if (gate == null) return Stream.fromIterable(backlogBatches);
+    return () async* {
+      await gate.future;
+      yield* Stream.fromIterable(backlogBatches);
+    }();
   }
 
   @override

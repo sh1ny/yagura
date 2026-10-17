@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yagura_desktop/src/log_buffer.dart';
@@ -64,6 +66,21 @@ void main() {
     ]);
     expect(find.text('line 6'), findsOneWidget);
     expect(controller.heldLines, 0);
+  });
+
+  testWidgets('a_line_in_both_backlog_and_follow_shows_once', (tester) async {
+    final harness = Harness();
+    final gate = harness.daemon.backlogGate = Completer<void>();
+    harness.daemon.backlogBatches.add(logBatch([1, 2]));
+    final controller = await _pumpLogs(tester, harness);
+
+    // Line 2 reached the follower while the backlog was still loading.
+    harness.daemon.emitLog(logBatch([2, 3]));
+    await settle(tester);
+    gate.complete();
+    await settle(tester);
+
+    expect(_lineTexts(controller), ['line 1', 'line 2', 'line 3']);
   });
 
   testWidgets('dropped_lines_marker', (tester) async {

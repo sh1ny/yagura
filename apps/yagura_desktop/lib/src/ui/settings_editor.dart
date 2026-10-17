@@ -33,9 +33,16 @@ class _SettingsEditorState extends ConsumerState<SettingsEditor> {
   String? _error;
   bool _saving = false;
 
+  /// The instance the form was filled from. The form copies its values once,
+  /// so the revision a save expects stays paired with them: a newer revision
+  /// from the daemon only takes effect on [_reload] or after our own save.
+  late Instance _editing;
+  int _formEpoch = 0;
+
   @override
   void initState() {
     super.initState();
+    _editing = widget.instance;
     _load();
   }
 
@@ -60,14 +67,14 @@ class _SettingsEditorState extends ConsumerState<SettingsEditor> {
   }
 
   Map<String, Object?> get _values =>
-      switch (_jsonDecodeOrNull(widget.instance.settings.json)) {
+      switch (_jsonDecodeOrNull(_editing.settings.json)) {
         final Map<String, Object?> values => values,
         _ => const {},
       };
 
   Future<void> _save(SettingsSubmission submission) async {
     final connection = ref.read(daemonConnectionProvider(widget.daemonId));
-    final instance = widget.instance;
+    final instance = _editing;
     setState(() {
       _saving = true;
       _error = null;
@@ -105,7 +112,10 @@ class _SettingsEditorState extends ConsumerState<SettingsEditor> {
         );
       }
       if (!mounted) return;
-      setState(() => _violations = const {});
+      setState(() {
+        _violations = const {};
+        _editing = updated;
+      });
       ScaffoldMessenger.maybeOf(context)
           ?.showSnackBar(const SnackBar(content: Text('Settings saved')));
     } on DaemonCallException catch (e) {
@@ -127,6 +137,13 @@ class _SettingsEditorState extends ConsumerState<SettingsEditor> {
     }
   }
 
+  void _reload() => setState(() {
+    _editing = widget.instance;
+    _violations = const {};
+    _error = null;
+    _formEpoch++;
+  });
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
@@ -146,12 +163,32 @@ class _SettingsEditorState extends ConsumerState<SettingsEditor> {
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
+        if (widget.instance.revision != _editing.revision)
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'These settings changed elsewhere. Reload to see the new '
+                    'values; saving now is checked against the old revision.',
+                  ),
+                ),
+                TextButton(
+                  key: const ValueKey('settings:reload'),
+                  onPressed: _reload,
+                  child: const Text('Reload'),
+                ),
+              ],
+            ),
+          ),
         if (_saving) const LinearProgressIndicator(),
         Expanded(
           child: SettingsForm(
+            key: ValueKey(_formEpoch),
             schema: _schema,
             values: _values,
-            ports: widget.instance.ports,
+            ports: _editing.ports,
             violations: _violations,
             onSubmit: _save,
           ),

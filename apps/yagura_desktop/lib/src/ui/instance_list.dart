@@ -4,7 +4,9 @@ import 'package:yagura_proto/yagura_proto.dart';
 
 import '../connection.dart';
 import '../providers.dart';
+import '../schema.dart';
 import '../transport.dart';
+import 'settings_form.dart';
 
 String instanceStateLabel(InstanceState state) => switch (state) {
   InstanceState.INSTANCE_STATE_NOT_INSTALLED => 'not installed',
@@ -92,12 +94,45 @@ class InstanceListView extends ConsumerWidget {
       builder: (_) => _CreateDialog(connection: connection),
     );
     if (request == null || !context.mounted) return;
-    await _run(
-      context,
-      () => connection.createInstance(request.pluginId, request.name),
-    );
+    await _run(context, () async {
+      // A setting that is required and has no default cannot be left for the
+      // settings editor: the daemon refuses to create the instance without it.
+      final plugin = await connection.transport.getPlugin(request.pluginId);
+      final schema = SettingsSchema.tryParse(plugin.settingsSchema.json);
+      var settings = const <String, Object?>{};
+      if (schema != null && _needsInput(schema.fields)) {
+        if (!context.mounted) return;
+        final entered = await showDialog<Map<String, Object?>>(
+          context: context,
+          builder: (_) => _SettingsDialog(
+            // Secrets are write-only and set on the instance afterwards.
+            schema: SettingsSchema([
+              for (final f in schema.fields)
+                if (f is! SecretField) f,
+            ]),
+          ),
+        );
+        if (entered == null) return;
+        settings = entered;
+      }
+      await connection.createInstance(
+        request.pluginId,
+        request.name,
+        settings: settings,
+      );
+    });
   }
 }
+
+/// Whether the admin has to enter a value before an instance can exist.
+bool _needsInput(List<SettingField> fields) => fields.any(
+  (f) => switch (f) {
+    SecretField() || UnknownField() => false,
+    ObjectField(:final fields) => f.required && _needsInput(fields),
+    ListField(:final min) => f.required || (min ?? 0) > 0,
+    _ => f.required && f.defaultValue == null,
+  },
+);
 
 /// Runs a daemon call and reports a failure in a snack bar.
 Future<void> _run(BuildContext context, Future<void> Function() call) async {
@@ -294,6 +329,34 @@ class _CreateDialogState extends State<_CreateDialog> {
       ],
     );
   }
+}
+
+/// Asks for the initial settings of an instance about to be created.
+class _SettingsDialog extends StatelessWidget {
+  const _SettingsDialog({required this.schema});
+
+  final SettingsSchema schema;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Initial settings'),
+    content: SizedBox(
+      width: 560,
+      height: 480,
+      child: SettingsForm(
+        schema: schema,
+        values: const {},
+        ports: const [],
+        onSubmit: (submission) => Navigator.pop(context, submission.settings),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+    ],
+  );
 }
 
 class _DeleteDialog extends StatefulWidget {

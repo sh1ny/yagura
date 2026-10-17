@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yagura_desktop/src/providers.dart';
@@ -142,5 +144,57 @@ void main() {
     expect(request.pluginId, 'testgame');
     expect(request.name, 'Gamma');
     expect(request.settings.schemaVersion, 7);
+  });
+
+  testWidgets('create_collects_the_required_settings', (tester) async {
+    final daemon = FakeDaemon();
+    daemon.plugins['testgame'] = PluginDetail(
+      summary: PluginSummary(id: 'testgame', name: 'Test Game'),
+      settingsSchema: JsonDocument(
+        json: jsonEncode({
+          'serverName': {
+            'type': 'string',
+            'label': 'Server name',
+            'required': true,
+          },
+          'maxPlayers': {'type': 'integer', 'default': 10},
+        }),
+        schemaVersion: 7,
+      ),
+    );
+    final harness = Harness(daemon: daemon);
+    await pumpApp(tester, harness, _page());
+
+    await tester.tap(find.byKey(const ValueKey('action:create')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('create:plugin')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Test Game').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('create:name')), 'Gamma');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('create:submit')));
+    await tester.pumpAndSettle();
+
+    // The required setting has no default, so it is asked for first.
+    expect(daemon.creates, isEmpty);
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await tester.pumpAndSettle();
+    expect(daemon.creates, isEmpty);
+    expect(find.text('Required'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('field:serverName')),
+      'Yagura',
+    );
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await settle(tester);
+
+    final request = daemon.creates.single;
+    expect(request.name, 'Gamma');
+    expect(jsonDecode(request.settings.json), {
+      'serverName': 'Yagura',
+      'maxPlayers': 10,
+    });
   });
 }

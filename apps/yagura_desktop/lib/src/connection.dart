@@ -2,6 +2,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:yagura_proto/yagura_proto.dart';
@@ -281,14 +282,18 @@ class DaemonConnection {
     }
   }
 
-  Future<Instance> createInstance(String pluginId, String name) async {
+  Future<Instance> createInstance(
+    String pluginId,
+    String name, {
+    Map<String, Object?> settings = const {},
+  }) async {
     final plugin = await transport.getPlugin(pluginId);
     return transport.createInstance(
       CreateInstanceRequest(
         pluginId: pluginId,
         name: name,
         settings: JsonDocument(
-          json: '{}',
+          json: jsonEncode(settings),
           schemaVersion: plugin.settingsSchema.schemaVersion,
         ),
       ),
