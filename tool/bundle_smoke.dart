@@ -123,7 +123,10 @@ class _Daemon {
 
 class _Smoke {
   _Smoke(this.repo, this.work)
-    : data = p.join(work, 'data'),
+    // A fresh data directory per invocation: cleanUp() reads the PIDs in its
+    // relay.json files, and a retained --work directory could hold records
+    // of an earlier run whose PIDs now belong to unrelated processes.
+    : data = p.join(work, 'data_${DateTime.now().microsecondsSinceEpoch}'),
       bundleCopy = p.join(work, 'bundle');
 
   final String repo;

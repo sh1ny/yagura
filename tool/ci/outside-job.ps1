@@ -41,7 +41,11 @@ try {
 } catch {
     "$_" | Out-File -Append -Encoding utf8 (Join-Path $Work 'out.log')
 }
-Set-Content (Join-Path $Work 'exit.txt') "$code"
+# Publish the status atomically: the parent treats the file's existence as
+# completion, so it must never see it empty.
+$tmp = Join-Path $Work 'exit.tmp'
+Set-Content $tmp "$code"
+Move-Item $tmp (Join-Path $Work 'exit.txt')
 '@ | Set-Content -Encoding utf8 $inner
 
 $pwsh = (Get-Process -Id $PID).Path
@@ -72,6 +76,11 @@ while ($true) {
     }
     Start-Sleep -Milliseconds 500
 }
-$code = [int](Get-Content $exitFile)
+$status = (Get-Content -Raw $exitFile)
+$code = 0
+if ($null -eq $status -or -not [int]::TryParse($status.Trim(), [ref]$code)) {
+    Write-Host "outside-job: invalid exit status '$status'"
+    exit 125
+}
 Write-Host "outside-job: exit $code"
 exit $code

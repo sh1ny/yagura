@@ -89,18 +89,34 @@ Directory _packageRoot() {
 }
 
 String _sourceHash(Directory root) {
+  // The daemon is compiled from the workspace: the resolved versions
+  // (`pubspec.lock`), the workspace packages it depends on and the Dart SDK
+  // that compiles it all end up in the executable, so all are key inputs.
+  final workspace = root.parent.parent;
   final files = <File>[
     File(p.join(root.path, 'pubspec.yaml')),
+    File(p.join(workspace.path, 'pubspec.lock')),
     for (final sub in ['lib', 'bin', p.join('test', 'fixtures', 'fake_server')])
       ...Directory(p.join(root.path, sub))
           .listSync(recursive: true)
           .whereType<File>()
           .where((f) => f.path.endsWith('.dart')),
+    for (final package in Directory(
+      p.join(workspace.path, 'packages'),
+    ).listSync().whereType<Directory>()) ...[
+      File(p.join(package.path, 'pubspec.yaml')),
+      for (final sub in ['lib', 'bin', 'hook', 'third_party'])
+        if (Directory(p.join(package.path, sub)).existsSync())
+          ...Directory(
+            p.join(package.path, sub),
+          ).listSync(recursive: true).whereType<File>(),
+    ],
   ]..sort((a, b) => a.path.compareTo(b.path));
-  final bytes = BytesBuilder(copy: false);
+  final bytes = BytesBuilder(copy: false)
+    ..add(utf8.encode(Platform.version));
   for (final file in files) {
     bytes
-      ..add(utf8.encode(p.relative(file.path, from: root.path)))
+      ..add(utf8.encode(p.relative(file.path, from: workspace.path)))
       ..add(file.readAsBytesSync());
   }
   return sha256.convert(bytes.takeBytes()).toString().substring(0, 16);
