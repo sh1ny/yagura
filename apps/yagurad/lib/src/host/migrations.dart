@@ -62,4 +62,37 @@ CREATE TABLE log_offsets (
   PRIMARY KEY (instance_id, source)
 );
 '''),
+  // Run records and crash timestamps (design D2, D14, D17). Times are epoch
+  // milliseconds; `*_created` are the platform's process start times.
+  Migration(3, '''
+CREATE TABLE runs (
+  run_id TEXT PRIMARY KEY,
+  instance_id TEXT NOT NULL,
+  directory TEXT NOT NULL,
+  state TEXT NOT NULL,
+  relay_pid INTEGER NOT NULL DEFAULT 0,
+  relay_created INTEGER NOT NULL DEFAULT 0,
+  relay_executable TEXT NOT NULL DEFAULT '',
+  server_pid INTEGER NOT NULL DEFAULT 0,
+  server_created INTEGER NOT NULL DEFAULT 0,
+  executable TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  stop_requested_at INTEGER,
+  stop_grace_ms INTEGER NOT NULL DEFAULT 0,
+  stop_clears_requested INTEGER NOT NULL DEFAULT 1,
+  stopped_by TEXT NOT NULL DEFAULT '',
+  exit_code INTEGER,
+  ended_at INTEGER,
+  end_reason TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX runs_by_instance ON runs (instance_id, created_at);
+
+CREATE TABLE crashes (
+  instance_id TEXT NOT NULL,
+  at INTEGER NOT NULL
+);
+
+CREATE INDEX crashes_by_instance ON crashes (instance_id, at);
+'''),
 ];

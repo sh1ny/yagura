@@ -216,11 +216,105 @@ class Win32 {
         int Function(Pointer<Utf16>, Pointer<Utf16>, int)
       >('GetVolumePathNameW');
 
+  late final int Function() getCurrentProcess = _kernel
+      .lookupFunction<IntPtr Function(), int Function()>('GetCurrentProcess');
+
+  late final int Function(int, int, Pointer<Int32>) isProcessInJob = _kernel
+      .lookupFunction<
+        Int32 Function(IntPtr, IntPtr, Pointer<Int32>),
+        int Function(int, int, Pointer<Int32>)
+      >('IsProcessInJob');
+
+  late final int Function(int, int, Pointer<Void>, int, Pointer<Uint32>)
+  queryInformationJobObject = _kernel
+      .lookupFunction<
+        Int32 Function(IntPtr, Int32, Pointer<Void>, Uint32, Pointer<Uint32>),
+        int Function(int, int, Pointer<Void>, int, Pointer<Uint32>)
+      >('QueryInformationJobObject');
+
+  late final int Function(
+    int,
+    Pointer<Uint64>,
+    Pointer<Uint64>,
+    Pointer<Uint64>,
+    Pointer<Uint64>,
+  )
+  getProcessTimes = _kernel
+      .lookupFunction<
+        Int32 Function(
+          IntPtr,
+          Pointer<Uint64>,
+          Pointer<Uint64>,
+          Pointer<Uint64>,
+          Pointer<Uint64>,
+        ),
+        int Function(
+          int,
+          Pointer<Uint64>,
+          Pointer<Uint64>,
+          Pointer<Uint64>,
+          Pointer<Uint64>,
+        )
+      >('GetProcessTimes');
+
+  late final int Function(Pointer<Void>, int) setConsoleCtrlHandler = _kernel
+      .lookupFunction<
+        Int32 Function(Pointer<Void>, Int32),
+        int Function(Pointer<Void>, int)
+      >('SetConsoleCtrlHandler');
+
+  late final int Function(int) attachConsole = _kernel
+      .lookupFunction<Int32 Function(Uint32), int Function(int)>(
+        'AttachConsole',
+      );
+
+  late final int Function() freeConsole = _kernel
+      .lookupFunction<Int32 Function(), int Function()>('FreeConsole');
+
+  late final int Function(int, int) generateConsoleCtrlEvent = _kernel
+      .lookupFunction<Int32 Function(Uint32, Uint32), int Function(int, int)>(
+        'GenerateConsoleCtrlEvent',
+      );
+
+  late final int Function(
+    int,
+    Pointer<Void>,
+    int,
+    Pointer<Uint32>,
+    Pointer<Uint32>,
+    Pointer<Uint32>,
+  )
+  peekNamedPipe = _kernel
+      .lookupFunction<
+        Int32 Function(
+          IntPtr,
+          Pointer<Void>,
+          Uint32,
+          Pointer<Uint32>,
+          Pointer<Uint32>,
+          Pointer<Uint32>,
+        ),
+        int Function(
+          int,
+          Pointer<Void>,
+          int,
+          Pointer<Uint32>,
+          Pointer<Uint32>,
+          Pointer<Uint32>,
+        )
+      >('PeekNamedPipe');
+
+  late final int Function() getLastError = _kernel
+      .lookupFunction<Uint32 Function(), int Function()>('GetLastError');
+
   static const invalidHandle = -1;
   static const waitObject0 = 0;
 
   // Process creation flags.
   static const createSuspended = 0x00000004;
+  static const createNewConsole = 0x00000010;
+  static const detachedProcess = 0x00000008;
+  static const createBreakawayFromJob = 0x01000000;
   static const createUnicodeEnvironment = 0x00000400;
   static const createNoWindow = 0x08000000;
 
@@ -228,6 +322,29 @@ class Win32 {
   static const processTerminate = 0x0001;
   static const synchronize = 0x00100000;
   static const processQueryLimitedInformation = 0x1000;
+
+  /// `JOB_OBJECT_LIMIT_BREAKAWAY_OK`.
+  static const jobBreakawayOk = 0x800;
+
+  /// `JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK`: children start outside the job
+  /// (this machine's tool shell has it); `CREATE_BREAKAWAY_FROM_JOB` works.
+  static const jobSilentBreakawayOk = 0x1000;
+
+  /// `STARTF_USESHOWWINDOW` and `SW_HIDE`.
+  static const startfUseShowWindow = 0x1;
+  static const swHide = 0;
+
+  /// `GENERIC_READ`, `FILE_SHARE_READ | FILE_SHARE_WRITE`, `OPEN_EXISTING`.
+  static const genericRead = 0x80000000;
+  static const fileShareReadWrite = 0x3;
+  static const openExisting = 3;
+  static const handleFlagInherit = 1;
+
+  /// `WAIT_TIMEOUT`.
+  static const waitTimeout = 0x102;
+
+  /// `STILL_ACTIVE`, the exit code of a process that has not ended.
+  static const stillActive = 259;
 
   /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
   static const jobKillOnClose = 0x2000;

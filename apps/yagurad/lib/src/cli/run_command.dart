@@ -8,6 +8,7 @@ import '../api/api_server.dart';
 import '../api/bind_address.dart';
 import '../errors.dart';
 import '../host/daemon.dart';
+import '../process/launcher_modes.dart';
 import '../process/process.dart';
 import '../steam/steamcmd_service.dart';
 
@@ -41,8 +42,8 @@ class CliEnvironment {
   /// Called with the bound address once the listener is open.
   final void Function(InternetAddress address, int port)? onListening;
 
-  /// Defaults to a host that cannot launch servers (the process host is not
-  /// part of this build).
+  /// Defaults to the Windows process host on Windows and to a host that
+  /// cannot launch servers elsewhere (the Linux path is M5).
   final ProcessHost? processHost;
 
   final Future<List<InternetAddress>> Function(String host) lookup;
@@ -62,12 +63,51 @@ Future<int> runCli(List<String> arguments, CliEnvironment env) async {
     case 'run':
       return _run(arguments.skip(1).toList(), env);
     case 'launch' || 'relay' || 'signal':
-      env.err.writeln('yagurad: the "$mode" mode is not implemented yet');
-      return exitUsage;
+      return _helper(mode, arguments.skip(1).toList(), env);
     default:
       env.err.writeln('yagurad: unknown mode "$mode"');
       return exitUsage;
   }
+}
+
+/// The `launch`, `relay` and `signal` modes of the process model (design D2).
+Future<int> _helper(
+  String mode,
+  List<String> arguments,
+  CliEnvironment env,
+) async {
+  if (!Platform.isWindows) {
+    env.err.writeln(
+      'yagurad: the "$mode" mode needs the Windows process host '
+      '(the Linux path is M5)',
+    );
+    return exitUsage;
+  }
+  final parser = ArgParser()
+    ..addOption('run-dir')
+    ..addOption('console-of');
+  final ArgResults args;
+  try {
+    args = parser.parse(arguments);
+  } on FormatException catch (e) {
+    env.err.writeln('yagurad: ${e.message}');
+    return exitUsage;
+  }
+  final runDirectory = args['run-dir'] as String?;
+  switch (mode) {
+    case 'launch' when runDirectory != null:
+      return runLaunchMode(runDirectory, env.out, env.err);
+    case 'relay' when runDirectory != null:
+      return runRelayMode(runDirectory, env.err);
+    case 'signal'
+        when int.tryParse(args['console-of'] as String? ?? '') != null:
+      return runSignalMode(int.parse(args['console-of'] as String));
+  }
+  env.err.writeln(
+    'usage: yagurad $mode '
+    '${mode == 'signal' ? '--console-of <pid>' : '--run-dir <dir>'}',
+  );
+  return exitUsage;
 }
 
 Future<int> _run(List<String> arguments, CliEnvironment env) async {
@@ -108,7 +148,7 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
       DaemonConfig(
         dataDirectory: dataDirectory,
         apiPort: bind.port,
-        processHost: env.processHost ?? const _NoProcessHost(),
+        processHost: env.processHost,
         steam: SteamCmdService(steamcmdRoot: p.join(dataDirectory, 'steamcmd')),
       ),
     );
@@ -171,19 +211,4 @@ Future<void> _signal() {
     subscriptions.add(ProcessSignal.sigterm.watch().listen(finish));
   }
   return done.future;
-}
-
-/// The process host of this build: it cannot start servers yet.
-class _NoProcessHost implements ProcessHost {
-  const _NoProcessHost();
-
-  @override
-  Future<RunningServer> launch(LaunchRequest request) => throw YaguraException(
-    'launch_failed',
-    'this build of yagurad has no process host; servers cannot be started',
-  );
-
-  @override
-  Future<StoppedBy> stop(RunningServer server, StopPlan plan) async =>
-      StoppedBy.graceful;
 }
