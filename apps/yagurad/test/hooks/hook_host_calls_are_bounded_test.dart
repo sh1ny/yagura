@@ -3,9 +3,12 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagura_proto/yagura_proto.dart' as pb;
 import 'package:yagurad/src/errors.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
 
+import '../support/api_support.dart';
+import '../support/daemon_support.dart';
 import 'hook_test_support.dart';
 
 /// A worker the test controls: it finishes when [finish] is called and, when
@@ -202,5 +205,75 @@ exports.onPreStart = function () {
     expect(result.args, hasLength(41));
     expect(result.args, contains('key0.bikey:1'));
     expect(result.args, contains('key39.bikey:40'));
+  });
+
+  test('degraded_hook_runtime', () async {
+    // Workers that ignore their kill, like a worker stuck in native code.
+    final launcher = FakeLauncher()..exitsOnKill = false;
+    // Only the calls of this test's direct runs (source 'ignored') get stuck;
+    // the plugin's own load check and hooks answer at once.
+    final host = HookHost(
+      launcher: (request) async {
+        final worker = await launcher.call(request) as FakeWorker;
+        if (request.source != 'ignored') worker.finish();
+        return worker;
+      },
+      watchdogGrace: const Duration(milliseconds: 20),
+      leakGrace: const Duration(milliseconds: 50),
+    );
+    final env = TestEnv();
+    env.installValheim(hooks: 'exports.onPreStart = () => ({});');
+    final api = await ApiHarness.start(
+      env,
+      daemon: await env.start(hookHost: host),
+    );
+    final instance = await createInstalled(api.daemon);
+
+    // Two workers miss their deadline and their isolates do not exit.
+    for (var i = 0; i < 2; i++) {
+      await expectLater(
+        host.run(
+          invocationFor(
+            makeInstance(),
+            'ignored',
+            deadline: const Duration(milliseconds: 20),
+          ),
+        ),
+        throwsA(
+          isA<YaguraException>().having(
+            (e) => e.reason,
+            'reason',
+            'hook_timeout',
+          ),
+        ),
+      );
+    }
+    await eventually(() => host.leakedWorkers == 2, reason: 'two leaks');
+
+    // Further hook calls fail, in the host and in an instance start...
+    await expectLater(
+      host.run(invocationFor(makeInstance(), 'ignored')),
+      throwsA(
+        isA<YaguraException>().having(
+          (e) => e.reason,
+          'reason',
+          'hook_runtime_degraded',
+        ),
+      ),
+    );
+    final start = await api.instances.start(
+      pb.LifecycleRequest(instanceId: instance.id),
+    );
+    await api.daemon.operations.whenDone(start.id);
+    final failed = await api.operations.getOperation(
+      pb.GetOperationRequest(operationId: start.id),
+    );
+    expect(failed.status, pb.OperationStatus.OPERATION_STATUS_FAILED);
+    expect(failed.resultReason, 'hook_runtime_degraded');
+
+    // ...and the health report says why.
+    final health = await api.system.getHealth(pb.GetHealthRequest());
+    expect(health.leakedHookWorkers, 2);
+    expect(health.hooksDegraded, isTrue);
   });
 }
