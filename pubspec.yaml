@@ -14,4 +14,8 @@ workspace:
   - packages/yagura_plugin
 
 dev_dependencies:
+  args: ^2.7.0
+  grpc: ^5.2.0
+  path: ^1.9.1
+  yagura_proto: ^0.1.0
   lints: ^6.1.0
