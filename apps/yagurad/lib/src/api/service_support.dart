@@ -65,7 +65,7 @@ class GuardedMethod extends ServiceMethod<dynamic, dynamic> {
 }
 
 /// A method of a service this version does not build: it fails
-/// `UNIMPLEMENTED` / `not_implemented` without reading its request.
+/// `UNIMPLEMENTED` / `not_implemented` without decoding its request.
 class StubMethod extends GuardedMethod {
   StubMethod(super.inner, super.path, super.log);
 
@@ -74,12 +74,17 @@ class StubMethod extends GuardedMethod {
     ServiceCall call,
     Stream<dynamic> requests,
     List<ServerInterceptor> interceptors,
-  ) => Stream.error(
-    grpcErrorFor(
-      'not_implemented',
-      '$_path is not implemented in this version',
-    ),
-  );
+  ) {
+    // The request is still drained: an HTTP/2 stream left unread stays
+    // registered and trips http2's assertion when the connection closes.
+    unawaited(requests.drain<void>().catchError((Object _) {}));
+    return Stream.error(
+      grpcErrorFor(
+        'not_implemented',
+        '$_path is not implemented in this version',
+      ),
+    );
+  }
 }
 
 /// Mixed into a generated service base: every method it registers becomes a
