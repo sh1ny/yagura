@@ -57,6 +57,15 @@ class InstanceRecord {
   /// The live server, in memory only (the supervisor of group 5 records runs).
   RunningServer? server;
 
+  /// The run of [server] (memory only; the run record is in SQLite).
+  String runId = '';
+
+  /// Whether a stop of [server] was requested, so its exit is not a crash.
+  bool stopRequested = false;
+
+  /// `unknown` while the instance runs without a passed health check.
+  InstanceHealth health = InstanceHealth.unspecified;
+
   /// Whether `error` carries one of the reasons with their own exits; any
   /// other reason is an update failure (design D17).
   bool get isUpdateFailure =>

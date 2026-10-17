@@ -20,6 +20,10 @@ enum InstanceState {
       values.firstWhere((s) => s.wireName == name);
 }
 
+/// Whether the start-time health check passed (`Health` in
+/// `instances.proto`).
+enum InstanceHealth { unspecified, ok, unknown }
+
 /// Error reasons that have their own exits (design D17). Any other reason on
 /// an `error` instance is an update failure, whose exits are the same as
 /// `update_interrupted`.
@@ -73,6 +77,7 @@ class Instance {
     required this.stateChangedAt,
     required this.pid,
     this.schemaVersion,
+    this.health = InstanceHealth.unspecified,
   });
 
   final String id;
@@ -112,6 +117,10 @@ class Instance {
   /// 0 when not running.
   final int pid;
 
+  /// `unknown` when the instance runs but its health check did not pass
+  /// within `start_timeout`; `unspecified` while it is not running.
+  final InstanceHealth health;
+
   /// M1 keeps every revision at 0 and does not check `expected_revision`.
   int get revision => 0;
 
@@ -137,10 +146,22 @@ class InstanceRemoved extends InstanceEvent {
 /// `update_interrupted`, `settings_invalid`, `instance_file_stale`... (the
 /// kinds of `InstanceNotice` in `instances.proto`).
 class InstanceNotice extends InstanceEvent {
-  const InstanceNotice(this.instanceId, this.kind, this.message);
+  const InstanceNotice(
+    this.instanceId,
+    this.kind,
+    this.message, {
+    this.exitCode = 0,
+    this.lastLogLines = const [],
+  });
   final String instanceId;
   final String kind;
   final String message;
+
+  /// The exit code of a `crashed` notice.
+  final int exitCode;
+
+  /// Up to the last 50 log lines of a `crashed` or `crash_loop` notice.
+  final List<String> lastLogLines;
 
   @override
   String toString() => 'InstanceNotice($instanceId $kind: $message)';

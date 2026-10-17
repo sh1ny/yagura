@@ -126,12 +126,20 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
         sent.remove(instanceId);
         return pb.InstanceEvent(removedInstanceId: instanceId);
       }(),
-      domain.InstanceNotice(:final instanceId, :final kind, :final message) =>
+      domain.InstanceNotice(
+        :final instanceId,
+        :final kind,
+        :final message,
+        :final exitCode,
+        :final lastLogLines,
+      ) =>
         pb.InstanceEvent(
           notice: pb.InstanceNotice(
             instanceId: instanceId,
             kind: kind,
             message: message,
+            exitCode: exitCode,
+            lastLogLines: lastLogLines,
             at: timestamp(DateTime.now()),
           ),
         ),

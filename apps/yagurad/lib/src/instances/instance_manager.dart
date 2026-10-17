@@ -13,10 +13,12 @@ import '../plugins/plugin_registry.dart';
 import '../process/process.dart';
 import '../snapshots/snapshots.dart';
 import '../steam/steam.dart';
+import 'health_check.dart';
 import 'instance.dart';
 import 'instance_file.dart';
 import 'instance_store.dart';
 import 'lifecycle.dart';
+import 'restart_policy.dart';
 
 /// The instance manager: sole writer of instances, settings, ports and the
 /// instance state machine (design D17, D21, D25). Lifecycle work runs as
@@ -34,9 +36,15 @@ class InstanceManager {
     required this.steam,
     required this.hooks,
     required this.snapshotter,
+    required this.runs,
+    HealthEvaluator? healthEvaluator,
+    this.restartDelay = const Duration(seconds: 5),
+    this.autostartInterval = const Duration(seconds: 10),
+    this.pendingRunWait = const Duration(seconds: 10),
     Future<void> Function(String directory)? removeDirectory,
     DateTime Function()? clock,
   }) : clock = clock ?? DateTime.now,
+       healthEvaluator = healthEvaluator ?? HealthEvaluator(),
        removeDirectory = removeDirectory ?? _removeTree {
     lifecycle = Lifecycle(this);
     for (final record in store.loadAll()) {
@@ -59,6 +67,24 @@ class InstanceManager {
   final HookHost hooks;
   final Snapshotter snapshotter;
 
+  /// Run records and crash timestamps; the supervisor in this class and in
+  /// [Lifecycle] is their only writer.
+  final RunStore runs;
+  final HealthEvaluator healthEvaluator;
+
+  /// How long after a crash the instance is started again.
+  final Duration restartDelay;
+
+  /// Gap between autostarted instances (design D14).
+  final Duration autostartInterval;
+
+  /// How long recovery waits for a live relay to record its server.
+  final Duration pendingRunWait;
+
+  /// The last lines of an instance's log, for crash notices; set by the
+  /// daemon once the log hub exists.
+  Future<List<String>> Function(String instanceId, int lines)? logTail;
+
   /// Removes an instance directory after delete; a seam so tests can stop the
   /// daemon in the middle of it.
   final Future<void> Function(String directory) removeDirectory;
@@ -69,6 +95,7 @@ class InstanceManager {
   final _events = StreamController<InstanceEvent>.broadcast();
   final _pluginsReloaded = StreamController<void>.broadcast();
   final _recoveryNotices = <InstanceNotice>[];
+  final _restartTimers = <String, Timer>{};
   var _createTail = Future<void>.value();
   var _closed = false;
 
@@ -143,6 +170,7 @@ class InstanceManager {
       createdAt: record.createdAt,
       stateChangedAt: record.stateChangedAt,
       pid: record.server?.pid ?? 0,
+      health: record.health,
     );
   }
 
@@ -494,6 +522,7 @@ class InstanceManager {
 
   Operation stop(String id, {bool force = false}) {
     final record = _guarded(id, OperationKind.stop);
+    cancelRestart(id);
     return runner.enqueue(
       instanceId: id,
       kind: OperationKind.stop,
@@ -598,6 +627,7 @@ class InstanceManager {
     if (record.stateReason == restoreInterruptedReason) {
       snapshotter.clearInterruptedRestore(record.id);
     }
+    if (record.stateReason == crashLoopReason) runs.clearCrashes(record.id);
     final warning = switch (record.stateReason) {
       crashLoopReason => '',
       restoreInterruptedReason =>
@@ -741,10 +771,15 @@ class InstanceManager {
       ..warning = warning
       ..stateChangedAt = clock();
     if (state == InstanceState.running) record.restartRequired = false;
+    if (state != InstanceState.running) {
+      record.health = InstanceHealth.unspecified;
+    }
     if (state != InstanceState.running &&
         state != InstanceState.starting &&
         state != InstanceState.stopping) {
       record.server = null;
+      record.runId = '';
+      record.stopRequested = false;
     }
   }
 
@@ -789,9 +824,23 @@ class InstanceManager {
     }
   }
 
-  void notice(String instanceId, String kind, String message) {
+  void notice(
+    String instanceId,
+    String kind,
+    String message, {
+    int exitCode = 0,
+    List<String> lastLogLines = const [],
+  }) {
     if (_closed || _events.isClosed) return;
-    _events.add(InstanceNotice(instanceId, kind, message));
+    _events.add(
+      InstanceNotice(
+        instanceId,
+        kind,
+        message,
+        exitCode: exitCode,
+        lastLogLines: lastLogLines,
+      ),
+    );
   }
 
   LoadedPlugin _requirePlugin(InstanceRecord record) => requirePlugin(record);
@@ -870,10 +919,12 @@ class InstanceManager {
   // ---- recovery -----------------------------------------------------------
 
   /// Moves instances out of transient states after a daemon restart and marks
-  /// unfinished operations `interrupted` (design D9). Re-attaching to running
-  /// servers comes with the process model; until then an instance that was
-  /// starting, running or stopping is `stopped`.
-  void recover() {
+  /// unfinished operations `interrupted` (design D9). A starting, running or
+  /// stopping instance is re-attached when its run record names a live process
+  /// with the recorded PID, executable and start time; otherwise it is
+  /// `stopped` with a `lost_while_daemon_down` notice. A run that recorded a
+  /// stop request resumes as `stopping` (design D2).
+  Future<void> recover() async {
     runner.recoverInterrupted();
     for (final record in _records.values.toList()) {
       switch (record.state) {
@@ -898,17 +949,18 @@ class InstanceManager {
         case InstanceState.starting ||
             InstanceState.running ||
             InstanceState.stopping:
-          setState(record, InstanceState.stopped);
-          _recoveryNotice(
-            record,
-            'lost_while_daemon_down',
-            'the server was not re-attached after the daemon restarted',
-          );
+          await _recoverRun(record);
         case InstanceState.notInstalled ||
             InstanceState.stopped ||
             InstanceState.error:
           break;
       }
+    }
+    // A run nobody supervises is over: end it, and end its process when it is
+    // still the process the run recorded.
+    for (final run in runs.unresolved()) {
+      if (_records[run.instanceId]?.runId == run.runId) continue;
+      await _endLostRun(run);
     }
     for (final id in snapshotter.interruptedRestores()) {
       final record = _records[id];
@@ -923,6 +975,279 @@ class InstanceManager {
         'the daemon stopped during a restore; data paths may be mixed',
       );
     }
+  }
+
+  Future<void> _recoverRun(InstanceRecord record) async {
+    RunningServer? server;
+    RunRecord? adopted;
+    // Newest run first: it is the one the instance's state refers to.
+    for (final run in runs.unresolvedFor(record.id).reversed) {
+      if (adopted == null) {
+        final found = await _reattach(run);
+        if (found != null) {
+          server = found;
+          adopted = run;
+          continue;
+        }
+      }
+      await _endLostRun(run);
+    }
+
+    if (server == null || adopted == null) {
+      // A stop the admin asked for before the daemon went down stays asked.
+      final last = runs.all(record.id).lastOrNull;
+      if (last != null &&
+          last.stopRequestedAt != null &&
+          last.stopClearsRequested) {
+        record.lastRequestedRunning = false;
+      }
+      setState(record, InstanceState.stopped);
+      _recoveryNotice(
+        record,
+        'lost_while_daemon_down',
+        'the server was not re-attached after the daemon restarted',
+      );
+      return;
+    }
+
+    record
+      ..server = server
+      ..runId = adopted.runId;
+    if (adopted.state == RunState.pending) {
+      runs.markRunning(
+        adopted.runId,
+        server: server.identity,
+        relay: server.relay,
+      );
+    }
+    if (adopted.stopRequestedAt != null) {
+      record.stopRequested = true;
+      setState(record, InstanceState.stopping);
+      unawaited(_finishResumedStop(record, adopted, server));
+    } else {
+      record.lastRequestedRunning = true;
+      setState(record, InstanceState.running);
+      watchExit(record, server);
+    }
+  }
+
+  /// The live server a run recorded, or null when there is none: no process
+  /// has exactly the recorded PID, executable and start time.
+  Future<RunningServer?> _reattach(RunRecord run) async {
+    final files = RunFiles(run.directory);
+    var serverId = run.server;
+    var relayId = run.relay;
+    if (serverId == null) {
+      // `pending`: the daemon died around `launch`. A live relay may still be
+      // about to record its server.
+      final deadline = clock().add(pendingRunWait);
+      while (true) {
+        final relay = files.readRelay();
+        if (relay?.server case final found?) {
+          serverId = found;
+          relayId = relay!.relay;
+          break;
+        }
+        if (relay == null ||
+            !await processHost.isAlive(relay.relay) ||
+            clock().isAfter(deadline)) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+    }
+    if (serverId == null) return null;
+    return processHost.reattach(
+      serverId,
+      relay: relayId,
+      runDirectory: run.directory,
+    );
+  }
+
+  Future<void> _endLostRun(RunRecord run) async {
+    final identity = run.server;
+    if (identity != null) {
+      try {
+        if (await processHost.isAlive(identity)) {
+          await processHost.terminate(identity);
+        }
+      } on Object {
+        // Best effort: the run is over either way.
+      }
+    }
+    runs.markEnded(run.runId, at: clock(), reason: 'lost');
+  }
+
+  /// Waits out the rest of the grace period of a stop that was requested
+  /// before the daemon went down, then kills; the server's exit ends it.
+  Future<void> _finishResumedStop(
+    InstanceRecord record,
+    RunRecord run,
+    RunningServer server,
+  ) async {
+    final remaining = run.stopGrace - clock().difference(run.stopRequestedAt!);
+    final strategy =
+        registry.find(record.pluginId)?.manifest.stop.strategy ??
+        StopStrategy.signal;
+    final plan = StopPlan(
+      strategy: strategy,
+      grace: remaining.isNegative ? Duration.zero : remaining,
+      sendSignal: false,
+    );
+    StoppedBy by;
+    try {
+      by = await Future.any([
+        processHost.stop(server, plan),
+        server.exitCode.then((_) => StoppedBy.graceful),
+      ]);
+    } on Object {
+      by = StoppedBy.kill;
+    }
+    final code = await server.exitCode.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => -1,
+    );
+    if (_closed) return;
+    runs.markEnded(
+      run.runId,
+      at: clock(),
+      reason: 'stopped',
+      stoppedBy: by.wireName,
+      exitCode: code,
+    );
+    if (run.stopClearsRequested) record.lastRequestedRunning = false;
+    setState(record, InstanceState.stopped);
+  }
+
+  // ---- supervision ---------------------------------------------------------
+
+  /// Runs [change] on the run store unless the manager is closed (an
+  /// operation that outlives a killed daemon records nothing).
+  void withRuns(void Function(RunStore runs) change) {
+    if (!_closed) change(runs);
+  }
+
+  /// Watches [server] for an exit nobody asked for: a crash.
+  void watchExit(InstanceRecord record, RunningServer server) {
+    server.exitCode.then<void>(
+      (code) => _onExit(record, server, code),
+      onError: (Object _) => _onExit(record, server, -1),
+    );
+  }
+
+  Future<void> _onExit(
+    InstanceRecord record,
+    RunningServer server,
+    int code,
+  ) async {
+    if (_closed || !identical(record.server, server)) return;
+    // Starting and stopping are the operations' business; only a running
+    // server with no stop request can crash.
+    if (record.state != InstanceState.running || record.stopRequested) return;
+    final now = clock();
+    final runId = record.runId;
+    if (runId.isNotEmpty) {
+      runs.markEnded(runId, at: now, reason: 'crashed', exitCode: code);
+    }
+    runs.addCrash(record.id, now);
+    final action = decideRestart(
+      policy: record.restartPolicy,
+      recentCrashes: runs.crashesSince(record.id, now.subtract(crashWindow)),
+      now: now,
+    );
+    record.server = null;
+    switch (action) {
+      case RestartAction.restart:
+        setState(record, InstanceState.stopped);
+      case RestartAction.stay:
+        record.lastRequestedRunning = false;
+        setState(record, InstanceState.stopped);
+      case RestartAction.crashLoop:
+        record.lastRequestedRunning = false;
+        setState(record, InstanceState.error, reason: crashLoopReason);
+    }
+    final lines = await _logTail(record.id);
+    final message = 'the server exited with code $code without a stop request';
+    notice(record.id, 'crashed', message, exitCode: code, lastLogLines: lines);
+    if (action == RestartAction.crashLoop) {
+      notice(
+        record.id,
+        'crash_loop',
+        'the server crashed more than $maxRestarts times within '
+            '${crashWindow.inMinutes} minutes and is not restarted again',
+        exitCode: code,
+        lastLogLines: lines,
+      );
+    }
+    // The restart comes after the notice, so a client sees the crash first.
+    if (action == RestartAction.restart) _scheduleRestart(record);
+  }
+
+  Future<List<String>> _logTail(String instanceId) async {
+    try {
+      return await logTail?.call(instanceId, 50) ?? const [];
+    } on Object {
+      return const [];
+    }
+  }
+
+  void _scheduleRestart(InstanceRecord record) {
+    cancelRestart(record.id);
+    _restartTimers[record.id] = Timer(restartDelay, () {
+      _restartTimers.remove(record.id);
+      if (_closed ||
+          record.state != InstanceState.stopped ||
+          !record.lastRequestedRunning) {
+        return;
+      }
+      try {
+        start(record.id);
+      } on Object {
+        record.lastRequestedRunning = false;
+        saveChanges(record);
+      }
+    });
+  }
+
+  /// Drops a restart that is waiting out its delay.
+  void cancelRestart(String instanceId) =>
+      _restartTimers.remove(instanceId)?.cancel();
+
+  /// Starts the instances that were running when the daemon went down, one
+  /// after the other [autostartInterval] apart (design D14). An instance whose
+  /// start fails is handled like any failed Start: stopped, and not started
+  /// again by a later restart.
+  void autostartInstances() {
+    final ids = [
+      for (final r in _records.values)
+        if (r.state == InstanceState.stopped &&
+            r.autostart &&
+            r.lastRequestedRunning &&
+            !r.settingsInvalid &&
+            registry.find(r.pluginId) != null)
+          r.id,
+    ];
+    if (ids.isEmpty) return;
+    unawaited(() async {
+      for (var i = 0; i < ids.length; i++) {
+        if (i > 0) await Future<void>.delayed(autostartInterval);
+        if (_closed) return;
+        final record = _records[ids[i]];
+        if (record == null || record.state != InstanceState.stopped) continue;
+        try {
+          final op = start(record.id);
+          _recoveryNotice(
+            record,
+            'autostarted',
+            'started again after the daemon restarted',
+          );
+          await runner.whenDone(op.id);
+        } on Object {
+          record.lastRequestedRunning = false;
+          saveChanges(record);
+        }
+      }
+    }());
   }
 
   void _recoveryNotice(InstanceRecord record, String kind, String message) {
@@ -965,6 +1290,13 @@ class InstanceManager {
   /// Stops announcing changes. Operations still running change nothing more.
   Future<void> close() async {
     _closed = true;
+    for (final timer in _restartTimers.values) {
+      timer.cancel();
+    }
+    _restartTimers.clear();
+    for (final record in _records.values) {
+      if (record.server case final server?) processHost.release(server);
+    }
     await _events.close();
     await _pluginsReloaded.close();
   }

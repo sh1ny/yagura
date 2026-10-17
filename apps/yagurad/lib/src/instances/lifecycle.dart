@@ -13,6 +13,7 @@ import '../plugins/plugin_registry.dart';
 import '../process/process.dart';
 import '../snapshots/snapshots.dart';
 import '../steam/steam.dart';
+import 'health_check.dart';
 import 'instance.dart';
 import 'instance_file.dart';
 import 'instance_manager.dart';
@@ -78,6 +79,16 @@ class Lifecycle {
     } on YaguraException catch (e) {
       if (e.reason == 'interrupted' && ctx.cancel.isCancelled) {
         throw const OperationCancelled();
+      }
+      // The operation keeps only the message, so the script location (the
+      // stack names `hooks.js:<line>`) goes into it.
+      final stack = e.details['stack'];
+      if (stack is String && stack.isNotEmpty && !e.message.contains(stack)) {
+        throw YaguraException(
+          e.reason,
+          '${e.message}\n$stack',
+          details: e.details,
+        );
       }
       rethrow;
     }
@@ -258,8 +269,15 @@ class Lifecycle {
     _manager.checkAllowed(record, OperationKind.start, execution: true);
     final plugin = _manager.requirePlugin(record);
     final manifest = plugin.manifest;
+    _manager.cancelRestart(record.id);
+    // Start leaves a crash loop and resets the restart counter.
+    if (record.state == InstanceState.error) {
+      _manager.runs.clearCrashes(record.id);
+    }
     _manager.setState(record, InstanceState.starting);
     RunningServer? server;
+    var runId = '';
+    var serverGone = false;
     try {
       var extraArgs = const <String>[];
       var env = const <String, String>{};
@@ -271,14 +289,24 @@ class Lifecycle {
 
       final launched = await ctx.step('spawn', () async {
         final executable = manifest.executables[_manager.os]!;
+        runId = [
+          'run',
+          for (var i = 0; i < 12; i++) _random.nextInt(16).toRadixString(16),
+        ].join();
+        final runDirectory = RunFiles.directoryFor(record.directory, runId);
+        Directory(runDirectory).createSync(recursive: true);
+        // The run is recorded `pending` before anything is spawned, so a
+        // daemon killed from here on can find what it started.
+        _manager.runs.insertPending(
+          runId: runId,
+          instanceId: record.id,
+          directory: runDirectory,
+          at: _manager.clock(),
+        );
         final launched = await _manager.processHost.launch(
           LaunchRequest(
             instanceId: record.id,
-            runId: [
-              'run',
-              for (var i = 0; i < 12; i++)
-                _random.nextInt(16).toRadixString(16),
-            ].join(),
+            runId: runId,
             executable: p.join(_serverDirectory(record), executable),
             args: [
               ...renderLaunchArgs(manifest, _launchContext(record, manifest)),
@@ -287,49 +315,137 @@ class Lifecycle {
             env: env,
             workingDirectory: _serverDirectory(record),
             instanceDirectory: record.directory,
+            runDirectory: runDirectory,
+          ),
+        );
+        _manager.withRuns(
+          (runs) => runs.markRunning(
+            runId,
+            server: launched.identity,
+            relay: launched.relay,
           ),
         );
         return launched;
       });
       server = launched;
+      record
+        ..server = launched
+        ..runId = runId;
 
+      var health = InstanceHealth.ok;
       await ctx.step('health', () async {
-        var exited = false;
-        unawaited(launched.exitCode.then((_) => exited = true));
-        await Future<void>.delayed(Duration.zero);
-        if (exited) {
-          throw YaguraException(
-            'launch_failed',
-            'the server process ended right after it started',
-            details: {'instanceId': record.id},
-          );
+        final outcome = await _manager.healthEvaluator.evaluate(
+          spec: manifest.health,
+          ports: record.ports,
+          server: launched,
+          cancelled: ctx.cancel.whenCancelled,
+        );
+        switch (outcome) {
+          case HealthPassed():
+            break;
+          case HealthTimedOut():
+            health = InstanceHealth.unknown;
+            final waited = manifest.health.startTimeoutSeconds;
+            final message =
+                'health: the server is running but its health check did not '
+                'pass within $waited s';
+            ctx.warn(message);
+            _manager.notice(record.id, 'health_unknown', message);
+          case HealthProcessExited(:final exitCode):
+            serverGone = true;
+            throw YaguraException(
+              'launch_failed',
+              '${p.basename(launched.executable)} exited during the health '
+                  'window with exit code $exitCode',
+              details: {'instanceId': record.id, 'exitCode': exitCode},
+            );
+          case HealthInterrupted():
+            throw const OperationCancelled();
         }
       });
       ctx.cancel.throwIfCancelled();
 
       record
-        ..server = launched
-        ..lastRequestedRunning = true;
+        ..lastRequestedRunning = true
+        ..health = health;
       _manager.setState(record, InstanceState.running);
-    } on Object {
-      if (server != null) {
+      _manager.watchExit(record, launched);
+    } on Object catch (e) {
+      final cancelled = e is OperationCancelled;
+      if (server != null && !serverGone) {
+        // A Stop that cancelled the start gets the plugin's stop plan; any
+        // other failure ends the abandoned server at once.
         try {
-          await _manager.processHost.stop(
+          await _stopServer(
+            record,
             server,
-            const StopPlan(
-              strategy: StopStrategy.kill,
-              grace: Duration.zero,
-              force: true,
-            ),
+            manifest.stop,
+            force: !cancelled,
+            clearsRequested: true,
           );
         } on Object {
           // Best effort: the launch is being abandoned anyway.
         }
+      } else if (runId.isNotEmpty) {
+        _manager.withRuns(
+          (runs) => runs.markEnded(
+            runId,
+            at: _manager.clock(),
+            reason: 'launch_failed',
+            exitCode: serverGone ? _exitCodeOf(e) : null,
+          ),
+        );
       }
       record.server = null;
+      if (!cancelled) record.lastRequestedRunning = false;
       _manager.setState(record, InstanceState.stopped);
       rethrow;
     }
+  }
+
+  int? _exitCodeOf(Object error) =>
+      error is YaguraException ? error.details['exitCode'] as int? : null;
+
+  /// Asks [server] to stop following [spec] and returns who ended it. The
+  /// stop request is written on the run before the strategy is sent, so a
+  /// daemon killed in the middle can resume the stop (design D2).
+  Future<StoppedBy> _stopServer(
+    InstanceRecord record,
+    RunningServer server,
+    StopSpec spec, {
+    required bool force,
+    required bool clearsRequested,
+  }) async {
+    final plan = StopPlan(
+      strategy: spec.strategy,
+      grace: Duration(seconds: spec.graceSeconds),
+      force: force,
+    );
+    final runId = record.runId;
+    record.stopRequested = true;
+    _manager.withRuns(
+      (runs) => runs.markStopRequested(
+        runId,
+        at: _manager.clock(),
+        grace: plan.grace,
+        clearsRequested: clearsRequested,
+      ),
+    );
+    final by = await _manager.processHost.stop(server, plan);
+    final code = await server.exitCode.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => -1,
+    );
+    _manager.withRuns(
+      (runs) => runs.markEnded(
+        runId,
+        at: _manager.clock(),
+        reason: 'stopped',
+        stoppedBy: by.wireName,
+        exitCode: code,
+      ),
+    );
+    return by;
   }
 
   Future<void> stop(
@@ -389,20 +505,30 @@ class Lifecycle {
       _manager.setState(record, InstanceState.stopped);
       return null;
     }
+    _manager.cancelRestart(record.id);
     _manager.setState(record, InstanceState.stopping);
-    final spec = plugin.manifest.stop;
     final by = await ctx.step(
       'stop',
-      () => _manager.processHost.stop(
+      () => _stopServer(
+        record,
         server,
-        StopPlan(
-          strategy: spec.strategy,
-          grace: Duration(seconds: spec.graceSeconds),
-          force: force,
-        ),
+        plugin.manifest.stop,
+        force: force,
+        clearsRequested: clearRequested,
       ),
     );
     ctx.result(reason: 'stopped_by:${by.wireName}');
+    if (plugin.hooksSource != null) {
+      // The server is gone: a failing hook is reported, it cannot undo the
+      // stop.
+      await ctx.step('hook:onPostStop', () async {
+        try {
+          await _hook(ctx, record, plugin, HookPoint.onPostStop);
+        } on YaguraException catch (e) {
+          ctx.warn('onPostStop failed: ${e.message}');
+        }
+      });
+    }
     record.server = null;
     if (clearRequested) record.lastRequestedRunning = false;
     _manager.setState(record, InstanceState.stopped);

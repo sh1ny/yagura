@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../errors.dart';
 import '../hooks/hooks.dart';
+import '../instances/health_check.dart';
 import '../instances/instance_manager.dart';
 import '../instances/instance_store.dart';
 import '../logs/instance_log_sync.dart';
@@ -30,8 +31,9 @@ class DaemonConfig {
   DaemonConfig({
     required this.dataDirectory,
     required this.apiPort,
-    required this.processHost,
     required this.steam,
+    this.processHost,
+    this.helperExecutable,
     this.snapshotter,
     this.removeDirectory,
     this.hookHost,
@@ -40,12 +42,25 @@ class DaemonConfig {
     this.clock,
     this.logOptions = const LogHubOptions(),
     this.maxRetainedOperationEvents = 2000,
+    this.restartDelay = const Duration(seconds: 5),
+    this.autostartInterval = const Duration(seconds: 10),
+    this.healthPollInterval = const Duration(milliseconds: 250),
+    this.processHealthSettle = const Duration(seconds: 2),
+    this.pendingRunWait = const Duration(seconds: 10),
   });
 
   final String dataDirectory;
   final int apiPort;
-  final ProcessHost processHost;
   final SteamService steam;
+
+  /// Defaults to the Windows host on Windows (running [helperExecutable]) and
+  /// to a host that cannot launch elsewhere (the Linux path is M5).
+  final ProcessHost? processHost;
+
+  /// The `yagurad` executable the process host runs its `launch` and `signal`
+  /// modes from; defaults to the running executable. Under `dart test` that
+  /// is `dart.exe`, so process tests pass a compiled `yagurad`.
+  final String? helperExecutable;
 
   /// Defaults to a [DirectorySnapshotter] in `<data>/snapshots`.
   final Snapshotter? snapshotter;
@@ -65,6 +80,21 @@ class DaemonConfig {
   /// Non-progress events an operation keeps for a resuming `WatchOperation`
   /// (design D3).
   final int maxRetainedOperationEvents;
+
+  /// How long after a crash the instance is started again ("within 10 s").
+  final Duration restartDelay;
+
+  /// Gap between autostarted instances (design D14).
+  final Duration autostartInterval;
+
+  /// How often the start-time health check tries a port.
+  final Duration healthPollInterval;
+
+  /// How long a `process` health check watches the process stay alive.
+  final Duration processHealthSettle;
+
+  /// How long startup waits for a live relay to record its server (D2).
+  final Duration pendingRunWait;
 }
 
 /// The daemon core: startup sequence and the services group 8 serves.
@@ -164,7 +194,9 @@ class Daemon {
         dataDirectory: dataDirectory,
         apiPort: config.apiPort,
         os: config.os ?? (Platform.isWindows ? 'windows' : 'linux'),
-        processHost: config.processHost,
+        processHost:
+            config.processHost ??
+            defaultProcessHost(helperExecutable: config.helperExecutable),
         steam: config.steam,
         hooks: hooks,
         snapshotter:
@@ -173,6 +205,14 @@ class Daemon {
               root: dataDirectory.snapshotsPath,
               clock: config.clock,
             ),
+        runs: RunStore(database),
+        healthEvaluator: HealthEvaluator(
+          pollInterval: config.healthPollInterval,
+          settle: config.processHealthSettle,
+        ),
+        restartDelay: config.restartDelay,
+        autostartInterval: config.autostartInterval,
+        pendingRunWait: config.pendingRunWait,
         removeDirectory: config.removeDirectory,
         clock: config.clock,
       );
@@ -201,6 +241,10 @@ class Daemon {
         }
       }
     });
+    manager.logTail = (id, lines) async {
+      await logs.pollNow(id);
+      return [for (final e in logs.backlog(id, lines: lines).entries) e.text];
+    };
     await degraded('recovery', manager.recover);
     await degraded('reconcile', manager.reconcilePlugins);
     await degraded('marked_directories', manager.sweepMarkedDirectories);
@@ -215,6 +259,7 @@ class Daemon {
     );
     await degraded('log_tailing', logSync.syncAll);
     logSync.listen();
+    manager.autostartInstances();
 
     return Daemon._(
       dataDirectory: dataDirectory,

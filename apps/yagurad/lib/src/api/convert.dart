@@ -36,8 +36,7 @@ pb.Protocol protocolToPb(plugin.PortProtocol protocol) => switch (protocol) {
 /// document is left out and `settings_omitted` is set (a slim delta, design
 /// D15).
 ///
-/// M1 has no health data (the start waits for the process only), so `health`
-/// stays unspecified; `revision` is always 0 (design D24).
+/// `revision` is always 0 (design D24).
 pb.Instance instanceToPb(Instance instance, {bool includeSettings = true}) {
   return pb.Instance(
     id: instance.id,
@@ -68,6 +67,11 @@ pb.Instance instanceToPb(Instance instance, {bool includeSettings = true}) {
     createdAt: timestamp(instance.createdAt),
     stateChangedAt: timestamp(instance.stateChangedAt),
     pid: instance.pid,
+    health: switch (instance.health) {
+      InstanceHealth.unspecified => pb.Health.HEALTH_UNSPECIFIED,
+      InstanceHealth.ok => pb.Health.HEALTH_OK,
+      InstanceHealth.unknown => pb.Health.HEALTH_UNKNOWN,
+    },
     revision: Int64.ZERO,
     restartRequired: instance.restartRequired,
     autostart: instance.autostart,
