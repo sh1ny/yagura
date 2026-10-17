@@ -110,17 +110,53 @@ class FakeSteamService implements SteamService {
     sweeps++;
     if (sweepError case final error?) throw error;
   }
+
+  @override
+  Future<void> close() async {}
 }
 
 /// Records the snapshots it was asked for.
 class FakeSnapshotter implements Snapshotter {
   final taken = <SnapshotRequest>[];
+  final restored = <RestoreRequest>[];
+
+  /// Throws from `ensureSpace` when set.
+  YaguraException? spaceError;
+
+  @override
+  Future<void> ensureSpace(SnapshotRequest request) async {
+    if (spaceError case final error?) throw error;
+  }
 
   @override
   Future<String> take(SnapshotRequest request) async {
     taken.add(request);
     return 'snap-${taken.length}';
   }
+
+  @override
+  List<SnapshotInfo> list(String instanceId) => const [];
+
+  @override
+  List<SnapshotInfo> listOrphans(Set<String> knownInstanceIds) => const [];
+
+  @override
+  Future<void> restore(
+    RestoreRequest request, {
+    required void Function(String step) onStep,
+    required void Function() checkCancelled,
+  }) async {
+    restored.add(request);
+  }
+
+  @override
+  List<String> interruptedRestores() => const [];
+
+  @override
+  void clearInterruptedRestore(String instanceId) {}
+
+  @override
+  Future<void> purgeExpired(Set<String> knownInstanceIds) async {}
 }
 
 /// A fresh data directory for one test, with helpers to prepare plugins and
@@ -167,18 +203,27 @@ class TestEnv {
   Future<Daemon> start({
     String os = 'windows',
     int port = apiPort,
+    // Kept for older tests: the fake snapshotter is always wired in.
     bool withSnapshotter = false,
+    // Lets the daemon create its own snapshotter in `<data>/snapshots`.
+    bool realSnapshots = false,
+    Future<void> Function(String directory)? removeDirectory,
     HookHost? hookHost,
     List<Migration>? migrations,
     String? dataPath,
+    SteamService? steamService,
+    Snapshotter? snapshots,
+    DateTime Function()? clock,
   }) async {
     final daemon = await Daemon.start(
       DaemonConfig(
         dataDirectory: dataPath ?? data,
         apiPort: port,
         processHost: process,
-        steam: steam,
-        snapshotter: withSnapshotter ? snapshotter : null,
+        steam: steamService ?? steam,
+        snapshotter: realSnapshots ? null : snapshots ?? snapshotter,
+        removeDirectory: removeDirectory,
+        clock: clock,
         hookHost: hookHost,
         os: os,
         migrations: migrations,

@@ -107,7 +107,7 @@ Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violation
 | Config | `binding_file_missing`, `config_parse_error`, `file_locked`, `external_edit` (event/warning; values of secret-bound keys masked) |
 | Steam | `steamcmd_unavailable`, `steam_account_required`, `disk_check_skipped` (warning), `steam_no_subscription`, `steam_unknown_error`, `steam_guard_invalid`, `steam_guard_timeout`, `steam_reauth_required`, `steam_stalled`, `gslt_required`, `insufficient_disk`, `workshop_item_unavailable` |
 | Mods | `stage_link_failed`, `key_conflict` (warning) |
-| Snapshots | `insufficient_disk` (snapshot) |
+| Snapshots | `insufficient_disk` (snapshot), `snapshot_not_found` |
 | RCON | `rcon_auth_failed`, `rcon_unavailable` (stop fell back to kill), `timeout` |
 | Firewall | `firewall_unavailable` (warning) |
 | Host | `data_dir_locked`, `data_dir_unwritable`, `migration_failed`, `secret_store_unavailable`, `dev_mode_requires_loopback`, `secure_mode_unavailable`, `elevation_required`, `systemd_required` (CLI/startup exit reasons) |

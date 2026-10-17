@@ -31,6 +31,7 @@ class DaemonConfig {
     required this.processHost,
     required this.steam,
     this.snapshotter,
+    this.removeDirectory,
     this.hookHost,
     this.os,
     this.migrations,
@@ -41,7 +42,12 @@ class DaemonConfig {
   final int apiPort;
   final ProcessHost processHost;
   final SteamService steam;
+
+  /// Defaults to a [DirectorySnapshotter] in `<data>/snapshots`.
   final Snapshotter? snapshotter;
+
+  /// Removes an instance directory after a delete with files; a seam for tests.
+  final Future<void> Function(String directory)? removeDirectory;
   final HookHost? hookHost;
 
   /// `windows` or `linux`; defaults to the host OS.
@@ -64,11 +70,14 @@ class Daemon {
     required this.instances,
     required this.operations,
     required this.startupNotices,
+    required SteamService steam,
   }) : _lock = lock, // ignore: prefer_initializing_formals
-       _database = database; // ignore: prefer_initializing_formals
+       _database = database, // ignore: prefer_initializing_formals
+       _steam = steam; // ignore: prefer_initializing_formals
 
   final DataDirLock _lock;
   final YaguraDatabase _database;
+  final SteamService _steam;
   var _closed = false;
 
   final DataDirectory dataDirectory;
@@ -128,7 +137,13 @@ class Daemon {
         processHost: config.processHost,
         steam: config.steam,
         hooks: hooks,
-        snapshotter: config.snapshotter,
+        snapshotter:
+            config.snapshotter ??
+            DirectorySnapshotter(
+              root: dataDirectory.snapshotsPath,
+              clock: config.clock,
+            ),
+        removeDirectory: config.removeDirectory,
         clock: config.clock,
       );
     } on Object {
@@ -153,6 +168,7 @@ class Daemon {
     await degraded('recovery', manager.recover);
     await degraded('reconcile', manager.reconcilePlugins);
     await degraded('marked_directories', manager.sweepMarkedDirectories);
+    await degraded('snapshots', manager.purgeExpiredSnapshots);
     await degraded('instance_files', manager.rewriteInstanceFiles);
     await degraded('history', runner.pruneHistory);
 
@@ -164,6 +180,7 @@ class Daemon {
       instances: manager,
       operations: runner,
       startupNotices: List.unmodifiable(notices),
+      steam: config.steam,
     );
   }
 
@@ -189,6 +206,7 @@ class Daemon {
     _closed = true;
     await instances.close();
     await operations.close();
+    await _steam.close();
     _database.close();
     _lock.release();
   }

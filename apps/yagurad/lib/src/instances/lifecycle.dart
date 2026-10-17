@@ -109,6 +109,8 @@ class Lifecycle {
           installDirectory: _serverDirectory(record),
           validate: validate,
           account: account,
+          accountRequired: !spec.anonymous,
+          sizeHintBytes: spec.sizeHintBytes,
         ),
         _Reporter(ctx),
         ctx.cancel,
@@ -153,26 +155,37 @@ class Lifecycle {
     final wasRunning = record.state == InstanceState.running;
     ctx.cancel.throwIfCancelled();
 
-    if (wasRunning) await _stopRunning(ctx, record, plugin, force: false);
+    // The space check comes before anything is stopped or changed, so a full
+    // snapshots volume leaves a running server running (design D12).
+    final snapshotRequest = skipSnapshot
+        ? null
+        : _snapshotRequest(record, plugin, 'pre_update');
+    if (snapshotRequest != null) {
+      await _manager.snapshotter.ensureSpace(snapshotRequest);
+    }
+
+    // Stopping for the update is internal: it keeps the last requested state
+    // (design D14) until the operation's outcome is known.
+    final stoppedBy = wasRunning
+        ? await _stopRunning(
+            ctx,
+            record,
+            plugin,
+            force: false,
+            clearRequested: false,
+          )
+        : null;
 
     var updating = false;
     try {
-      if (skipSnapshot) {
-        ctx.warn('snapshot:skipped');
-      } else if (_manager.snapshotter case final snapshotter?) {
+      if (snapshotRequest == null) {
+        ctx.result(
+          reason: stoppedBy == null ? '' : 'stopped_by:$stoppedBy',
+          message: 'snapshot: skipped',
+        );
+      } else {
         await ctx.step('snapshot', () async {
-          await snapshotter.take(
-            SnapshotRequest(
-              instanceId: record.id,
-              instanceName: record.name,
-              instanceDirectory: record.directory,
-              dataPaths: resolveDataPaths(
-                manifest,
-                _launchContext(record, manifest),
-              ),
-              reason: 'pre_update',
-            ),
-          );
+          await _manager.snapshotter.take(snapshotRequest);
         });
       }
       ctx.cancel.throwIfCancelled();
@@ -184,29 +197,56 @@ class Lifecycle {
       });
       _manager.setState(record, InstanceState.stopped);
     } on OperationCancelled {
-      _stoppedAfterStep(record, wasRunning, updating);
+      _endedStopped(record, wasRunning, updating);
       rethrow;
-    } on YaguraException catch (e) {
+    } on Object catch (e) {
       if (updating) {
-        _manager.setState(record, InstanceState.error, reason: e.reason);
+        record.lastRequestedRunning = false;
+        _manager.setState(
+          record,
+          InstanceState.error,
+          reason: e is YaguraException ? e.reason : 'internal_error',
+        );
       } else {
-        _stoppedAfterStep(record, wasRunning, updating);
+        _endedStopped(record, wasRunning, updating);
       }
       rethrow;
     }
     if (wasRunning) {
-      await start(ctx, id);
+      ctx.beginStep('start');
+      try {
+        await start(ctx, id);
+      } on Object {
+        // The operation ends with the server stopped.
+        record.lastRequestedRunning = false;
+        _manager.saveChanges(record);
+        rethrow;
+      }
     }
   }
 
-  void _stoppedAfterStep(
+  SnapshotRequest _snapshotRequest(
     InstanceRecord record,
-    bool wasRunning,
-    bool updating,
-  ) {
-    if (record.state == InstanceState.error) return;
-    if (wasRunning || updating) {
-      record.lastRequestedRunning = false;
+    LoadedPlugin plugin,
+    String reason,
+  ) => SnapshotRequest(
+    instanceId: record.id,
+    instanceName: record.name,
+    instanceDirectory: record.directory,
+    dataPaths: resolveDataPaths(
+      plugin.manifest,
+      _launchContext(record, plugin.manifest),
+    ),
+    reason: reason,
+  );
+
+  /// An update, validate or restart that ends with the server stopped clears
+  /// the last requested state (design D14).
+  void _endedStopped(InstanceRecord record, bool wasRunning, bool updating) {
+    if (wasRunning) record.lastRequestedRunning = false;
+    if (record.state == InstanceState.error) {
+      _manager.saveChanges(record);
+    } else if (wasRunning || updating) {
       _manager.setState(record, InstanceState.stopped);
     }
   }
@@ -310,27 +350,44 @@ class Lifecycle {
       _manager.saveChanges(record);
       return;
     }
-    await _stopRunning(ctx, record, plugin, force: force);
+    await _stopRunning(ctx, record, plugin, force: force, clearRequested: true);
   }
 
   Future<void> restart(OperationContext ctx, String id) async {
     final record = _manager.recordForOperation(id);
     _manager.checkAllowed(record, OperationKind.restart, execution: true);
     final plugin = _manager.requirePlugin(record);
-    await _stopRunning(ctx, record, plugin, force: false);
-    await start(ctx, id);
+    await _stopRunning(
+      ctx,
+      record,
+      plugin,
+      force: false,
+      clearRequested: false,
+    );
+    try {
+      await start(ctx, id);
+    } on Object {
+      // The restart ends with the server stopped (design D14).
+      record.lastRequestedRunning = false;
+      _manager.saveChanges(record);
+      rethrow;
+    }
   }
 
-  Future<void> _stopRunning(
+  /// Stops the running server and returns who ended it (`graceful`, `kill`...).
+  /// [clearRequested] is false for the internal stop of an update or restart,
+  /// which keeps the last requested state until the operation ends (D14).
+  Future<String?> _stopRunning(
     OperationContext ctx,
     InstanceRecord record,
     LoadedPlugin plugin, {
     required bool force,
+    required bool clearRequested,
   }) async {
     final server = record.server;
     if (server == null) {
       _manager.setState(record, InstanceState.stopped);
-      return;
+      return null;
     }
     _manager.setState(record, InstanceState.stopping);
     final spec = plugin.manifest.stop;
@@ -346,10 +403,10 @@ class Lifecycle {
       ),
     );
     ctx.result(reason: 'stopped_by:${by.wireName}');
-    record
-      ..server = null
-      ..lastRequestedRunning = false;
+    record.server = null;
+    if (clearRequested) record.lastRequestedRunning = false;
     _manager.setState(record, InstanceState.stopped);
+    return by.wireName;
   }
 
   // ---- delete --------------------------------------------------------------
@@ -365,22 +422,18 @@ class Lifecycle {
 
     if (deleteFiles) {
       final plugin = _manager.requirePlugin(record);
-      if (_manager.snapshotter case final snapshotter?) {
-        await ctx.step('snapshot', () async {
-          await snapshotter.take(
-            SnapshotRequest(
-              instanceId: record.id,
-              instanceName: record.name,
-              instanceDirectory: record.directory,
-              dataPaths: resolveDataPaths(
-                plugin.manifest,
-                _launchContext(record, plugin.manifest),
-              ),
-              reason: 'pre_delete',
-            ),
-          );
-        });
-      }
+      final snapshotId = await ctx.step(
+        'snapshot',
+        () => _manager.snapshotter.take(
+          _snapshotRequest(record, plugin, 'pre_delete'),
+        ),
+      );
+      ctx.result(
+        reason: 'pre_delete_snapshot:$snapshotId',
+        message:
+            'pre_delete snapshot $snapshotId was written before the files '
+            'were removed',
+      );
       await ctx.step('mark_deleting', () async {
         marker.parent.createSync(recursive: true);
         marker.writeAsStringSync('');
@@ -399,9 +452,55 @@ class Lifecycle {
     if (deleteFiles) {
       // Past the point of no return: cancellation is no longer honoured.
       ctx.beginStep('remove_files');
-      final directory = Directory(record.directory);
-      if (directory.existsSync()) directory.deleteSync(recursive: true);
+      await _manager.removeDirectory(record.directory);
     }
+  }
+
+  // ---- restore -------------------------------------------------------------
+
+  Future<void> restoreSnapshot(
+    OperationContext ctx,
+    String id,
+    String snapshotId,
+  ) async {
+    final record = _manager.recordForOperation(id);
+    _manager.checkAllowed(record, OperationKind.restore, execution: true);
+    final plugin = _manager.requirePlugin(record);
+    final manifest = plugin.manifest;
+    final snapshotter = _manager.snapshotter;
+    try {
+      await snapshotter.restore(
+        RestoreRequest(
+          instanceId: record.id,
+          instanceName: record.name,
+          instanceDirectory: record.directory,
+          dataPaths: resolveDataPaths(
+            manifest,
+            _launchContext(record, manifest),
+          ),
+          snapshotId: snapshotId,
+        ),
+        onStep: ctx.beginStep,
+        checkCancelled: ctx.cancel.throwIfCancelled,
+      );
+    } on Object {
+      // A restore that failed after it began replacing data leaves mixed data
+      // paths: the instance must not start until the admin decides.
+      if (_manager.snapshotter.interruptedRestores().contains(record.id)) {
+        _manager.setState(
+          record,
+          InstanceState.error,
+          reason: restoreInterruptedReason,
+        );
+      }
+      rethrow;
+    }
+    // A finished restore also clears `error: restore_interrupted`.
+    _manager.setState(record, InstanceState.stopped);
+    ctx.result(
+      reason: 'restored:$snapshotId',
+      message: 'data paths were replaced by snapshot $snapshotId',
+    );
   }
 }
 
@@ -429,4 +528,7 @@ class _Reporter implements SteamRunReporter {
 
   @override
   void log(String text) => _ctx.log(text);
+
+  @override
+  void warn(String warning) => _ctx.warn(warning);
 }

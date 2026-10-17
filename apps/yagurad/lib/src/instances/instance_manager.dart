@@ -33,9 +33,11 @@ class InstanceManager {
     required this.processHost,
     required this.steam,
     required this.hooks,
-    this.snapshotter,
+    required this.snapshotter,
+    Future<void> Function(String directory)? removeDirectory,
     DateTime Function()? clock,
-  }) : clock = clock ?? DateTime.now {
+  }) : clock = clock ?? DateTime.now,
+       removeDirectory = removeDirectory ?? _removeTree {
     lifecycle = Lifecycle(this);
     for (final record in store.loadAll()) {
       _records[record.id] = record;
@@ -55,7 +57,11 @@ class InstanceManager {
   final ProcessHost processHost;
   final SteamService steam;
   final HookHost hooks;
-  final Snapshotter? snapshotter;
+  final Snapshotter snapshotter;
+
+  /// Removes an instance directory after delete; a seam so tests can stop the
+  /// daemon in the middle of it.
+  final Future<void> Function(String directory) removeDirectory;
   final DateTime Function() clock;
   late final Lifecycle lifecycle;
 
@@ -66,6 +72,11 @@ class InstanceManager {
   var _closed = false;
 
   static final _random = Random.secure();
+
+  static Future<void> _removeTree(String directory) async {
+    final tree = Directory(directory);
+    if (tree.existsSync()) tree.deleteSync(recursive: true);
+  }
 
   // ---- reading ------------------------------------------------------------
 
@@ -527,6 +538,42 @@ class InstanceManager {
     );
   }
 
+  // ---- snapshots ----------------------------------------------------------
+
+  /// The instance's snapshots, newest first.
+  List<SnapshotInfo> listSnapshots(String id) {
+    _require(id);
+    return snapshotter.list(id);
+  }
+
+  /// The `pre_delete` snapshots of instances that no longer exist.
+  List<SnapshotInfo> listOrphanSnapshots() =>
+      snapshotter.listOrphans(_records.keys.toSet());
+
+  /// Removes expired snapshots of deleted instances (startup, design D12).
+  Future<void> purgeExpiredSnapshots() =>
+      snapshotter.purgeExpired(_records.keys.toSet());
+
+  /// Replaces the instance's data paths with a snapshot, as an operation on
+  /// its queue (design D12). Allowed from `stopped` and from
+  /// `error: restore_interrupted`.
+  Operation restoreSnapshot(String id, String snapshotId) {
+    final record = _guarded(id, OperationKind.restore);
+    if (!snapshotter.list(id).any((s) => s.id == snapshotId)) {
+      throw YaguraException(
+        'snapshot_not_found',
+        'instance "${record.name}" has no snapshot $snapshotId',
+        details: {'instanceId': id, 'snapshotId': snapshotId},
+      );
+    }
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.restore,
+      body: (context) =>
+          lifecycle.restoreSnapshot(context, record.id, snapshotId),
+    );
+  }
+
   /// Clears an `error` after the cause was addressed (design D17).
   Instance acknowledge(String id) {
     final record = _require(id);
@@ -541,6 +588,9 @@ class InstanceManager {
             : 'instance "${record.name}" is ${record.state.wireName}, not in error',
         details: {'instanceId': id},
       );
+    }
+    if (record.stateReason == restoreInterruptedReason) {
+      snapshotter.clearInterruptedRestore(record.id);
     }
     final warning = switch (record.stateReason) {
       crashLoopReason => '',
@@ -636,6 +686,17 @@ class InstanceManager {
                 : 'instance_not_running',
             'Restart needs a running instance',
           );
+        }
+      case OperationKind.restore:
+        final ok =
+            state == InstanceState.stopped ||
+            (state == InstanceState.error &&
+                reason == restoreInterruptedReason);
+        if (!ok) {
+          if (state == InstanceState.notInstalled) {
+            refuse('not_installed', 'there is no server data to restore');
+          }
+          refuse('invalid_state', 'Restore needs it stopped');
         }
       case OperationKind.delete:
         final ok =
@@ -836,6 +897,19 @@ class InstanceManager {
             InstanceState.error:
           break;
       }
+    }
+    for (final id in snapshotter.interruptedRestores()) {
+      final record = _records[id];
+      if (record == null) {
+        snapshotter.clearInterruptedRestore(id);
+        continue;
+      }
+      setState(record, InstanceState.error, reason: restoreInterruptedReason);
+      _recoveryNotice(
+        record,
+        'restore_interrupted',
+        'the daemon stopped during a restore; data paths may be mixed',
+      );
     }
   }
 

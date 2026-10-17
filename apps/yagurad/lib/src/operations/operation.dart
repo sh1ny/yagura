@@ -30,7 +30,8 @@ enum OperationKind {
   start(heavy: false),
   stop(heavy: false),
   restart(heavy: false),
-  delete(heavy: false);
+  delete(heavy: false),
+  restore(heavy: false);
 
   const OperationKind({required this.heavy});
 
