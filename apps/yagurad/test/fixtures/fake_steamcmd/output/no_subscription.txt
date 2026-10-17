@@ -1,0 +1,8 @@
+Steam Console Client (c) Valve Corporation - version 1730000000
+-- type 'quit' to exit --
+Loading Steam API...OK
+
+Connecting anonymously to Steam Public...OK
+Waiting for client config...OK
+Waiting for user info...OK
+ERROR! Failed to install app '{app_id}' (No subscription)

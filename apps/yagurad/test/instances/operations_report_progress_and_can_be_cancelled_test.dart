@@ -107,4 +107,30 @@ void main() {
         .toList();
     expect(tail.map((e) => e.runtimeType), [StepStartedEvent, FinishedEvent]);
   });
+
+  test('update_cancelled_after_the_server_was_stopped', () async {
+    final env = TestEnv();
+    env.installValheim();
+    final daemon = await env.start();
+    final instance = await createRunning(daemon);
+    env.steam.hold = Completer<void>();
+    final op = daemon.instances.update(instance.id);
+    await eventually(
+      () => daemon.instances.get(instance.id).state == InstanceState.updating,
+      reason: 'the download to begin',
+    );
+    expect(env.process.stops, hasLength(1));
+
+    daemon.operations.cancel(op.id);
+    final done = await daemon.operations.whenDone(op.id);
+
+    expect(done.status, OperationStatus.cancelled);
+    // The server stays stopped: a cancel never restarts it.
+    expect(daemon.instances.get(instance.id).state, InstanceState.stopped);
+    expect(env.process.launches, hasLength(1));
+    final steps = (await daemon.operations.watch(op.id).toList())
+        .whereType<StepStartedEvent>()
+        .map((e) => e.step);
+    expect(steps, isNot(contains('start')));
+  });
 }

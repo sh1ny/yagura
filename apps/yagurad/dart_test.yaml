@@ -1,0 +1,7 @@
+# Tags used to select tests (`dart test --exclude-tags valheim`).
+tags:
+  # Needs Windows: job objects, suspended spawn, Win32 process control.
+  windows:
+  # Downloads and runs the real Valheim dedicated server through SteamCMD; kept
+  # out of the default CI run.
+  valheim:

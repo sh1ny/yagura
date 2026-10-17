@@ -148,4 +148,51 @@ void main() {
       unorderedEquals(['Kept', 'Gone']),
     );
   });
+
+  test('delete_with_files_snapshots_first', () async {
+    final env = TestEnv();
+    env.installValheim();
+    var snapshotExistedBeforeRemoval = false;
+    late String snapshotDirectory;
+    final daemon = await env.start(
+      realSnapshots: true,
+      removeDirectory: (directory) async {
+        // The snapshot is complete on disk before the directory goes.
+        final snapshots = Directory(p.join(env.data, 'snapshots'));
+        snapshotDirectory = snapshots
+            .listSync(recursive: true)
+            .whereType<File>()
+            .singleWhere((f) => p.basename(f.path) == 'world.db')
+            .path;
+        snapshotExistedBeforeRemoval = File(snapshotDirectory).existsSync();
+        Directory(directory).deleteSync(recursive: true);
+      },
+    );
+    final instance = await createInstalled(daemon, name: 'Friends');
+    writeSave(instance.directory);
+
+    final op = daemon.instances.delete(
+      instance.id,
+      deleteFiles: true,
+      confirmName: 'Friends',
+    );
+    final done = await daemon.operations.whenDone(op.id);
+
+    expect(done.status, OperationStatus.succeeded);
+    final orphan = daemon.instances.listOrphanSnapshots().single;
+    expect(orphan.reason, 'pre_delete');
+    // The result names the snapshot.
+    expect(done.resultReason, contains(orphan.id));
+    expect(done.resultMessage, contains(orphan.id));
+    expect(snapshotExistedBeforeRemoval, isTrue);
+    expect(File(snapshotDirectory).readAsStringSync(), 'world');
+    expect(Directory(instance.directory).existsSync(), isFalse);
+
+    // WatchOperation still returns that result once the instance is gone.
+    final events = await daemon.operations.watch(op.id).toList();
+    final finished = events.last as FinishedEvent;
+    expect(finished.operation.resultMessage, contains(orphan.id));
+    final steps = events.whereType<StepStartedEvent>().map((e) => e.step);
+    expect(steps, ['snapshot', 'mark_deleting', 'remove_rows', 'remove_files']);
+  });
 }
