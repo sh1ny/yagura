@@ -44,6 +44,8 @@ class DataDirLock {
     }
     file
       ..truncateSync(0)
+      // Append mode leaves the position at the old end on Linux.
+      ..setPositionSync(0)
       ..writeStringSync('$pid\n')
       ..flushSync();
     _held.add(key);
