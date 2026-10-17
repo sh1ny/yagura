@@ -83,7 +83,7 @@ executable:
   linux: valheim_server.x86_64
 ```
 
-The server executable per OS, relative to the server install directory. At least one OS is required. The executable must be the process that runs for the server's whole lifetime: a launcher that exits after spawning the real server is not supported.
+The server executable per OS, relative to the server install directory. At least one OS is required. The executable must be the process that runs for the server's whole lifetime: a launcher that exits after spawning the real server is not supported. The server starts with the install directory as its working directory, so files the game looks up relative to it (such as Steam's `steam_appid.txt`) are found.
 
 A plugin that declares only `linux` loads with `platforms: [linux]`; creating an instance of it on Windows is refused by the daemon (`unsupported_platform`), not at load.
 
