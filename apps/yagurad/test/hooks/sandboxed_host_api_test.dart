@@ -4,7 +4,10 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
+import 'package:yagurad/src/instances/instance.dart';
+import 'package:yagurad/src/operations/operations.dart';
 
+import '../support/daemon_support.dart';
 import 'hook_test_support.dart';
 
 void main() {
@@ -88,5 +91,63 @@ exports.onPreStart = function () {
       'sandbox_violation',
       'sandbox_violation',
     ]);
+  });
+
+  test('edit_in_an_unsupported_format', () async {
+    final env = TestEnv();
+    env.installValheim(
+      hooks:
+          'exports.onPreStart = () => ({files: [{path: "server.ini", '
+          'format: "ini", patch: {General: {a: 1}}}]});',
+    );
+    final daemon = await env.start();
+    final instance = await createInstalled(daemon);
+    final file = File(p.join(instance.directory, 'server.ini'))
+      ..writeAsStringSync('[General]\na=0\n');
+
+    final done = await runStart(daemon, instance.id);
+
+    expect(done.status, OperationStatus.failed);
+    expect(done.resultReason, 'unsupported_in_this_version');
+    expect(done.resultMessage, allOf(contains('server.ini'), contains('ini')));
+    expect(file.readAsStringSync(), '[General]\na=0\n');
+    expect(env.process.launches, isEmpty);
+    expect(daemon.instances.get(instance.id).state, InstanceState.stopped);
+  });
+
+  test('edit_through_a_link_refused', () async {
+    final env = TestEnv();
+    env.installValheim(
+      hooks:
+          'exports.onPreStart = () => ({files: [{path: "cfg/server.json", '
+          'format: "json", patch: {changed: true}}]});',
+    );
+    final daemon = await env.start();
+    final instance = await createInstalled(daemon);
+    // `cfg` is a junction to a directory outside the instance root.
+    final outside = Directory(p.join(env.root.path, 'outside'))..createSync();
+    final target = File(p.join(outside.path, 'server.json'))
+      ..writeAsStringSync('{"original":1}');
+    final link = p.join(instance.directory, 'cfg');
+    if (Platform.isWindows) {
+      final made = await Process.run('cmd', [
+        '/c',
+        'mklink',
+        '/J',
+        link,
+        outside.path,
+      ]);
+      expect(made.exitCode, 0, reason: '${made.stdout}${made.stderr}');
+    } else {
+      Link(link).createSync(outside.path);
+    }
+
+    final done = await runStart(daemon, instance.id);
+
+    expect(done.status, OperationStatus.failed);
+    expect(done.resultReason, 'sandbox_violation');
+    expect(done.resultMessage, contains('cfg'));
+    expect(target.readAsStringSync(), '{"original":1}');
+    expect(env.process.launches, isEmpty);
   });
 }

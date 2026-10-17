@@ -139,4 +139,38 @@ void main() {
     }
     expect(env.steam.runs, hasLength(3));
   });
+
+  test('stop_during_the_health_wait', () async {
+    final env = TestEnv();
+    // The port never opens and the start timeout is far away.
+    env.installValheimHealth(
+      'type: port\n  port: game\n  start_timeout_seconds: 120',
+    );
+    final daemon = await env.start();
+    final instance = await createValheim(
+      daemon,
+      ports: {'game': await freePort()},
+    );
+    await daemon.operations.whenDone(daemon.instances.install(instance.id).id);
+    final start = daemon.instances.start(instance.id);
+    await eventually(
+      () => daemon.operations.get(start.id)!.currentStep == 'health',
+      reason: 'the health wait',
+    );
+    expect(env.process.servers, hasLength(1));
+    final asked = Stopwatch()..start();
+
+    final stop = daemon.instances.stop(instance.id);
+    final stopped = await daemon.operations.whenDone(stop.id);
+    final started = await daemon.operations.whenDone(start.id);
+
+    // The wait ended at once, not at the 120 s timeout, and the server is
+    // gone through the plugin's stop plan (grace period 30 s).
+    expect(asked.elapsed, lessThan(const Duration(seconds: 5)));
+    expect(started.status, OperationStatus.cancelled);
+    expect(stopped.status, OperationStatus.succeeded);
+    expect(daemon.instances.get(instance.id).state, InstanceState.stopped);
+    expect(env.process.stops.single.grace, const Duration(seconds: 30));
+    await expectLater(env.process.servers.single.exitCode, completes);
+  });
 }

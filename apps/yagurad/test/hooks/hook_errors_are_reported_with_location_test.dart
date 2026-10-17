@@ -1,6 +1,8 @@
 import 'package:test/test.dart';
 import 'package:yagura_plugin/yagura_plugin.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
+import 'package:yagurad/src/instances/instance.dart';
+import 'package:yagurad/src/operations/operations.dart';
 import 'package:yagurad/src/plugins/plugin_registry.dart';
 
 import '../support/daemon_support.dart';
@@ -24,5 +26,30 @@ void main() {
     expect(valheim.reasons.single.line, 2);
     // No instance operation can run a rejected plugin's hooks.
     expect(registry.find('valheim'), isNull);
+  });
+
+  test('thrown_error', () async {
+    final env = TestEnv();
+    // The throw sits on line 42 of hooks.js.
+    final source =
+        '${'// padding\n' * 41}'
+        'exports.onPreStart = function () { throw new Error("missing cfg"); };\n';
+    env.installValheim(hooks: source);
+    final daemon = await env.start();
+    final instance = await createInstalled(daemon);
+
+    final done = await runStart(daemon, instance.id);
+
+    expect(done.status, OperationStatus.failed);
+    expect(done.resultReason, 'hook_error');
+    expect(done.resultMessage, startsWith('missing cfg'));
+    expect(done.resultMessage, contains('hooks.js:42'));
+    // Recorded in the operation history, not only in the live result.
+    final recorded = daemon.operations
+        .listForInstance(instance.id)
+        .singleWhere((o) => o.kind == OperationKind.start);
+    expect(recorded.resultMessage, contains('hooks.js:42'));
+    expect(env.process.launches, isEmpty);
+    expect(daemon.instances.get(instance.id).state, InstanceState.stopped);
   });
 }

@@ -32,6 +32,16 @@ class FakeServer implements RunningServer {
   @override
   final DateTime startedAt;
 
+  @override
+  ProcessIdentity get identity => ProcessIdentity(
+    pid: pid,
+    executable: executable,
+    created: startedAt.microsecondsSinceEpoch,
+  );
+
+  @override
+  ProcessIdentity? get relay => null;
+
   final _exit = Completer<int>();
 
   @override
@@ -52,6 +62,22 @@ class FakeProcessHost implements ProcessHost {
   YaguraException? launchError;
   var _nextPid = 4000;
 
+  /// Called with each server right after it was launched.
+  void Function(FakeServer server)? onLaunch;
+
+  /// Called at the start of every stop, before the server is told to end.
+  void Function(FakeServer server, StopPlan plan)? onStop;
+
+  /// Servers a daemon started after a restart finds alive by their identity.
+  final survivors = <FakeServer>[];
+
+  /// When set, a stop waits for this before the server exits.
+  Future<void>? stopGate;
+
+  /// How a stop ends: by default the server exits and the stop is `graceful`
+  /// unless forced.
+  bool stopFailsGracefully = false;
+
   @override
   Future<RunningServer> launch(LaunchRequest request) async {
     launches.add(request);
@@ -59,15 +85,43 @@ class FakeProcessHost implements ProcessHost {
     if (launchError case final error?) throw error;
     final server = FakeServer(_nextPid++, request.executable);
     servers.add(server);
+    onLaunch?.call(server);
     return server;
   }
 
   @override
   Future<StoppedBy> stop(RunningServer server, StopPlan plan) async {
     stops.add(plan);
-    (server as FakeServer).exit(0);
-    return plan.force ? StoppedBy.kill : StoppedBy.graceful;
+    final fake = server as FakeServer;
+    onStop?.call(fake, plan);
+    if (stopGate case final gate?) await gate;
+    fake.exit(0);
+    return plan.force || stopFailsGracefully
+        ? StoppedBy.kill
+        : StoppedBy.graceful;
   }
+
+  @override
+  Future<RunningServer?> reattach(
+    ProcessIdentity identity, {
+    ProcessIdentity? relay,
+    String runDirectory = '',
+  }) async {
+    for (final server in survivors) {
+      if (server.identity == identity) return server;
+    }
+    return null;
+  }
+
+  @override
+  Future<bool> isAlive(ProcessIdentity identity) async =>
+      survivors.any((s) => s.identity == identity);
+
+  @override
+  Future<void> terminate(ProcessIdentity identity) async {}
+
+  @override
+  void release(RunningServer server) {}
 }
 
 /// A Steam service that plays a script. By default a run reports
@@ -201,9 +255,33 @@ class TestEnv {
     return dir.path;
   }
 
+  /// Installs Valheim with its `health:` block replaced by [body] (indented
+  /// two spaces under `health:`), e.g. `type: port\n  port: game`.
+  String installValheimHealth(String body, {String? hooks}) => installValheim(
+    from:
+        'type: log_match\n  log_match: "Game server connected"\n'
+        '  source: server\n  start_timeout_seconds: 180',
+    to: body,
+    hooks: hooks,
+  );
+
+  /// Replaces [from] with [to] in the installed Valheim manifest.
+  void editValheim(String from, String to) {
+    final file = File(p.join(pluginsDir, 'valheim', 'plugin.yaml'));
+    final text = file.readAsStringSync();
+    expect(text, contains(from), reason: 'fixture edit target');
+    file.writeAsStringSync(text.replaceFirst(from, to));
+  }
+
   /// Starts a daemon on [data] and closes it at tear-down.
   Future<Daemon> start({
     String os = 'windows',
+    ProcessHost? processHost,
+    String? helperExecutable,
+    Duration restartDelay = Duration.zero,
+    Duration autostartInterval = const Duration(milliseconds: 20),
+    Duration processHealthSettle = Duration.zero,
+    Duration pendingRunWait = const Duration(seconds: 1),
     int port = apiPort,
     // Kept for older tests: the fake snapshotter is always wired in.
     bool withSnapshotter = false,
@@ -223,7 +301,13 @@ class TestEnv {
       DaemonConfig(
         dataDirectory: dataPath ?? data,
         apiPort: port,
-        processHost: process,
+        processHost: processHost ?? process,
+        helperExecutable: helperExecutable,
+        restartDelay: restartDelay,
+        autostartInterval: autostartInterval,
+        healthPollInterval: const Duration(milliseconds: 20),
+        processHealthSettle: processHealthSettle,
+        pendingRunWait: pendingRunWait,
         steam: steamService ?? steam,
         snapshotter: realSnapshots ? null : snapshots ?? snapshotter,
         removeDirectory: removeDirectory,
@@ -236,6 +320,14 @@ class TestEnv {
     );
     _daemons.add(daemon);
     return daemon;
+  }
+
+  /// Closes every daemon this env started (idempotent).
+  Future<void> closeDaemons() async {
+    for (final daemon in List.of(_daemons)) {
+      _daemons.remove(daemon);
+      await daemon.close();
+    }
   }
 
   /// Closes [daemon] the way a killed process ends: nothing is finished or
@@ -371,8 +463,12 @@ Future<Daemon> reopenWithState(
 }
 
 /// Waits until [test] holds, polling the event loop.
-Future<void> eventually(bool Function() test, {String? reason}) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 10));
+Future<void> eventually(
+  bool Function() test, {
+  String? reason,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final deadline = DateTime.now().add(timeout);
   while (!test()) {
     if (DateTime.now().isAfter(deadline)) {
       fail('timed out waiting for: ${reason ?? 'condition'}');
@@ -388,4 +484,37 @@ List<LogSourceStatus> logSourcesOf(Daemon daemon, String instanceId) {
   } on YaguraException {
     return const [];
   }
+}
+
+/// Starts the instance and returns the finished operation.
+Future<Operation> runStart(Daemon daemon, String id) async {
+  final op = daemon.instances.start(id);
+  return daemon.operations.whenDone(op.id);
+}
+
+/// Stops the instance and returns the finished operation.
+Future<Operation> runStop(
+  Daemon daemon,
+  String id, {
+  bool force = false,
+}) async {
+  final op = daemon.instances.stop(id, force: force);
+  return daemon.operations.whenDone(op.id);
+}
+
+/// The notices of [kind] the manager raises from now on.
+List<InstanceNotice> collectNotices(Daemon daemon, String kind) {
+  final notices = <InstanceNotice>[];
+  daemon.instances.events.listen((event) {
+    if (event is InstanceNotice && event.kind == kind) notices.add(event);
+  });
+  return notices;
+}
+
+/// A TCP port nothing listens on right now.
+Future<int> freePort() async {
+  final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+  final port = socket.port;
+  await socket.close();
+  return port;
 }
