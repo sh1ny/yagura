@@ -244,39 +244,57 @@ class SteamCmdService implements SteamService {
       reporter.step(next);
     }
 
-    final outcome = await _execute(
-      installation: installation,
-      arguments: [
-        '+force_install_dir',
-        request.installDirectory,
-        '+login',
-        'anonymous',
-        '+app_update',
-        '${request.appId}',
-        if (request.validate) 'validate',
-        '+quit',
-      ],
-      anyOutputIsProgress: false,
-      reporter: reporter,
-      cancel: cancel,
-      onLine: (line) {
-        if (_patterns.stepFor(line) case final started?) enter(started);
-      },
-      onProgress: (progress) {
-        enter(progress.step);
-        reporter.progress(
-          percent: progress.percent,
-          bytesDone: progress.bytesDone,
-          bytesTotal: progress.bytesTotal,
-        );
-      },
-    );
+    // A known failure marked `retry: once` runs the same command again.
+    for (var attempt = 1; ; attempt++) {
+      final outcome = await _execute(
+        installation: installation,
+        arguments: [
+          '+force_install_dir',
+          request.installDirectory,
+          '+login',
+          'anonymous',
+          '+app_update',
+          '${request.appId}',
+          if (request.validate) 'validate',
+          '+quit',
+        ],
+        anyOutputIsProgress: false,
+        reporter: reporter,
+        cancel: cancel,
+        onLine: (line) {
+          if (_patterns.stepFor(line) case final started?) enter(started);
+        },
+        onProgress: (progress) {
+          enter(progress.step);
+          reporter.progress(
+            percent: progress.percent,
+            bytesDone: progress.bytesDone,
+            bytesTotal: progress.bytesTotal,
+          );
+        },
+      );
 
-    final lines = outcome.tail.toList();
-    final lastLines = lines.length > _failureLines
-        ? lines.sublist(lines.length - _failureLines)
-        : lines;
-    if (_patterns.classify(lines, appId: request.appId) case final failure?) {
+      final lines = outcome.tail.toList();
+      final lastLines = lines.length > _failureLines
+          ? lines.sublist(lines.length - _failureLines)
+          : lines;
+      final failure = _patterns.classify(lines, appId: request.appId);
+      if (failure != null && failure.retryOnce && attempt == 1) {
+        enter('steam_login');
+        continue;
+      }
+      _judge(request, outcome, failure, lastLines);
+      return;
+    }
+  }
+
+  void _judge(
+    SteamAppRequest request,
+    _Outcome outcome,
+    SteamFailure? known,
+    List<String> lastLines,
+  ) {
+    if (known case final failure?) {
       throw YaguraException(
         failure.reason,
         failure.message,

@@ -37,6 +37,49 @@ void main() {
     expect(steam.appRuns(), hasLength(1), reason: 'no retry');
   });
 
+  test('missing configuration on a fresh SteamCMD is retried once', () async {
+    // A freshly bootstrapped SteamCMD (build 1791918946) fails its first
+    // app_update with "Missing configuration" and succeeds when run again.
+    final env = TestEnv();
+    final steam = SteamHarness(
+      env,
+      fakeEnvironment: {
+        'FAKE_STEAMCMD_FIRST_TRANSCRIPT': 'missing_configuration.txt',
+        'FAKE_STEAMCMD_FIRST_EXIT': '8',
+        'FAKE_STEAMCMD_FIRST_MARKER': '${env.root.path}/first_run',
+      },
+    );
+
+    await steam.service.installApp(
+      requestFor(env),
+      RecordingReporter(),
+      CancelToken(),
+    );
+
+    expect(steam.appRuns(), hasLength(2));
+  });
+
+  test('missing configuration twice fails without a third run', () async {
+    final env = TestEnv();
+    final steam = SteamHarness(
+      env,
+      fakeEnvironment: {
+        'FAKE_STEAMCMD_TRANSCRIPT': 'missing_configuration.txt',
+        'FAKE_STEAMCMD_EXIT': '8',
+      },
+    );
+
+    await expectLater(
+      steam.service.installApp(
+        requestFor(env),
+        RecordingReporter(),
+        CancelToken(),
+      ),
+      failsWith('steam_unknown_error', messageHas: ['Missing configuration']),
+    );
+    expect(steam.appRuns(), hasLength(2));
+  });
+
   test('unknown_failure_surfaced', () async {
     final env = TestEnv();
     final steam = SteamHarness(

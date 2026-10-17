@@ -10,6 +10,10 @@
 // FAKE_STEAMCMD_TRANSCRIPT   output file to replay for `+app_update`
 //                            (default update_ok.txt)
 // FAKE_STEAMCMD_EXIT         exit code after the replay (default 0)
+// FAKE_STEAMCMD_FIRST_TRANSCRIPT  replayed instead, with exit code
+//                            FAKE_STEAMCMD_FIRST_EXIT (default 0), by the first
+//                            `+app_update` run, the one that creates the file
+//                            FAKE_STEAMCMD_FIRST_MARKER
 // FAKE_STEAMCMD_DELAY_MS     pause between lines (default 5)
 // FAKE_STEAMCMD_STALL_AFTER  print this many lines, then hang until killed
 // FAKE_STEAMCMD_HOLD_FILE    after the first progress line, wait while this
@@ -84,7 +88,15 @@ Future<void> main(List<String> args) async {
     return;
   }
 
-  final transcript = env['FAKE_STEAMCMD_TRANSCRIPT'] ?? 'update_ok.txt';
+  var transcript = env['FAKE_STEAMCMD_TRANSCRIPT'] ?? 'update_ok.txt';
+  int? firstExit;
+  final firstMarker = env['FAKE_STEAMCMD_FIRST_MARKER'];
+  if (env['FAKE_STEAMCMD_FIRST_TRANSCRIPT'] case final first?
+      when firstMarker != null && !File(firstMarker).existsSync()) {
+    File(firstMarker).writeAsStringSync('');
+    transcript = first;
+    firstExit = int.tryParse(env['FAKE_STEAMCMD_FIRST_EXIT'] ?? '') ?? 0;
+  }
   final lines = File('$here/output/$transcript').readAsLinesSync();
   final stallAfter = int.tryParse(env['FAKE_STEAMCMD_STALL_AFTER'] ?? '');
   final holdFile = env['FAKE_STEAMCMD_HOLD_FILE'];
@@ -114,7 +126,8 @@ Future<void> main(List<String> args) async {
     }
   }
 
-  final exitWith = int.tryParse(env['FAKE_STEAMCMD_EXIT'] ?? '') ?? 0;
+  final exitWith =
+      firstExit ?? int.tryParse(env['FAKE_STEAMCMD_EXIT'] ?? '') ?? 0;
   if (exitWith == 0 && installDir != null) {
     final bytes = int.tryParse(env['FAKE_STEAMCMD_APP_BYTES'] ?? '') ?? 4096;
     File('$installDir/steamapps/appmanifest_$appId.acf')

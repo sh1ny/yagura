@@ -24,20 +24,35 @@ class SteamProgress {
 
 /// A recognised failure.
 class SteamFailure {
-  const SteamFailure(this.id, this.reason, this.message);
+  const SteamFailure(
+    this.id,
+    this.reason,
+    this.message, {
+    this.retryOnce = false,
+  });
 
   final String id;
   final String reason;
   final String message;
+
+  /// The same SteamCMD command runs once more before this is reported.
+  final bool retryOnce;
 }
 
 class _FailurePattern {
-  _FailurePattern(this.id, this.reason, this.match, this.message);
+  _FailurePattern(
+    this.id,
+    this.reason,
+    this.match,
+    this.message, {
+    this.retryOnce = false,
+  });
 
   final String id;
   final String reason;
   final RegExp match;
   final String message;
+  final bool retryOnce;
 }
 
 /// The versioned pattern table (`steam/patterns.yaml`, ADR 0010): which lines
@@ -87,6 +102,13 @@ class SteamPatterns {
             failure['reason'] as String,
             RegExp(failure['match'] as String),
             failure['message'] as String,
+            retryOnce: switch (failure['retry']) {
+              null => false,
+              'once' => true,
+              final other => throw FormatException(
+                'failure ${failure['id']}: retry must be "once", not $other',
+              ),
+            },
           ),
       ],
     );
@@ -132,6 +154,7 @@ class SteamPatterns {
             failure.id,
             failure.reason,
             failure.message.replaceAll('{app_id}', '$appId'),
+            retryOnce: failure.retryOnce,
           );
         }
       }

@@ -10,7 +10,7 @@ const steamPatternsYaml = r'''
 # apps/yagurad; a test fails when the embedded copy is out of date.
 
 # Version of this table; bump it when patterns change.
-version: 1
+version: 2
 
 # Steps the output moves through. The first line matching `match` starts the
 # step; `steam_login` is also started by the daemon before SteamCMD prints.
@@ -35,7 +35,16 @@ progress:
 success: "Success! App '\\d+' (fully installed|already up to date)"
 
 # Failure lines, first match wins. `{app_id}` is the app being installed.
+# `retry: once` runs the same SteamCMD command a second time before the
+# failure is reported.
 failures:
+  # A freshly bootstrapped SteamCMD (build 1791918946) fails its first
+  # app_update this way; the same command succeeds when run again.
+  - id: missing_configuration
+    reason: steam_unknown_error
+    retry: once
+    match: "Failed to install app '\\d+' \\(Missing configuration\\)"
+    message: "SteamCMD could not install the app {app_id} (SteamCMD: Missing configuration), also when run a second time."
   - id: no_subscription
     reason: steam_no_subscription
     match: "Failed to install app '\\d+' \\(No subscription\\)"
