@@ -53,7 +53,7 @@ class CliEnvironment {
 Future<int> runCli(List<String> arguments, CliEnvironment env) async {
   if (arguments.isEmpty || arguments.first.startsWith('-')) {
     env.err.writeln(
-      'usage: yagurad run --dev [--bind host:port] '
+      'usage: yagurad run [--console] --dev [--bind host:port] '
       '[--data-dir path]',
     );
     return exitUsage;
@@ -112,6 +112,9 @@ Future<int> _helper(
 
 Future<int> _run(List<String> arguments, CliEnvironment env) async {
   final parser = ArgParser()
+    // Runs in this console as the current user (design D2): the only mode
+    // until the Windows service arrives in M2, so the flag changes nothing.
+    ..addFlag('console', negatable: false)
     ..addFlag('dev', negatable: false, help: 'Serve plaintext on loopback.')
     ..addOption('bind', defaultsTo: defaultDevBind)
     ..addOption('data-dir');

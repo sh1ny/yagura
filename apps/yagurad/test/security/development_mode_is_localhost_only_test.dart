@@ -78,6 +78,21 @@ void main() {
     expect(await cli.exit, 0);
   });
 
+  test('run --console is the development mode of design D2', () async {
+    // The M1 exit criteria start the daemon as `yagurad run --console --dev`.
+    final cli = RunningCli(['--console', '--dev', '--bind', '127.0.0.1:0']);
+    final (address, _) = await Future.any([
+      cli.listening.future,
+      cli.exit.then<(InternetAddress, int)>(
+        (code) => fail('exited $code: ${cli.errors}'),
+      ),
+    ]).timeout(const Duration(seconds: 20));
+
+    expect(address.address, '127.0.0.1');
+    cli.stop();
+    expect(await cli.exit, 0);
+  });
+
   test('dev_mode_on_a_public_address', () async {
     final cli = RunningCli(['--dev', '--bind', '0.0.0.0:0']);
 
