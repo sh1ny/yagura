@@ -107,13 +107,12 @@ String _sourceHash(Directory root) {
       File(p.join(package.path, 'pubspec.yaml')),
       for (final sub in ['lib', 'bin', 'hook', 'third_party'])
         if (Directory(p.join(package.path, sub)).existsSync())
-          ...Directory(
-            p.join(package.path, sub),
-          ).listSync(recursive: true).whereType<File>(),
+          ...Directory(p.join(package.path, sub))
+              .listSync(recursive: true)
+              .whereType<File>(),
     ],
   ]..sort((a, b) => a.path.compareTo(b.path));
-  final bytes = BytesBuilder(copy: false)
-    ..add(utf8.encode(Platform.version));
+  final bytes = BytesBuilder(copy: false)..add(utf8.encode(Platform.version));
   for (final file in files) {
     bytes
       ..add(utf8.encode(p.relative(file.path, from: workspace.path)))
