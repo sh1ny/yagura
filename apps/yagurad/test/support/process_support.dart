@@ -151,6 +151,11 @@ Future<ProcessTools> _buildTools() async {
     if (helper.exitCode != 0) {
       fail('building yagurad failed:\n${helper.stdout}\n${helper.stderr}');
     }
+    // Run each new executable once, so an antivirus scan on its first
+    // execution happens here and not inside a launch's 30 s wait (on the CI
+    // runner the relay's first CreateProcess of fake_server took longer).
+    await Process.run(tools.fakeServer, ['--exit-after-ms', '0']);
+    await Process.run(tools.yagurad, const []);
     done.writeAsStringSync('ok');
     return tools;
   } finally {

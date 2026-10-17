@@ -137,11 +137,12 @@ void main() {
     );
     await slow.until((e) => e.isNotEmpty);
 
-    // It stops reading while more than 1,000 events are produced, sent 20 at
-    // a time so a slow CI disk stays inside the timeout; the last rename is
-    // sent alone, so it is the final state.
+    // It stops reading while far more than 1,000 events are produced (some
+    // fill the transport's buffers before any queue in the daemon), sent 20
+    // at a time so a slow CI disk stays inside the timeout; the last rename
+    // is sent alone, so it is the final state.
     slow.subscription.pause();
-    for (var i = 0; i < 1200; i += 20) {
+    for (var i = 0; i < 1800; i += 20) {
       await Future.wait([
         for (var j = i; j < i + 20; j++)
           api.instances.updateSettings(rename(a.id, 'Name$j')),
@@ -174,7 +175,7 @@ void main() {
     );
     expect(
       events.length - beforeResume,
-      lessThan(1000),
+      lessThan(1500),
       reason: 'the backlog was dropped, not delivered',
     );
     // Live deltas continue after the snapshot.
