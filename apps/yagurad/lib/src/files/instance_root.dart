@@ -29,7 +29,9 @@ class InstanceRoot {
       throw _violation(relative, 'the path contains a NUL character');
     }
     final candidate = p.normalize(p.absolute(p.join(_real, relative)));
-    if (!_inside(candidate)) {
+    // An absolute path may name the root another way (a Windows 8.3 short
+    // name such as `RUNNER~1`), so only the resolved path below decides.
+    if (!p.isAbsolute(relative) && !_inside(candidate)) {
       throw _violation(relative, 'the path leaves the instance root');
     }
     var existing = candidate;

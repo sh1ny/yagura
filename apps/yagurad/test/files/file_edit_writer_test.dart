@@ -211,5 +211,34 @@ void main() {
         isTrue,
       );
     });
+
+    test(
+      'accepts an absolute path inside the root spelled with 8.3 short names',
+      () {
+        // The GitHub runner's temp directory is `C:\Users\RUNNER~1\...`.
+        final root = Directory(p.join(makeRoot().path, 'a long directory name'))
+          ..createSync();
+        final file = put(root, 'a.txt', 'x');
+        final short = Process.runSync('powershell', [
+          '-NoProfile',
+          '-Command',
+          '(New-Object -ComObject Scripting.FileSystemObject)'
+              ".GetFolder('${root.path}').ShortPath",
+        ]).stdout.toString().trim();
+        if (p.equals(short, root.path)) {
+          markTestSkipped('8.3 names are disabled on this volume');
+          return;
+        }
+        final instance = InstanceRoot(root.path);
+        expect(
+          p.equals(
+            instance.resolve(p.join(short, 'a.txt')),
+            file.resolveSymbolicLinksSync(),
+          ),
+          isTrue,
+        );
+      },
+      testOn: 'windows',
+    );
   });
 }
