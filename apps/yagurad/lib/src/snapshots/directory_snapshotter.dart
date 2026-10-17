@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:path/path.dart' as p;
 
 import '../errors.dart';
+import '../files/instance_root.dart';
 import '../platform/disk_space.dart';
 import 'snapshotter.dart';
 
@@ -82,11 +83,23 @@ class DirectorySnapshotter implements Snapshotter {
           path,
         ).list(recursive: true, followLinks: false)) {
           if (entity is File) total += await entity.length();
+          if (entity is Link) throw _unsupportedLink(entity.path);
         }
+      } else if (type == FileSystemEntityType.link) {
+        throw _unsupportedLink(path);
       }
     }
     return total;
   }
+
+  /// Snapshots copy files and directories only; a link would be dropped from
+  /// the copy and from the data a restore puts back, so it is refused.
+  YaguraException _unsupportedLink(String path) => YaguraException(
+    'unsupported_in_this_version',
+    'cannot snapshot "$path": links in data paths are not supported in this '
+        'version',
+    details: {'path': path},
+  );
 
   // ---- taking ----------------------------------------------------------------
 
@@ -266,6 +279,7 @@ class DirectorySnapshotter implements Snapshotter {
       for (final entry in manifest['paths'] as List<Object?>)
         entry as Map<String, Object?>,
     ];
+    final instanceRoot = InstanceRoot(request.instanceDirectory);
     final targets = <String>[];
     for (final entry in entries) {
       final target = p.normalize(
@@ -278,7 +292,17 @@ class DirectorySnapshotter implements Snapshotter {
               'directory: ${entry['path']}',
         );
       }
-      targets.add(target);
+      // A link on the way (an intermediate directory replaced since the
+      // snapshot) must not lead the deletion and copy outside the instance.
+      // The last segment stays as named: a link there is replaced itself.
+      final relative = p.relative(target, from: request.instanceDirectory);
+      final parent = p.dirname(relative);
+      targets.add(
+        p.join(
+          instanceRoot.resolve(parent == '.' ? '' : parent),
+          p.basename(target),
+        ),
+      );
     }
 
     final pin = '${request.instanceId}/${request.snapshotId}';

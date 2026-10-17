@@ -77,8 +77,23 @@ class FileEditWriter {
     }
     return [
       for (final planned in byTarget.values)
-        planned..content = utf8.encode(_render(planned)),
+        planned..content = _encode(planned),
     ];
+  }
+
+  /// The rendered content of [planned]; an output over [maxFileBytes] fails
+  /// before anything is written.
+  List<int> _encode(_Planned planned) {
+    final content = utf8.encode(_render(planned));
+    if (content.length > maxFileBytes) {
+      throw YaguraException(
+        'file_too_large',
+        'file edit "${planned.path}" would produce a file over the 16 MiB '
+            'limit',
+        details: {'path': planned.path},
+      );
+    }
+    return content;
   }
 
   _Planned _load(FileEdit edit, String target) {
@@ -144,10 +159,7 @@ class FileEditWriter {
     try {
       for (final item in planned) {
         File(item.target).parent.createSync(recursive: true);
-        final temporary = p.join(
-          p.dirname(item.target),
-          '.${p.basename(item.target)}.yagura-${_random.nextInt(1 << 31).toRadixString(16)}.tmp',
-        );
+        final temporary = _newTemporary(item.target);
         File(temporary).writeAsBytesSync(item.content, flush: true);
         temporaries[item] = temporary;
       }
@@ -177,14 +189,38 @@ class FileEditWriter {
     }
   }
 
+  /// A sibling path of [target] that nothing occupies, links included, so a
+  /// temporary never overwrites or follows an existing path.
+  String _newTemporary(String target) {
+    while (true) {
+      final candidate = p.join(
+        p.dirname(target),
+        '.${p.basename(target)}.yagura-${_random.nextInt(1 << 31).toRadixString(16)}.tmp',
+      );
+      if (FileSystemEntity.typeSync(candidate, followLinks: false) ==
+          FileSystemEntityType.notFound) {
+        return candidate;
+      }
+    }
+  }
+
   void _restore(_Planned item) {
     try {
       if (!item.existed) {
         File(item.target).deleteSync();
       } else {
-        final temporary = '${item.target}.yagura-restore.tmp';
-        File(temporary).writeAsBytesSync(item.original!, flush: true);
-        File(temporary).renameSync(item.target);
+        final temporary = _newTemporary(item.target);
+        try {
+          File(temporary).writeAsBytesSync(item.original!, flush: true);
+          File(temporary).renameSync(item.target);
+        } on FileSystemException {
+          try {
+            File(temporary).deleteSync();
+          } on FileSystemException {
+            // Best effort: the temporary file is not the target.
+          }
+          rethrow;
+        }
       }
     } on FileSystemException {
       // Nothing more can be done; the original error is reported.

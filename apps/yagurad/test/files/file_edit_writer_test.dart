@@ -153,6 +153,47 @@ void main() {
       }, reason: 'temporary files are cleaned up');
     });
 
+    test('rollback keeps a file already at the restore sibling name', () {
+      final root = makeRoot();
+      final first = put(root, 'a.json', '{"a": 1}');
+      put(root, 'b.json', '{"b": 1}');
+      final sibling = put(root, 'a.json.yagura-restore.tmp', 'KEEP');
+      var renames = 0;
+      final writer = FileEditWriter(
+        InstanceRoot(root.path),
+        rename: (temporary, target) {
+          if (++renames == 2) throw const FileSystemException('locked');
+          File(temporary).renameSync(target);
+        },
+      );
+      expect(
+        () => writer.apply([
+          json('a.json', {'a': 2}),
+          json('b.json', {'b': 2}),
+        ]),
+        failsWith('internal_error'),
+      );
+      expect(first.readAsStringSync(), '{"a": 1}');
+      expect(sibling.readAsStringSync(), 'KEEP');
+    });
+
+    test('refuses an edit whose output exceeds the file size limit', () {
+      final root = makeRoot();
+      final small = '{"a": "${'x' * 64}"}';
+      final file = put(root, 'cfg.json', small);
+      final big = 'y' * (FileEditWriter.maxFileBytes + 1);
+
+      expect(
+        () => FileEditWriter(InstanceRoot(root.path)).apply([
+          json('cfg.json', {'a': big}),
+          json('new.json', {'a': big}),
+        ]),
+        failsWith('file_too_large'),
+      );
+      expect(file.readAsStringSync(), small);
+      expect(File(p.join(root.path, 'new.json')).existsSync(), isFalse);
+    });
+
     test('refuses an edit through a link to outside the root', () {
       final root = makeRoot();
       final outside = makeRoot();

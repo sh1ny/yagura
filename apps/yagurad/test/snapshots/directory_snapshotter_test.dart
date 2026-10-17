@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/errors.dart';
 import 'package:yagurad/src/snapshots/snapshots.dart';
 
 void main() {
@@ -122,5 +123,86 @@ void main() {
 
     expect(partial.existsSync(), isFalse);
     expect(snapshotter.list('inst-1'), hasLength(1));
+  });
+
+  group('links', () {
+    bool tryLink(String link, String target) {
+      try {
+        Link(link).createSync(target);
+        return true;
+      } on FileSystemException {
+        markTestSkipped('this account cannot create links');
+        return false;
+      }
+    }
+
+    test('refuses a snapshot of a data directory holding a link', () async {
+      if (!tryLink(
+        p.join(instanceDir, 'save', 'alias.db'),
+        p.join(instanceDir, 'save', 'world.db'),
+      )) {
+        return;
+      }
+
+      await expectLater(
+        snapshotter.take(request('pre_update')),
+        throwsA(
+          isA<YaguraException>().having(
+            (e) => e.reason,
+            'reason',
+            'unsupported_in_this_version',
+          ),
+        ),
+      );
+
+      expect(snapshotter.list('inst-1'), isEmpty);
+    });
+
+    test('restore refuses a historical path now behind an outside link, '
+        'before changing anything', () async {
+      Directory(p.join(instanceDir, 'old', 'save')).createSync(recursive: true);
+      File(p.join(instanceDir, 'old', 'save', 'world.db'))
+          .writeAsStringSync('SNAPSHOT');
+      final oldRequest = SnapshotRequest(
+        instanceId: 'inst-1',
+        instanceName: 'Friends',
+        instanceDirectory: instanceDir,
+        dataPaths: [p.join(instanceDir, 'old', 'save', 'world.db')],
+        reason: 'pre_update',
+      );
+      final id = await snapshotter.take(oldRequest);
+      // `old` is replaced by a link to a directory outside the instance.
+      final outside = Directory(p.join(temp.path, 'outside'))..createSync();
+      final kept = File(p.join(outside.path, 'save', 'world.db'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('KEEP');
+      Directory(p.join(instanceDir, 'old')).deleteSync(recursive: true);
+      if (!tryLink(p.join(instanceDir, 'old'), outside.path)) return;
+
+      await expectLater(
+        snapshotter.restore(
+          RestoreRequest(
+            instanceId: 'inst-1',
+            instanceName: 'Friends',
+            instanceDirectory: instanceDir,
+            dataPaths: request('x').dataPaths,
+            snapshotId: id,
+          ),
+          onStep: (_) {},
+          checkCancelled: () {},
+        ),
+        throwsA(
+          isA<YaguraException>().having(
+            (e) => e.reason,
+            'reason',
+            'sandbox_violation',
+          ),
+        ),
+      );
+
+      expect(kept.readAsStringSync(), 'KEEP');
+      expect(snapshotter.list('inst-1').map((s) => s.reason), ['pre_update']);
+      expect(snapshotter.interruptedRestores(), isEmpty);
+    });
   });
 }
