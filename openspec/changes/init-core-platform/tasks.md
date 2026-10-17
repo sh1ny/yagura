@@ -217,7 +217,7 @@ Covers: plugin-hooks → Hook points (not exported); instance-lifecycle → Upda
 
 Covers: log-streaming → Declared log sources; log-streaming → Encoding-aware decoding; log-streaming → Stdout captured to a file; log-streaming → Bounded buffer and backlog; log-streaming → Live follow with backpressure; plugin-manifest → Stop and health declarations (log-match health).
 
-- [ ] 7.1 Write the failing tests for this group's rows.
+- [x] 7.1 Write the failing tests for this group's rows.
 - [ ] 7.2 Implement log sources (stdout capture and file globs with `newest`/`fixed` rotation), polling tailers (design D6) with persisted offsets and the current-run mark for `fixed` sources (size and first-4-KiB hash taken before each Start), decoding for utf-8, utf-16le and latin-1 with replacement characters, lines cut at 64 KiB with `truncated: true`, ring buffers (10,000 lines / 4 MiB), backlog with the 5,000 cap, follow with a lag of 1,000 lines or 4 MiB and `dropped` markers. Verify: the log rows are green.
 - [ ] 7.3 Implement the `log_match` health check on the log hub, matching only lines written after the current start, in the start-time health evaluator from 5.3. Verify: this group's rows are green; flip them.
 
