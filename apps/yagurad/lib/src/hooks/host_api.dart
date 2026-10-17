@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:yagura_formats/yagura_formats.dart';
 import 'package:yagura_js/yagura_js.dart';
@@ -101,15 +102,7 @@ void registerHostApi(
         throw HostException('EISDIR', 'is a directory: $path');
       default:
     }
-    final file = File(resolved);
-    final length = file.lengthSync();
-    if (length > HookLimits.hostCallBytes) {
-      throw HostException(
-        'host_limit_exceeded',
-        'yagura.fs.readText: "$path" is $length bytes, over the 16 MiB limit',
-      );
-    }
-    return utf8.decode(file.readAsBytesSync(), allowMalformed: true);
+    return utf8.decode(readCapped(resolved, path), allowMalformed: true);
   });
 
   js.registerHostFunction('yagura.fs.list', (args) {
@@ -124,6 +117,8 @@ void registerHostApi(
         throw HostException('ENOTDIR', 'not a directory: $path');
     }
     final entries = <Map<String, Object?>>[];
+    // listSync builds the whole listing before the loop runs; Dart has no
+    // synchronous incremental directory walk, so the cap bounds the result.
     for (final entity in Directory(resolved).listSync(followLinks: false)) {
       if (entries.length >= HookLimits.listEntries) {
         throw HostException(
@@ -131,11 +126,12 @@ void registerHostApi(
           'yagura.fs.list: "$path" has more than 10,000 entries',
         );
       }
-      final stat = entity.statSync();
-      final isDirectory = stat.type == FileSystemEntityType.directory;
+      // A link to outside the instance is listed without looking at its target.
+      final stat = _insideRoot(root, entity) ? entity.statSync() : null;
+      final isDirectory = stat?.type == FileSystemEntityType.directory;
       entries.add({
         'name': entity.uri.pathSegments.lastWhere((s) => s.isNotEmpty),
-        'size': isDirectory ? 0 : stat.size,
+        'size': isDirectory || stat == null ? 0 : stat.size,
         'isDirectory': isDirectory,
       });
     }
@@ -174,6 +170,42 @@ void registerHostApi(
     _checkSize('yagura.formats.json.serialize', utf8.encode(text).length);
     return text;
   });
+}
+
+/// Reads [resolved] ([path] as the hook named it) in chunks, refusing as soon as
+/// more than [limit] bytes have been read, so a file that grows during the read
+/// cannot pass the cap.
+List<int> readCapped(
+  String resolved,
+  String path, {
+  int limit = HookLimits.hostCallBytes,
+}) {
+  final file = File(resolved).openSync();
+  try {
+    final bytes = BytesBuilder(copy: false);
+    while (true) {
+      final chunk = file.readSync(64 * 1024);
+      if (chunk.isEmpty) return bytes.takeBytes();
+      bytes.add(chunk);
+      if (bytes.length > limit) {
+        throw HostException(
+          'host_limit_exceeded',
+          'yagura.fs.readText: "$path" is over the 16 MiB limit',
+        );
+      }
+    }
+  } finally {
+    file.closeSync();
+  }
+}
+
+bool _insideRoot(InstanceRoot root, FileSystemEntity entity) {
+  try {
+    root.resolve(entity.path);
+    return true;
+  } on YaguraException {
+    return false;
+  }
 }
 
 String _pathArgument(String function, List<Object?> args) {

@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagura_plugin/yagura_plugin.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
@@ -25,6 +28,25 @@ void main() {
     expect(valheim.reasons.single.path, 'hooks.js');
     expect(valheim.reasons.single.line, 2);
     // No instance operation can run a rejected plugin's hooks.
+    expect(registry.find('valheim'), isNull);
+  });
+
+  test('undecodable_hooks_file_is_rejected', () async {
+    final env = TestEnv();
+    env.installValheim(hooks: 'exports.onPreStart = () => ({});');
+    File(p.join(env.pluginsDir, 'valheim', 'hooks.js'))
+        .writeAsBytesSync([0x76, 0x61, 0x72, 0x20, 0xff, 0xfe, 0x3b]);
+    final registry = PluginRegistry(
+      pluginsDirectory: env.pluginsDir,
+      hooks: HookHost(),
+    );
+
+    final results = await registry.load();
+
+    final valheim = results.singleWhere((r) => r.id == 'valheim');
+    expect(valheim.status, PluginStatus.rejected);
+    expect(valheim.reasons.single.path, 'hooks.js');
+    expect(valheim.reasons.single.message, contains('UTF-8'));
     expect(registry.find('valheim'), isNull);
   });
 

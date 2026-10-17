@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -100,12 +101,20 @@ class PluginRegistry {
   /// Reloads on explicit request: a fixed plugin replaces the old version, a
   /// broken edit keeps the previous version active, a removed folder removes
   /// the plugin.
-  Future<List<PluginReloadOutcome>> reload() async {
+  ///
+  /// With [pluginIds] only the plugins with those manifest ids are touched;
+  /// empty reloads all.
+  Future<List<PluginReloadOutcome>> reload({
+    Set<String> pluginIds = const {},
+  }) async {
     final outcomes = <PluginReloadOutcome>[];
     final folders = _folders();
+    bool selected(Iterable<String?> ids) =>
+        pluginIds.isEmpty || ids.any(pluginIds.contains);
     for (final folder in folders) {
       final (result, plugin) = await _loadFolder(folder);
       final previous = _loaded[folder];
+      if (!selected([plugin?.id, previous?.id, result.id])) continue;
       if (plugin != null) {
         _loaded[folder] = plugin;
         _results[folder] = result;
@@ -139,6 +148,7 @@ class PluginRegistry {
     }
     for (final folder in _results.keys.toList()) {
       if (folders.contains(folder)) continue;
+      if (!selected([_loaded[folder]?.id, _results[folder]?.id])) continue;
       final gone = _loaded.remove(folder);
       final result = _results.remove(folder)!;
       outcomes.add(
@@ -167,7 +177,27 @@ class PluginRegistry {
     String? hooksSource;
     final hooksFile = File(p.join(directory, 'hooks.js'));
     if (hooksFile.existsSync()) {
-      hooksSource = hooksFile.readAsStringSync();
+      try {
+        hooksSource = utf8.decode(hooksFile.readAsBytesSync());
+      } on FormatException catch (e) {
+        return (
+          PluginResult(
+            id: result.id,
+            status: PluginStatus.rejected,
+            name: result.name,
+            version: result.version,
+            platforms: result.platforms,
+            reasons: [
+              PluginReason(
+                code: 'hook_syntax_error',
+                path: 'hooks.js',
+                message: 'hooks.js is not valid UTF-8: ${e.message}',
+              ),
+            ],
+          ),
+          null,
+        );
+      }
       final reason = await _checkHooks(hooksSource, directory);
       if (reason != null) {
         return (
