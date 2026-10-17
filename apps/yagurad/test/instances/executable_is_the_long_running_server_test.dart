@@ -59,4 +59,25 @@ void main() {
     tags: ['windows'],
     skip: windowsOnly,
   );
+  test(
+    'a server that exits before it is tracked fails the start at once',
+    () async {
+      final rig = await ProcessRig.create(
+        serverArgs: ['--exit-after-ms', '0', '--exit-code', '7'],
+      );
+      final daemon = await rig.start();
+      final instance = await rig.createInstalledFake(daemon);
+      final clock = Stopwatch()..start();
+
+      final done = await runStart(daemon, instance.id);
+
+      expect(done.status, OperationStatus.failed);
+      expect(done.resultReason, 'launch_failed');
+      expect(done.resultMessage, contains('exit code 7'));
+      expect(clock.elapsed, lessThan(const Duration(seconds: 15)));
+      expect(daemon.instances.get(instance.id).state, InstanceState.stopped);
+    },
+    tags: ['windows'],
+    skip: windowsOnly,
+  );
 }

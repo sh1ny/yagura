@@ -77,11 +77,21 @@ class WindowsProcessHost implements ProcessHost {
           details: {'instanceId': request.instanceId},
         );
       }
+      // The server ended before it could be opened: the relay has its code.
+      if (files.readExitCode() case final code?) {
+        throw YaguraException(
+          'launch_failed',
+          '${request.executable} exited with exit code $code as it started',
+          details: {'instanceId': request.instanceId},
+        );
+      }
       if (DateTime.now().isAfter(deadline)) {
         throw YaguraException(
           'launch_failed',
           'the relay did not report the server of ${request.executable} '
-              'within ${launchTimeout.inSeconds} s',
+              'within ${launchTimeout.inSeconds} s '
+              '(${relay == null ? 'no relay.json' : 'relay.json names server '
+                        '${relay.server?.pid}, which could not be opened'})',
           details: {'instanceId': request.instanceId},
         );
       }
