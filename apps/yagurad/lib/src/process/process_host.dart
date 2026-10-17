@@ -12,6 +12,7 @@ class LaunchRequest {
     required this.workingDirectory,
     required this.instanceDirectory,
     this.runDirectory = '',
+    this.stdoutEncoding = 'utf-8',
   });
 
   final String instanceId;
@@ -33,6 +34,11 @@ class LaunchRequest {
   /// run is recorded `pending`. Holds `launch.json`, `relay.json` and
   /// `exit.json` (empty for hosts that keep no files).
   final String runDirectory;
+
+  /// The encoding of the server's output (the plugin's `stdout: true` log
+  /// source): the relay rotates its capture files only on whole line breaks
+  /// of it.
+  final String stdoutEncoding;
 }
 
 /// The identity a process is re-attached by: PID, executable path and start

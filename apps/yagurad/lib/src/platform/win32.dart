@@ -352,6 +352,12 @@ class Win32 {
   /// `JobObjectExtendedLimitInformation`.
   static const jobExtendedLimitInformation = 9;
 
+  /// `JobObjectBasicAccountingInformation`, 48 bytes with `ActiveProcesses`
+  /// at 40.
+  static const jobBasicAccountingInformation = 1;
+  static const jobBasicAccountingSize = 48;
+  static const jobActiveProcessesOffset = 40;
+
   /// Size of `JOBOBJECT_EXTENDED_LIMIT_INFORMATION` (64-bit).
   static const jobExtendedLimitSize = 144;
 

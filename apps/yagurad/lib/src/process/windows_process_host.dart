@@ -21,6 +21,7 @@ class WindowsProcessHost implements ProcessHost {
     required this.helperExecutable,
     this.launchTimeout = const Duration(seconds: 30),
     this.signalTimeout = const Duration(seconds: 10),
+    this.abandonTimeout = const Duration(seconds: 30),
   });
 
   /// The `yagurad` executable the `launch` and `signal` modes run from.
@@ -28,6 +29,9 @@ class WindowsProcessHost implements ProcessHost {
 
   /// How long `launch` waits for the relay to record the server.
   final Duration launchTimeout;
+
+  /// How long a launch that timed out waits for its relay to end it.
+  final Duration abandonTimeout;
 
   /// How long the `signal` helper may take.
   final Duration signalTimeout;
@@ -102,6 +106,9 @@ class WindowsProcessHost implements ProcessHost {
         );
       }
       if (DateTime.now().isAfter(deadline)) {
+        // The relay may still start the server: end the launch first, so a
+        // failed Start leaves no server behind.
+        await _abandon(files);
         throw YaguraException(
           'launch_failed',
           'the relay did not report the server of ${request.executable} '
@@ -110,6 +117,30 @@ class WindowsProcessHost implements ProcessHost {
                         '${relay.server?.pid}, which could not be opened'})',
           details: {'instanceId': request.instanceId},
         );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+  }
+
+  /// Ends a launch nobody waits for. The relay is told not to start a server
+  /// (or to end one it starts), and a server it already recorded is
+  /// terminated here; returns once the relay has settled, or after
+  /// [abandonTimeout].
+  Future<void> _abandon(RunFiles files) async {
+    files.writeCancel();
+    final deadline = DateTime.now().add(abandonTimeout);
+    ProcessIdentity? ended;
+    while (true) {
+      final relay = files.readRelay();
+      if (relay?.server case final server? when server.pid != ended?.pid) {
+        ended = server;
+        await terminate(server);
+      }
+      if (files.readExitCode() != null || files.readError() != null) return;
+      if (relay != null && !await isAlive(relay.relay)) return;
+      if (DateTime.now().isAfter(deadline)) {
+        if (relay != null) await terminate(relay.relay);
+        return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }
@@ -157,9 +188,13 @@ class WindowsProcessHost implements ProcessHost {
       plan,
       sendSignal: () async {
         // Relay and server share one console; the relay is certain to be the
-        // console's owner and to outlive Ctrl+C.
-        final target = windows.relay?.pid ?? windows.pid;
-        return await runSignalHelper(target) == 0;
+        // console's owner and to outlive Ctrl+C. A recorded relay whose PID
+        // was reused is not that console: the server's own is used then.
+        final recorded = windows.relay;
+        final target = recorded != null && await isAlive(recorded)
+            ? recorded
+            : windows.identity;
+        return await runSignalHelper(target.pid, created: target.created) == 0;
       },
       kill: () async {
         Win32.instance.terminateProcess(windows.handle, 1);
@@ -170,13 +205,21 @@ class WindowsProcessHost implements ProcessHost {
 
   /// Runs `yagurad signal --console-of <pid>` detached from any console and
   /// returns its exit code; -1 when it did not finish in [signalTimeout].
-  Future<int> runSignalHelper(int pid) async {
+  /// With [created] (the process's start time) the helper refuses a process
+  /// that is not the one meant, also when the PID was reused after the caller
+  /// looked.
+  Future<int> runSignalHelper(int pid, {int? created}) async {
     final win32 = Win32.instance;
     final SpawnedProcess helper;
     try {
       helper = spawnProcess(
         executable: helperExecutable,
-        args: ['signal', '--console-of', '$pid'],
+        args: [
+          'signal',
+          '--console-of',
+          '$pid',
+          if (created != null) ...['--created', '$created'],
+        ],
         flags: Win32.detachedProcess,
       );
     } on SpawnFailure {

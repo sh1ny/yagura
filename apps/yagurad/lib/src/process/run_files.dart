@@ -7,7 +7,9 @@ import 'process_host.dart';
 
 /// The files of one run in `<instance>/.yagura/run/<run-id>/` (ADR 0009):
 /// `launch.json` (what to start; written by the supervisor), `relay.json`
-/// and `exit.json` (written by the relay). All carry `format_version: 1`.
+/// and `exit.json` (written by the relay), and `cancel.json` (written by a
+/// supervisor that gave up waiting for the server). All carry
+/// `format_version: 1`.
 class RunFiles {
   const RunFiles(this.directory);
 
@@ -26,6 +28,7 @@ class RunFiles {
   String get launchPath => p.join(directory, 'launch.json');
   String get relayPath => p.join(directory, 'relay.json');
   String get exitPath => p.join(directory, 'exit.json');
+  String get cancelPath => p.join(directory, 'cancel.json');
 
   /// Writes [json] to [path] atomically, so a reader sees all or nothing.
   static void writeJson(String path, Map<String, Object?> json) {
@@ -62,6 +65,7 @@ class RunFiles {
       'working_directory': request.workingDirectory,
       'instance_directory': request.instanceDirectory,
       'run_id': request.runId,
+      'stdout_encoding': request.stdoutEncoding,
     });
   }
 
@@ -77,6 +81,7 @@ class RunFiles {
       workingDirectory: json['working_directory']! as String,
       instanceDirectory: json['instance_directory']! as String,
       runDirectory: directory,
+      stdoutEncoding: json['stdout_encoding'] as String? ?? 'utf-8',
     );
   }
 
@@ -123,6 +128,12 @@ class RunFiles {
         'exited_at': at.toUtc().toIso8601String(),
         'error': ?error,
       });
+
+  /// Tells the relay that nobody waits for its server any more: it must not
+  /// start one, and ends one it already started.
+  void writeCancel() => writeJson(cancelPath, {});
+
+  bool get isCancelled => readJson(cancelPath) != null;
 
   /// Why the server could not be started, when the relay recorded it.
   String? readError() => readJson(exitPath)?['error'] as String?;

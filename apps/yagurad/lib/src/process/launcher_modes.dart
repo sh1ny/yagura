@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import '../logs/capture_writer.dart';
+import '../logs/log_models.dart';
 import '../platform/job_restrictions.dart';
 import '../platform/win32.dart';
 import '../platform/win32_process.dart';
@@ -82,6 +83,16 @@ Future<int> runRelayMode(String runDirectory, StringSink err) async {
     return helperFailed;
   }
   files.writeRelay(self);
+  // The supervisor gave up on this launch before the server was started.
+  if (files.isCancelled) {
+    files.writeExit(
+      -1,
+      DateTime.now(),
+      error: 'the launch was cancelled before the server was started',
+    );
+    await sigint.cancel();
+    return helperFailed;
+  }
 
   final pipeRead = calloc<IntPtr>();
   final pipeWrite = calloc<IntPtr>();
@@ -134,9 +145,22 @@ Future<int> runRelayMode(String runDirectory, StringSink err) async {
       return helperFailed;
     }
     files.writeRelayAndServer(self, serverIdentity);
+    // The record comes first, then the check: a supervisor that cancels after
+    // this check has already seen the server in `relay.json` (or sees it
+    // when it looks next) and ends it.
+    if (files.isCancelled) {
+      win32.terminateProcess(server.handle, 1);
+      files.writeExit(
+        -1,
+        DateTime.now(),
+        error: 'the launch was cancelled; the server was ended',
+      );
+      return helperFailed;
+    }
 
     final capture = CaptureWriter.open(
       CaptureWriter.directoryFor(launch.instanceDirectory),
+      encoding: LogEncoding.parse(launch.stdoutEncoding) ?? LogEncoding.utf8,
     );
     try {
       final buffer = calloc<Uint8>(_chunk);
@@ -199,15 +223,32 @@ const _chunk = 64 * 1024;
 
 /// `yagurad signal --console-of <pid>`: attaches to the console of [target]
 /// and sends it Ctrl+C. Exits non-zero when the console cannot be attached.
+/// With [created], the process must have started at that time: a PID that was
+/// reused is not signalled. The handle stays open until the signal is sent, so
+/// the PID cannot be reused in between.
 ///
 /// Windows only.
-Future<int> runSignalMode(int target) async {
+Future<int> runSignalMode(int target, {int? created}) async {
   final win32 = Win32.instance;
-  win32.freeConsole();
-  if (win32.attachConsole(target) == 0) return helperFailed;
-  // The helper shares the console it signals, so it ignores the Ctrl+C itself.
-  win32.setConsoleCtrlHandler(nullptr, 1);
-  final sent = win32.generateConsoleCtrlEvent(0, 0);
-  win32.freeConsole();
-  return sent == 0 ? helperFailed : helperOk;
+  var guard = 0;
+  if (created != null) {
+    guard = win32.openProcess(Win32.processQueryLimitedInformation, 0, target);
+    if (guard == 0) return helperFailed;
+    if (identityOfHandle(guard, target)?.created != created) {
+      win32.closeHandle(guard);
+      return helperFailed;
+    }
+  }
+  try {
+    win32.freeConsole();
+    if (win32.attachConsole(target) == 0) return helperFailed;
+    // The helper shares the console it signals, so it ignores the Ctrl+C
+    // itself.
+    win32.setConsoleCtrlHandler(nullptr, 1);
+    final sent = win32.generateConsoleCtrlEvent(0, 0);
+    win32.freeConsole();
+    return sent == 0 ? helperFailed : helperOk;
+  } finally {
+    if (guard != 0) win32.closeHandle(guard);
+  }
 }

@@ -18,7 +18,7 @@ abstract interface class SteamProcess {
   Stream<String> get lines;
 
   /// Completes with the exit code once the process (and, on Windows, the rest
-  /// of its job) is gone.
+  /// of its job, such as a copy it relaunched) is gone.
   Future<int> get exitCode;
 
   /// Terminates the process and everything it started.
@@ -200,13 +200,13 @@ class _JobProcess implements SteamProcess {
     exit.listen((message) {
       exit.close();
       final code = message as int;
-      // Closing the job ends anything the process left behind.
+      // The job is empty by now: closing it kills nothing.
       final win = Win32.instance;
       win.closeHandle(_job);
       win.closeHandle(_process);
       _exit.complete(code);
     });
-    Isolate.spawn(_waitProcess, (exit.sendPort, _process));
+    Isolate.spawn(_waitProcess, (exit.sendPort, _process, _job));
   }
 
   factory _JobProcess.spawn(
@@ -445,13 +445,39 @@ void _readPipe((SendPort, int) arguments) {
   }
 }
 
-void _waitProcess((SendPort, int) arguments) {
-  final (port, handle) = arguments;
+/// Waits for the process, then for the rest of its job: SteamCMD may hand its
+/// work to a relaunched copy and exit, and that copy must finish. Reports the
+/// exit code of the process that was started.
+void _waitProcess((SendPort, int, int) arguments) {
+  final (port, handle, job) = arguments;
   final win = Win32.instance;
   win.waitForSingleObject(handle, 0xFFFFFFFF);
   final code = calloc<Uint32>();
   win.getExitCodeProcess(handle, code);
   final value = code.value;
   calloc.free(code);
+
+  final accounting = calloc<Uint8>(Win32.jobBasicAccountingSize);
+  try {
+    while (true) {
+      if (win.queryInformationJobObject(
+            job,
+            Win32.jobBasicAccountingInformation,
+            accounting.cast(),
+            Win32.jobBasicAccountingSize,
+            nullptr,
+          ) ==
+          0) {
+        break;
+      }
+      final active = (accounting + Win32.jobActiveProcessesOffset)
+          .cast<Uint32>()
+          .value;
+      if (active == 0) break;
+      sleep(const Duration(milliseconds: 50));
+    }
+  } finally {
+    calloc.free(accounting);
+  }
   port.send(value);
 }

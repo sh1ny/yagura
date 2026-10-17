@@ -205,9 +205,12 @@ class SteamCmdService implements SteamService {
     try {
       // Whatever an earlier attempt left is not trusted.
       if (directory.existsSync()) directory.deleteSync(recursive: true);
-      await _bootstrap.install(directory);
+      await _bootstrap.install(directory, cancel: cancel);
       cancel.throwIfCancelled();
-      // SteamCMD updates itself on its first run.
+      // SteamCMD updates itself on its first run, which exits with code 7
+      // once the update is installed ("Update complete, launching..."), so
+      // its code says nothing. A second run, with nothing left to update,
+      // must exit 0 before the installation is marked ready.
       await _execute(
         installation: installation,
         arguments: const ['+quit'],
@@ -215,6 +218,31 @@ class SteamCmdService implements SteamService {
         reporter: reporter,
         cancel: cancel,
       );
+      cancel.throwIfCancelled();
+      final outcome = await _execute(
+        installation: installation,
+        arguments: const ['+quit'],
+        anyOutputIsProgress: true,
+        reporter: reporter,
+        cancel: cancel,
+      );
+      if (outcome.exitCode != 0) {
+        final lines = outcome.tail.toList();
+        final lastLines = lines.length > _failureLines
+            ? lines.sublist(lines.length - _failureLines)
+            : lines;
+        throw YaguraException(
+          'steamcmd_unavailable',
+          'SteamCMD did not run after its self-update: it exited with code '
+              '${outcome.exitCode}; its last ${lastLines.length} output '
+              'lines:\n${lastLines.join('\n')}',
+          details: {
+            'installation': installation,
+            'exitCode': outcome.exitCode,
+            'lines': lastLines,
+          },
+        );
+      }
       marker.writeAsStringSync('');
     } on Object {
       if (directory.existsSync()) {

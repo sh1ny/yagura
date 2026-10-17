@@ -4,16 +4,32 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../errors.dart';
+import '../operations/cancel_token.dart';
 
-/// Downloads [uri] into [destination]; throws on any failure.
-typedef ArchiveFetcher = Future<void> Function(Uri uri, File destination);
+/// Downloads [uri] into [destination]; throws on any failure and
+/// [OperationCancelled] once [cancel] fires, after the transfer was aborted.
+typedef ArchiveFetcher = Future<void> Function(
+  Uri uri,
+  File destination,
+  CancelToken cancel,
+);
 
 /// Where SteamCMD comes from and how it is fetched. The source and the
 /// fetcher are injectable so tests bootstrap from a local server.
 class SteamCmdBootstrap {
-  SteamCmdBootstrap({Uri? source, ArchiveFetcher? fetch})
-    : source = source ?? defaultSource,
-      _fetch = fetch ?? downloadWithHttpClient;
+  SteamCmdBootstrap({
+    Uri? source,
+    ArchiveFetcher? fetch,
+    this.idleTimeout = const Duration(seconds: 60),
+  }) : source = source ?? defaultSource,
+       _fetch =
+           fetch ??
+           ((uri, destination, cancel) => downloadWithHttpClient(
+             uri,
+             destination,
+             cancel,
+             idleTimeout: idleTimeout,
+           ));
 
   /// Valve's installer archive for this platform.
   static Uri get defaultSource => Uri.parse(
@@ -25,15 +41,24 @@ class SteamCmdBootstrap {
   final Uri source;
   final ArchiveFetcher _fetch;
 
+  /// How long the default download waits for the response or for the next
+  /// bytes of it before it fails.
+  final Duration idleTimeout;
+
   /// Downloads the archive and unpacks it into [target]. Throws
   /// `steamcmd_unavailable` with the HTTP status or the network error; the
   /// caller removes [target] then, so no half-installed directory stays.
-  Future<void> install(Directory target) async {
+  /// Throws [OperationCancelled] once [cancel] fires, with the download or the
+  /// unpacking stopped.
+  Future<void> install(Directory target, {CancelToken? cancel}) async {
+    cancel ??= CancelToken();
     target.createSync(recursive: true);
     final archive = File(p.join(target.path, 'steamcmd.download'));
     try {
-      await _fetch(source, archive);
+      await _fetch(source, archive, cancel);
     } on YaguraException {
+      rethrow;
+    } on OperationCancelled {
       rethrow;
     } on Object catch (e) {
       throw YaguraException(
@@ -44,7 +69,7 @@ class SteamCmdBootstrap {
     }
     // `tar` reads zip and tar.gz alike (bsdtar ships with Windows 10+). Run in
     // the target so a drive letter in the path cannot be taken for a host.
-    final result = await Process.run(
+    final tar = await Process.start(
       Platform.isWindows
           ? p.join(
               Platform.environment['SystemRoot'] ?? r'C:\Windows',
@@ -55,27 +80,44 @@ class SteamCmdBootstrap {
       ['-xf', p.basename(archive.path)],
       workingDirectory: target.path,
     );
-    if (result.exitCode != 0) {
+    unawaited(tar.stdout.drain<void>());
+    final stderrText = tar.stderr
+        .transform(const SystemEncoding().decoder)
+        .join();
+    unawaited(cancel.whenCancelled.then((_) => tar.kill()));
+    final code = await tar.exitCode;
+    cancel.throwIfCancelled();
+    if (code != 0) {
       throw YaguraException(
         'steamcmd_unavailable',
         'the SteamCMD archive from $source could not be unpacked: '
-            '${(result.stderr as String).trim()}',
+            '${(await stderrText).trim()}',
         details: {'source': '$source'},
       );
     }
     archive.deleteSync();
   }
 
-  /// Fetches with `dart:io`'s client; a non-200 status fails with it.
-  static Future<void> downloadWithHttpClient(Uri uri, File destination) async {
+  /// Fetches with `dart:io`'s client; a non-200 status fails with it. The
+  /// transfer fails when the response or the next bytes of it take longer than
+  /// [idleTimeout], and is aborted when [cancel] fires.
+  static Future<void> downloadWithHttpClient(
+    Uri uri,
+    File destination,
+    CancelToken cancel, {
+    Duration idleTimeout = const Duration(seconds: 60),
+  }) async {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 30)
       ..findProxy = HttpClient.findProxyFromEnvironment;
+    // Closing the client by force ends a request or body that has stalled.
+    unawaited(cancel.whenCancelled.then((_) => client.close(force: true)));
     try {
-      final request = await client.getUrl(uri);
-      final response = await request.close();
+      cancel.throwIfCancelled();
+      final request = await client.getUrl(uri).timeout(idleTimeout);
+      final response = await request.close().timeout(idleTimeout);
       if (response.statusCode != HttpStatus.ok) {
-        await response.drain<void>();
+        await response.drain<void>().timeout(idleTimeout);
         throw YaguraException(
           'steamcmd_unavailable',
           'SteamCMD could not be downloaded from $uri: HTTP '
@@ -83,7 +125,26 @@ class SteamCmdBootstrap {
           details: {'source': '$uri', 'httpStatus': response.statusCode},
         );
       }
-      await response.pipe(destination.openWrite());
+      final sink = destination.openWrite();
+      try {
+        await for (final chunk in response.timeout(idleTimeout)) {
+          sink.add(chunk);
+        }
+      } finally {
+        await sink.close();
+      }
+    } on TimeoutException {
+      cancel.throwIfCancelled();
+      throw YaguraException(
+        'steamcmd_unavailable',
+        'SteamCMD could not be downloaded from $uri: no data for '
+            '${idleTimeout.inSeconds} s',
+        details: {'source': '$uri'},
+      );
+    } on Object {
+      // A forced close surfaces as a socket error.
+      cancel.throwIfCancelled();
+      rethrow;
     } finally {
       client.close(force: true);
     }

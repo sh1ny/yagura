@@ -85,7 +85,8 @@ Future<int> _helper(
   }
   final parser = ArgParser()
     ..addOption('run-dir')
-    ..addOption('console-of');
+    ..addOption('console-of')
+    ..addOption('created');
   final ArgResults args;
   try {
     args = parser.parse(arguments);
@@ -101,11 +102,14 @@ Future<int> _helper(
       return runRelayMode(runDirectory, env.err);
     case 'signal'
         when int.tryParse(args['console-of'] as String? ?? '') != null:
-      return runSignalMode(int.parse(args['console-of'] as String));
+      return runSignalMode(
+        int.parse(args['console-of'] as String),
+        created: int.tryParse(args['created'] as String? ?? ''),
+      );
   }
   env.err.writeln(
     'usage: yagurad $mode '
-    '${mode == 'signal' ? '--console-of <pid>' : '--run-dir <dir>'}',
+    '${mode == 'signal' ? '--console-of <pid> [--created <filetime>]' : '--run-dir <dir>'}',
   );
   return exitUsage;
 }

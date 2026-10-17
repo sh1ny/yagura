@@ -3,6 +3,8 @@ library;
 
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import 'package:test/test.dart';
 import 'package:yagurad/src/steam/steam.dart';
 
@@ -22,6 +24,24 @@ Future<SteamProcess> startFake(
   workingDirectory: Directory.systemTemp.path,
   environment: environment,
 );
+
+final handoffScript = p.absolute(
+  'test',
+  'fixtures',
+  'job_handoff',
+  'job_handoff.dart',
+);
+
+Future<SteamProcess> startHandoff(
+  JobObjectLauncher launcher,
+  String directory,
+  int childMilliseconds,
+) => launcher.start(Platform.resolvedExecutable, [
+  handoffScript,
+  'parent',
+  directory,
+  '$childMilliseconds',
+], workingDirectory: Directory.systemTemp.path);
 
 void main() {
   test('output_and_exit_code_come_back', () async {
@@ -79,6 +99,50 @@ void main() {
 
     await process.exitCode.timeout(const Duration(seconds: 10));
     await eventually(() => !alive(process.pid), reason: 'process gone');
+  }, skip: onWindows);
+
+  test('the_job_outlives_the_process_that_handed_off', () async {
+    final env = TestEnv();
+    final launcher = JobObjectLauncher();
+    addTearDown(launcher.close);
+
+    final process = await startHandoff(launcher, env.root.path, 500);
+    await process.lines.drain<void>();
+    final code = await process.exitCode.timeout(const Duration(seconds: 20));
+
+    expect(code, 0);
+    expect(
+      File(p.join(env.root.path, 'child_done')).existsSync(),
+      isTrue,
+      reason: 'the exit code came only after the relaunched copy finished',
+    );
+  }, skip: onWindows);
+
+  test('kill_ends_a_process_that_handed_off', () async {
+    final env = TestEnv();
+    final launcher = JobObjectLauncher();
+    addTearDown(launcher.close);
+
+    final process = await startHandoff(launcher, env.root.path, 60000);
+    final done = process.exitCode;
+    await eventually(
+      () => File(p.join(env.root.path, 'child_started')).existsSync(),
+      reason: 'the child started',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    expect(
+      await done.timeout(
+        const Duration(milliseconds: 100),
+        onTimeout: () => -1,
+      ),
+      -1,
+      reason: 'the child is still running in the job',
+    );
+
+    process.kill();
+
+    await done.timeout(const Duration(seconds: 10));
+    expect(File(p.join(env.root.path, 'child_done')).existsSync(), isFalse);
   }, skip: onWindows);
 
   test('arguments_with_spaces_and_quotes_survive', () {
