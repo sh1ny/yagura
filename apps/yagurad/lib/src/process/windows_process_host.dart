@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import '../errors.dart';
 import '../platform/win32.dart';
 import '../platform/win32_process.dart';
@@ -38,6 +40,20 @@ class WindowsProcessHost implements ProcessHost {
       throw YaguraException(
         'launch_failed',
         'the launch of ${request.executable} has no run directory',
+      );
+    }
+    // `launch`, `relay` and `signal` are modes of the compiled yagurad; under
+    // `dart run` the executable is the Dart VM, which has no such commands.
+    if (const {
+      'dart',
+      'dartvm',
+    }.contains(p.basenameWithoutExtension(helperExecutable).toLowerCase())) {
+      throw YaguraException(
+        'launch_failed',
+        'servers can only be started by the compiled yagurad (build it with '
+            '`dart build cli`); this daemon runs on the Dart VM '
+            '($helperExecutable)',
+        details: {'instanceId': request.instanceId},
       );
     }
     final files = RunFiles(request.runDirectory);
