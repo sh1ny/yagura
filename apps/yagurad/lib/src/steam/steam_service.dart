@@ -7,6 +7,8 @@ class SteamAppRequest {
     required this.installDirectory,
     this.validate = false,
     this.account,
+    this.accountRequired = false,
+    this.sizeHintBytes,
   });
 
   final int appId;
@@ -15,6 +17,15 @@ class SteamAppRequest {
 
   /// Steam account id, or null for the anonymous login.
   final String? account;
+
+  /// The plugin's `steam.login` is `account`: this version has no Steam
+  /// accounts, so the run is refused with `steam_account_required` before
+  /// SteamCMD starts.
+  final bool accountRequired;
+
+  /// The manifest's `steam.size_hint_bytes`, used for the disk check when the
+  /// app's size on this host is not known yet.
+  final int? sizeHintBytes;
 }
 
 /// Where a Steam run reports what it is doing; the operation turns these into
@@ -27,9 +38,13 @@ abstract interface class SteamRunReporter {
   void progress({double percent = -1, int bytesDone = 0, int bytesTotal = 0});
 
   void log(String text);
+
+  /// A warning for the operation's result (`disk_check_skipped`).
+  void warn(String warning);
 }
 
-/// The Steam service (design D7). Group 6 implements it; tests use a fake.
+/// The Steam service (design D7). `SteamCmdService` implements it; tests of
+/// the other services use a fake.
 abstract interface class SteamService {
   /// Runs SteamCMD for [request]. When [cancel] fires it terminates SteamCMD
   /// and throws [OperationCancelled]. Failures throw `YaguraException` with
@@ -41,6 +56,11 @@ abstract interface class SteamService {
   );
 
   /// Terminates SteamCMD processes left by a previous daemon (design D9).
-  /// Throws when a stray cannot be terminated.
+  /// Throws when a stray cannot be terminated; the installation then stays
+  /// unavailable and the service retries the sweep.
   Future<void> sweepStrays();
+
+  /// Stops the service's background work (the sweep retry) and, where it
+  /// owns them, ends its SteamCMD processes.
+  Future<void> close();
 }

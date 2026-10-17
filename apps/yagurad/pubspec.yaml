@@ -9,11 +9,13 @@ environment:
 resolution: workspace
 
 dependencies:
+  ffi: ^2.1.4
   path: ^1.9.1
   sqlite3: ^3.7.1
   yagura_formats: ^0.1.0
   yagura_js: ^0.1.0
   yagura_plugin: ^0.1.0
+  yaml: ^3.1.4
 
 dev_dependencies:
   lints: ^6.1.0
