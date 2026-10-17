@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -521,10 +522,30 @@ List<InstanceNotice> collectNotices(Daemon daemon, String kind) {
   return notices;
 }
 
-/// A TCP port nothing listens on right now.
+final _ports = Random();
+
+/// A port nothing holds right now over TCP or UDP, with the next one (a
+/// derived query port) free too.
+///
+/// Picked at random below the ephemeral ranges (Windows 49152+, Linux
+/// 32768+), so the OS never hands it to a concurrent test: the UDP health
+/// probe binds the port it checks, and two tests probing the same port would
+/// each see it held by the other.
 Future<int> freePort() async {
-  final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-  final port = socket.port;
-  await socket.close();
-  return port;
+  while (true) {
+    final port = 20000 + _ports.nextInt(12000);
+    if (await _free(port) && await _free(port + 1)) return port;
+  }
+}
+
+Future<bool> _free(int port) async {
+  try {
+    final tcp = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
+    await tcp.close();
+    final udp = await RawDatagramSocket.bind(InternetAddress.anyIPv4, port);
+    udp.close();
+    return true;
+  } on SocketException {
+    return false;
+  }
 }

@@ -44,9 +44,11 @@ Future<Process> startStray(String directory) async {
 void main() {
   test('stalled_download', () async {
     final env = TestEnv();
+    // Wide enough for the fake SteamCMD to start and reach 25 % under a
+    // loaded full run, so the stall measured is the one after that progress.
     final steam = SteamHarness(
       env,
-      noProgressTimeout: const Duration(milliseconds: 800),
+      noProgressTimeout: const Duration(seconds: 3),
       fakeEnvironment: {'FAKE_STEAMCMD_STALL_AFTER': '11'},
     );
 
