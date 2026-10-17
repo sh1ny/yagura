@@ -189,6 +189,28 @@ class OperationRunner {
     ];
   }
 
+  /// One page of operations, newest first; of [instanceId] when given, else
+  /// of every instance (host operations included).
+  List<Operation> list({
+    String? instanceId,
+    required int limit,
+    int offset = 0,
+  }) {
+    final rows = database.sqlite.select(
+      'SELECT * FROM operations '
+      '${instanceId == null ? '' : 'WHERE instance_id = ? '}'
+      'ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?',
+      [?instanceId, limit, offset],
+    );
+    return [
+      for (final row in rows)
+        if (_ops[row['id'] as String] case final op?)
+          _view(op)
+        else
+          _fromRow(row),
+    ];
+  }
+
   /// Cancels a queued operation at once, or asks a running one to stop at its
   /// next step boundary (interruptible waits stop sooner).
   Operation cancel(String operationId) {

@@ -39,6 +39,7 @@ class DaemonConfig {
     this.migrations,
     this.clock,
     this.logOptions = const LogHubOptions(),
+    this.maxRetainedOperationEvents = 2000,
   });
 
   final String dataDirectory;
@@ -60,6 +61,10 @@ class DaemonConfig {
 
   /// Polling and persist intervals of the log hub.
   final LogHubOptions logOptions;
+
+  /// Non-progress events an operation keeps for a resuming `WatchOperation`
+  /// (design D3).
+  final int maxRetainedOperationEvents;
 }
 
 /// The daemon core: startup sequence and the services group 8 serves.
@@ -77,6 +82,9 @@ class Daemon {
     required this.operations,
     required this.logs,
     required this.startupNotices,
+    required this.hooks,
+    required this.os,
+    required this.startedAt,
     required SteamService steam,
     required InstanceLogSync logSync,
   }) : _lock = lock, // ignore: prefer_initializing_formals
@@ -96,6 +104,13 @@ class Daemon {
   final OperationRunner operations;
   final LogHub logs;
   final List<StartupNotice> startupNotices;
+
+  /// The hook host; `GetHealth` reports its leaked and degraded state.
+  final HookHost hooks;
+
+  /// `windows` or `linux`.
+  final String os;
+  final DateTime startedAt;
 
   static Future<Daemon> start(DaemonConfig config) async {
     final dataDirectory = _fatal('data_directory', () {
@@ -131,7 +146,11 @@ class Daemon {
     }
 
     final hooks = config.hookHost ?? HookHost();
-    final runner = OperationRunner(database: database, clock: config.clock);
+    final runner = OperationRunner(
+      database: database,
+      clock: config.clock,
+      maxRetainedEvents: config.maxRetainedOperationEvents,
+    );
     final registry = PluginRegistry(
       pluginsDirectory: dataDirectory.pluginsPath,
       hooks: hooks,
@@ -206,6 +225,9 @@ class Daemon {
       operations: runner,
       logs: logs,
       startupNotices: List.unmodifiable(notices),
+      hooks: hooks,
+      os: config.os ?? (Platform.isWindows ? 'windows' : 'linux'),
+      startedAt: (config.clock ?? DateTime.now)(),
       steam: config.steam,
       logSync: logSync,
     );

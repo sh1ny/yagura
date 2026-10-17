@@ -52,4 +52,5 @@ message LogBatch {
   uint64 dropped = 2;                 // lines skipped before this batch
   bool truncated = 3;                 // backlog request exceeded the cap
   string source_event = 4;            // file_switched:<name> | waiting | error:<msg>
+  string source = 5;                  // the source a source_event is about; empty for lines
 }

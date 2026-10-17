@@ -84,6 +84,7 @@ class InstanceLogSync {
   final PluginRegistry registry;
   final String os;
   StreamSubscription<InstanceEvent>? _subscription;
+  StreamSubscription<void>? _reloads;
 
   /// Attaches every instance now.
   Future<void> syncAll() async {
@@ -104,9 +105,15 @@ class InstanceLogSync {
           break;
       }
     });
+    // A reload that changed no instance may still have changed what a plugin
+    // declares to log.
+    _reloads = manager.pluginsReloaded.listen((_) => unawaited(syncAll()));
   }
 
-  Future<void> close() async => _subscription?.cancel();
+  Future<void> close() async {
+    await _subscription?.cancel();
+    await _reloads?.cancel();
+  }
 
   Future<void> _sync(Instance instance) async {
     final plugin = registry.find(instance.pluginId);

@@ -9,6 +9,7 @@ import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
 import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/logs/log_hub.dart';
+import 'package:yagurad/src/logs/log_models.dart';
 import 'package:yagurad/src/operations/operations.dart';
 import 'package:yagurad/src/process/process.dart';
 import 'package:yagurad/src/snapshots/snapshots.dart';
@@ -377,5 +378,14 @@ Future<void> eventually(bool Function() test, {String? reason}) async {
       fail('timed out waiting for: ${reason ?? 'condition'}');
     }
     await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
+/// The log sources of [instanceId]; empty until the daemon has attached them.
+List<LogSourceStatus> logSourcesOf(Daemon daemon, String instanceId) {
+  try {
+    return daemon.logs.sources(instanceId);
+  } on YaguraException {
+    return const [];
   }
 }

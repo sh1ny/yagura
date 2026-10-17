@@ -3,6 +3,8 @@
 /// Regenerate with `mise run proto` (tool/gen_proto.dart).
 library;
 
+export 'src/generated/descriptor_set.dart';
+export 'src/generated/grpc/reflection/v1/reflection.pbgrpc.dart';
 export 'src/generated/yagura/v1/common.pb.dart';
 export 'src/generated/yagura/v1/firewall.pbgrpc.dart';
 export 'src/generated/yagura/v1/instances.pbgrpc.dart';

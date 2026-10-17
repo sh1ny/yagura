@@ -180,9 +180,14 @@ class UpdateSettingsRequest {
     this.restartPolicy,
     this.steamAccountId,
     this.autostart,
+    this.schemaVersion,
   });
 
   final String instanceId;
+
+  /// When set, must equal the plugin's current settings schema version, so a
+  /// form opened before a plugin reload cannot write stale fields.
+  final int? schemaVersion;
 
   /// The full non-secret settings document.
   final Map<String, Object?> settings;

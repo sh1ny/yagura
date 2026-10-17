@@ -67,6 +67,7 @@ class InstanceManager {
 
   final _records = <String, InstanceRecord>{};
   final _events = StreamController<InstanceEvent>.broadcast();
+  final _pluginsReloaded = StreamController<void>.broadcast();
   final _recoveryNotices = <InstanceNotice>[];
   var _createTail = Future<void>.value();
   var _closed = false;
@@ -176,15 +177,7 @@ class InstanceManager {
     if (name.isEmpty) {
       throw _settingsInvalid([const SettingError('name', 'must not be empty')]);
     }
-    if (request.schemaVersion != null &&
-        request.schemaVersion != plugin.schemaVersion) {
-      throw YaguraException(
-        'schema_version_mismatch',
-        'the settings were made for schema version ${request.schemaVersion}, '
-            'the plugin is at ${plugin.schemaVersion}',
-        details: {'schemaVersion': plugin.schemaVersion},
-      );
-    }
+    _checkSchemaVersion(request.schemaVersion, plugin);
 
     final settings = _validated(manifest, request.settings);
     final ports = _resolvePorts(manifest, request.ports);
@@ -222,12 +215,25 @@ class InstanceManager {
 
   // ---- settings -----------------------------------------------------------
 
+  /// Refuses settings made for another version of the plugin's settings
+  /// schema.
+  void _checkSchemaVersion(int? version, LoadedPlugin plugin) {
+    if (version == null || version == plugin.schemaVersion) return;
+    throw YaguraException(
+      'schema_version_mismatch',
+      'the settings were made for schema version $version, '
+          'the plugin is at ${plugin.schemaVersion}',
+      details: {'schemaVersion': plugin.schemaVersion},
+    );
+  }
+
   /// Saves settings and ports. Secret values are refused; an omitted secret
   /// or its placeholder leaves it unset.
   Instance updateSettings(UpdateSettingsRequest request) {
     final record = _require(request.instanceId);
     final plugin = _requirePlugin(record);
     final manifest = plugin.manifest;
+    _checkSchemaVersion(request.schemaVersion, plugin);
     final settings = _validated(manifest, request.settings);
 
     var ports = record.ports;
@@ -807,8 +813,14 @@ class InstanceManager {
   Future<List<PluginReloadOutcome>> reloadPlugins() async {
     final outcomes = await registry.reload();
     reconcilePlugins();
+    if (!_closed && !_pluginsReloaded.isClosed) _pluginsReloaded.add(null);
     return outcomes;
   }
+
+  /// Fires after an explicit plugin reload has been reconciled, also when no
+  /// instance changed (a plugin may have changed what it declares, such as
+  /// its log sources).
+  Stream<void> get pluginsReloaded => _pluginsReloaded.stream;
 
   /// Applies the plugin registry to every instance: `plugin_missing` for a
   /// stopped instance whose plugin is gone, back to `stopped` when it is
@@ -954,5 +966,6 @@ class InstanceManager {
   Future<void> close() async {
     _closed = true;
     await _events.close();
+    await _pluginsReloaded.close();
   }
 }

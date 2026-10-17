@@ -135,6 +135,7 @@ const LogBatch$json = {
     {'1': 'dropped', '3': 2, '4': 1, '5': 4, '10': 'dropped'},
     {'1': 'truncated', '3': 3, '4': 1, '5': 8, '10': 'truncated'},
     {'1': 'source_event', '3': 4, '4': 1, '5': 9, '10': 'sourceEvent'},
+    {'1': 'source', '3': 5, '4': 1, '5': 9, '10': 'source'},
   ],
 };
 
@@ -142,4 +143,5 @@ const LogBatch$json = {
 final $typed_data.Uint8List logBatchDescriptor = $convert.base64Decode(
     'CghMb2dCYXRjaBItCgdlbnRyaWVzGAEgAygLMhMueWFndXJhLnYxLkxvZ0VudHJ5UgdlbnRyaW'
     'VzEhgKB2Ryb3BwZWQYAiABKARSB2Ryb3BwZWQSHAoJdHJ1bmNhdGVkGAMgASgIUgl0cnVuY2F0'
-    'ZWQSIQoMc291cmNlX2V2ZW50GAQgASgJUgtzb3VyY2VFdmVudA==');
+    'ZWQSIQoMc291cmNlX2V2ZW50GAQgASgJUgtzb3VyY2VFdmVudBIWCgZzb3VyY2UYBSABKAlSBn'
+    'NvdXJjZQ==');

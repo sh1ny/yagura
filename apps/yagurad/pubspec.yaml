@@ -9,13 +9,19 @@ environment:
 resolution: workspace
 
 dependencies:
+  args: ^2.7.0
   crypto: ^3.0.7
   ffi: ^2.1.4
+  fixnum: ^1.1.1
+  grpc: ^5.2.0
+  http2: ^2.3.1
   path: ^1.9.1
+  protobuf: ^6.1.0
   sqlite3: ^3.7.1
   yagura_formats: ^0.1.0
   yagura_js: ^0.1.0
   yagura_plugin: ^0.1.0
+  yagura_proto: ^0.1.0
   yaml: ^3.1.4
 
 dev_dependencies:

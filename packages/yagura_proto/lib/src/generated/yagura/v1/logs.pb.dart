@@ -484,12 +484,14 @@ class LogBatch extends $pb.GeneratedMessage {
     $fixnum.Int64? dropped,
     $core.bool? truncated,
     $core.String? sourceEvent,
+    $core.String? source,
   }) {
     final result = LogBatch._();
     if (entries != null) result.entries.addAll(entries);
     if (dropped != null) result.dropped = dropped;
     if (truncated != null) result.truncated = truncated;
     if (sourceEvent != null) result.sourceEvent = sourceEvent;
+    if (source != null) result.source = source;
     return result;
   }
 
@@ -512,6 +514,7 @@ class LogBatch extends $pb.GeneratedMessage {
         defaultOrMaker: $fixnum.Int64.ZERO)
     ..aOB(3, _omitFieldNames ? '' : 'truncated')
     ..aOS(4, _omitFieldNames ? '' : 'sourceEvent')
+    ..aOS(5, _omitFieldNames ? '' : 'source')
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -563,6 +566,15 @@ class LogBatch extends $pb.GeneratedMessage {
   $core.bool hasSourceEvent() => $_has(3);
   @$pb.TagNumber(4)
   void clearSourceEvent() => $_clearField(4);
+
+  @$pb.TagNumber(5)
+  $core.String get source => $_getSZ(4);
+  @$pb.TagNumber(5)
+  set source($core.String value) => $_setString(4, value);
+  @$pb.TagNumber(5)
+  $core.bool hasSource() => $_has(4);
+  @$pb.TagNumber(5)
+  void clearSource() => $_clearField(5);
 }
 
 const $core.bool _omitFieldNames =
