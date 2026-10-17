@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 
 import 'log_limits.dart';
+import 'log_models.dart';
 
 /// Writes the stdout capture of one instance: numbered files that rotate at
 /// [fileBytes] and only at line boundaries, so no line is split across two
@@ -24,6 +25,7 @@ class CaptureWriter {
     this.directory, {
     this.fileBytes = captureFileBytes,
     this.fileCount = captureFileCount,
+    this.encoding = LogEncoding.utf8,
   }) {
     Directory(directory).createSync(recursive: true);
     _resume();
@@ -39,6 +41,10 @@ class CaptureWriter {
 
   /// How many files are kept, the newest.
   final int fileCount;
+
+  /// The encoding of the captured output: its line break is what a file may
+  /// rotate after, and what ends a line that is being cut.
+  final LogEncoding encoding;
 
   /// The capture directory of an instance.
   static String directoryFor(String instanceDirectory) =>
@@ -80,6 +86,19 @@ class CaptureWriter {
   var _size = 0;
   var _closed = false;
 
+  // Where the stream is in a line, kept across writes.
+  var _lineLength = 0;
+  var _dropping = false;
+
+  /// Byte position within the encoding's code unit (always 0 for one-byte
+  /// encodings), and whether the previous byte was the low byte of a line feed.
+  var _phase = 0;
+  var _lowLineFeed = false;
+
+  late final Uint8List _lineBreak = Uint8List.fromList(
+    encoding.unitBytes == 1 ? const [0x0A] : const [0x0A, 0x00],
+  );
+
   /// Continues the newest file when it still has room (after a restart of the
   /// writer), else the next write starts a new one.
   void _resume() {
@@ -91,6 +110,7 @@ class CaptureWriter {
     if (size >= fileBytes) return;
     _file = File(last).openSync(mode: FileMode.append);
     _size = size;
+    _phase = size % encoding.unitBytes;
   }
 
   void _open() {
@@ -129,18 +149,49 @@ class CaptureWriter {
   }
 
   /// Appends [bytes]. A file that has reached [fileBytes] rotates when the
-  /// line it is writing ends, never before.
+  /// line it is writing ends, never before, and a line break is the whole
+  /// break of the [encoding] (`0A 00` for UTF-16LE), possibly split over two
+  /// writes.
+  ///
+  /// A line is stored up to one unit more than the hub's line limit, which is
+  /// enough for the hub to cut it and mark it `truncated`; the rest of it up
+  /// to the next break is not stored, so output without a newline cannot grow
+  /// a file past the bound.
   void write(List<int> bytes) {
     if (_closed) throw StateError('the capture writer is closed');
     final data = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+    final unit = encoding.unitBytes;
+    final lineBytes = maxLineBytes + unit;
     var run = 0;
     for (var i = 0; i < data.length; i++) {
-      if (data[i] != 0x0A) continue;
-      final end = i + 1;
-      if (_size + (end - run) >= fileBytes) {
-        _put(data, run, end);
-        _rotate();
-        run = end;
+      final byte = data[i];
+      final isLow = _phase == 0 && byte == 0x0A;
+      final newline = unit == 1
+          ? isLow
+          : _lowLineFeed && _phase == 1 && byte == 0;
+      _lowLineFeed = unit == 2 && isLow;
+      _phase = (_phase + 1) % unit;
+      if (_dropping) {
+        run = i + 1;
+        if (!newline) continue;
+        _dropping = false;
+        _lineLength = 0;
+        _put(_lineBreak, 0, unit);
+        if (_size >= fileBytes) _rotate();
+        continue;
+      }
+      _lineLength++;
+      if (newline) {
+        _lineLength = 0;
+        if (_size + (i + 1 - run) >= fileBytes) {
+          _put(data, run, i + 1);
+          _rotate();
+          run = i + 1;
+        }
+      } else if (_lineLength > lineBytes) {
+        _put(data, run, i);
+        run = i + 1;
+        _dropping = true;
       }
     }
     _put(data, run, data.length);

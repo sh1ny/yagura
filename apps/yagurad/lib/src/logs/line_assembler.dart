@@ -34,6 +34,14 @@ class LineAssembler {
   /// The rest of a cut line is being thrown away.
   bool get discarding => _discarding;
 
+  /// Starts in the middle of a line already cut: everything up to the next
+  /// break is thrown away.
+  void discardRestOfLine() {
+    _line.clear();
+    _half = null;
+    _discarding = true;
+  }
+
   void reset() {
     _line.clear();
     _half = null;

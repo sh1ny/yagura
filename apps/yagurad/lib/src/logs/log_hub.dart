@@ -392,7 +392,9 @@ class _InstanceLogs {
 
 /// One `Follow` subscriber with its bounded queue. While the subscriber is
 /// paused, lines pile up to 1,000 or 4 MiB, then the oldest are dropped and
-/// counted; the count goes out with the next batch.
+/// counted; the count goes out with the next batch. Source events pile up to
+/// [followMaxEvents], then the oldest are dropped (silently: they carry no
+/// count). A batch is closed at [followBatchBytes] on the wire.
 class _Follower {
   _Follower(this.controller, this.sources);
 
@@ -403,9 +405,14 @@ class _Follower {
   final _queue = <Object>[];
   var _lines = 0;
   var _bytes = 0;
+  var _events = 0;
   var _dropped = 0;
 
   bool wants(String source) => sources.isEmpty || sources.contains(source);
+
+  /// Most a line can grow when decoded and sent as UTF-8: an invalid UTF-8
+  /// byte becomes the three bytes of U+FFFD.
+  static const _wireFactor = 3;
 
   bool get _canDeliver =>
       controller.hasListener && !controller.isPaused && !controller.isClosed;
@@ -416,7 +423,10 @@ class _Follower {
     _bytes += entry.sizeBytes;
     if (_canDeliver) {
       // Not behind: hand over in batches, never drop.
-      if (_lines >= followMaxLagLines ~/ 4) flush();
+      if (_lines >= followMaxLagLines ~/ 4 ||
+          _bytes * _wireFactor >= followBatchBytes) {
+        flush();
+      }
       return;
     }
     while (_lines > followMaxLagLines || _bytes > followMaxLagBytes) {
@@ -430,7 +440,13 @@ class _Follower {
 
   void offerEvent(LogSourceEvent event) {
     _queue.add(event);
-    if (_canDeliver) flush();
+    _events++;
+    if (_canDeliver) {
+      flush();
+    } else if (_events > followMaxEvents) {
+      _queue.removeAt(_queue.indexWhere((item) => item is LogSourceEvent));
+      _events--;
+    }
   }
 
   /// Sends what is queued, unless the subscriber is paused.
@@ -439,7 +455,9 @@ class _Follower {
     final batches = <LogBatch>[];
     var entries = <LogEntry>[];
     var dropped = _dropped;
+    var wireBytes = 0;
     void closeLines() {
+      wireBytes = 0;
       if (entries.isEmpty && dropped == 0) return;
       batches.add(LogBatch(entries: entries, dropped: dropped));
       entries = [];
@@ -450,6 +468,8 @@ class _Follower {
       switch (item) {
         case LogEntry():
           entries.add(item);
+          wireBytes += item.sizeBytes * _wireFactor;
+          if (wireBytes >= followBatchBytes) closeLines();
         case LogSourceEvent(:final source, :final event):
           closeLines();
           batches.add(LogBatch(source: source, sourceEvent: event));
@@ -459,6 +479,7 @@ class _Follower {
     _queue.clear();
     _lines = 0;
     _bytes = 0;
+    _events = 0;
     _dropped = 0;
     batches.forEach(controller.add);
   }

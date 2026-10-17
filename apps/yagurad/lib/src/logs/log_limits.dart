@@ -20,6 +20,16 @@ const followMaxLagLines = 1000;
 /// A follower further behind than this many bytes gets a `dropped` marker.
 const followMaxLagBytes = 4 * 1024 * 1024;
 
+/// Source events (`file_switched`, `waiting`, `error`) a paused follower
+/// queues; the oldest are dropped beyond it.
+const followMaxEvents = 100;
+
+/// A `LogBatch` is closed once its lines would take this many bytes on the
+/// wire. A line is counted at three times its size on disk, the most a
+/// decoder can expand it (an invalid UTF-8 byte becomes a three-byte U+FFFD),
+/// so a batch stays far below the 16 MiB message limit.
+const followBatchBytes = 4 * 1024 * 1024;
+
 /// Size of one stdout capture file before it rotates.
 const captureFileBytes = 10 * 1024 * 1024;
 

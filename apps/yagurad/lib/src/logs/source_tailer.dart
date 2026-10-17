@@ -96,7 +96,9 @@ class SourceTailer {
       if (saved != null &&
           File(saved.file).existsSync() &&
           File(saved.file).lengthSync() >= saved.offset &&
-          (spec.rotation == LogRotation.newest || saved.file == target)) {
+          (spec.rotation == LogRotation.newest
+              ? _declares(saved.file)
+              : saved.file == target)) {
         file = saved.file;
         end = saved.offset;
         if (spec.kind == LogSourceKind.file &&
@@ -119,6 +121,12 @@ class SourceTailer {
     }
   }
 
+  /// [path] is one the source's declaration follows, so a position saved under
+  /// an earlier declaration (a changed pattern) is not resumed.
+  bool _declares(String path) => spec.kind == LogSourceKind.stdout
+      ? CaptureWriter.filesIn(spec.pattern).any((f) => p.equals(f, path))
+      : _matches().any((m) => p.equals(m, path));
+
   Future<void> _readHistory(String path, int end) async {
     _offset = end;
     if (end == 0) return;
@@ -136,6 +144,16 @@ class SourceTailer {
           break;
         }
       }
+      // No break in a window longer than a line: it lies inside a line that
+      // was cut at 64 KiB, whose rest is still being discarded.
+      if (start == bytes.length && bytes.length > maxLineBytes) {
+        _assembler.discardRestOfLine();
+      }
+    } else if (_isBomPrefix(bytes)) {
+      // Only the start of a byte-order mark so far: read it again with the
+      // rest.
+      _offset = 0;
+      return;
     } else {
       start = _bomLength(bytes);
     }
@@ -223,7 +241,7 @@ class SourceTailer {
         final chunk = await raf.read(min(left, _chunkBytes));
         if (chunk.isEmpty) break;
         left -= chunk.length;
-        _consume(chunk);
+        if (!_consume(chunk)) break;
       }
     } finally {
       await raf.close();
@@ -235,11 +253,27 @@ class SourceTailer {
     _assembler.reset();
   }
 
-  void _consume(Uint8List chunk) {
+  /// Takes [chunk]; false when it holds only the start of a byte-order mark,
+  /// which is read again with the rest.
+  bool _consume(Uint8List chunk) {
     var data = chunk;
-    if (_offset == 0) data = Uint8List.sublistView(chunk, _bomLength(chunk));
+    if (_offset == 0) {
+      if (_isBomPrefix(chunk)) return false;
+      data = Uint8List.sublistView(chunk, _bomLength(chunk));
+    }
     _offset += chunk.length;
     _feed(data, history: false);
+    return true;
+  }
+
+  /// [bytes] are fewer than the encoding's byte-order mark and its start.
+  bool _isBomPrefix(Uint8List bytes) {
+    final bom = spec.encoding.bom;
+    if (bytes.isEmpty || bytes.length >= bom.length) return false;
+    for (var i = 0; i < bytes.length; i++) {
+      if (bytes[i] != bom[i]) return false;
+    }
+    return true;
   }
 
   void _feed(Uint8List data, {required bool history}) {
