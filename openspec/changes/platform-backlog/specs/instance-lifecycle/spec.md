@@ -167,6 +167,10 @@ Instances SHALL keep save data in the plugin's `data_paths`, inside the instance
 - **WHEN** an instance was deleted with files 2 days ago
 - **THEN** its `pre_delete` snapshot is listed by `ListOrphanSnapshots` with the instance name, and it is removed 30 days after the delete
 
+#### Scenario: Daemon killed during a restore
+- **WHEN** the daemon is killed while a restore is replacing an instance's data paths
+- **THEN** after restart the instance is in `error` with reason `restore_interrupted`, a Start is refused with `invalid_state`, and the `pre_restore` snapshot is listed
+
 ### Requirement: Deleting an instance protects game data
 Deleting an instance SHALL require it to be `stopped`, `not_installed` or `error` and SHALL remove its database rows, firewall rules and content-store references; its directory is removed only when the request sets `delete_files: true` and repeats the instance name as confirmation. Delete SHALL run as an operation on the instance's queue and is refused with `invalid_state` while another operation is queued or running. Its operation records SHALL outlive it until normal history pruning.
 

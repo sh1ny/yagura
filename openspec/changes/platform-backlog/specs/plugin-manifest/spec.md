@@ -72,6 +72,10 @@ The manifest SHALL declare a stop strategy (`rcon`, `signal` or `kill`, with com
 - **WHEN** a manifest declares `log_match: "([unclosed"`
 - **THEN** the plugin is `rejected` at load with an error naming `health.log_match` and the regex error
 
+#### Scenario: Unsupported stop strategy
+- **WHEN** a manifest declares `stop: {strategy: telnet}`
+- **THEN** the plugin is `rejected` with an error naming `stop.strategy` and the supported strategies
+
 ## REMOVED Requirements
 
 ### Requirement: Secret settings stay unset without a secret store

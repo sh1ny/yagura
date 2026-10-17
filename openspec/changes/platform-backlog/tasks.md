@@ -86,7 +86,7 @@ Every scenario of this backlog maps to a Dart test at the boundary it crosses: d
 | steam-content → Credential retention is the admin's choice | Cached login expired | apps/yagurad/test/steam/credential_retention_is_the_admin_s_choice_test.dart | cached_login_expired | 14 (M3) | red |
 | steam-content → Game Server Login Tokens | Token injected at launch | apps/yagurad/test/steam/game_server_login_tokens_test.dart | token_injected_at_launch | 14 (M3) | red |
 | steam-content → Game Server Login Tokens | Required token missing | apps/yagurad/test/steam/game_server_login_tokens_test.dart | required_token_missing | 14 (M3) | red |
-| steam-content → Login mode per plugin | Account required but none linked | apps/yagurad/test/steam/login_mode_per_plugin_test.dart | account_required_but_none_linked | 14 (M3) | red |
+| steam-content → Login mode per plugin | Account login not available | apps/yagurad/test/steam/login_mode_per_plugin_test.dart | account_login_not_available | 14 (M3) | red |
 | steam-content → Steam passwords never reach disk or logs | Password absent from output | apps/yagurad/test/steam/steam_passwords_never_reach_disk_or_logs_test.dart | password_absent_from_output | 14 (M3) | red |
 | steam-content → Steam passwords never reach disk or logs | Remember password | apps/yagurad/test/steam/steam_passwords_never_reach_disk_or_logs_test.dart | remember_password | 14 (M3) | red |
 | steam-content → Workshop downloads | Workshop item downloaded | apps/yagurad/test/steam/workshop_downloads_test.dart | workshop_item_downloaded | 14 (M3) | red |

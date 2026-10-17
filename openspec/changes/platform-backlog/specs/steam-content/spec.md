@@ -74,7 +74,7 @@ Each plugin SHALL declare `steam.login` as `anonymous`, `account` or `account_op
 - **WHEN** a Valheim instance (`login: anonymous`) is installed
 - **THEN** SteamCMD runs with `+login anonymous` and the app is installed into the instance directory
 
-#### Scenario: Account required but none linked
+#### Scenario: Account login not available
 - **WHEN** a DayZ instance (`login: account`) is installed without a linked Steam account
 - **THEN** the install fails with `FAILED_PRECONDITION` reason `steam_account_required` before SteamCMD runs
 
@@ -96,6 +96,10 @@ The daemon SHALL install and update an instance's app with `app_update <app_id>`
 #### Scenario: Not enough disk space
 - **WHEN** the volume has less free space than twice the app's last known size
 - **THEN** the operation fails with `insufficient_disk` naming the volume, free bytes and required bytes, before SteamCMD downloads anything
+
+#### Scenario: First install without a known size
+- **WHEN** an app is installed for the first time on this host and its manifest has no `steam.size_hint_bytes`
+- **THEN** the install runs without the disk check, and the operation shows warning `disk_check_skipped`
 
 ### Requirement: SteamCMD is installed and managed by the daemon
 The daemon SHALL download and bootstrap SteamCMD on first need into its data directory, keeping one SteamCMD installation per Steam account plus one for anonymous use, and SHALL report SteamCMD bootstrap failures as operation errors.

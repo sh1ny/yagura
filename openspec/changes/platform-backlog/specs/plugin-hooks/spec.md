@@ -54,3 +54,7 @@ Hooks SHALL reach the system only through the `yagura` object: logging, reading 
 #### Scenario: Edit through a link refused
 - **WHEN** a hook returns a file edit for `cfg/server.json` where `cfg` is a junction to a directory outside the instance root
 - **THEN** the operation fails with `sandbox_violation` naming the path, and no file outside the instance root changes
+
+#### Scenario: Edit in an unsupported format
+- **WHEN** `onPreStart` returns a file edit with `format: toml`
+- **THEN** the operation fails with `unsupported_in_this_version` naming the edit's path and format, and no file changes

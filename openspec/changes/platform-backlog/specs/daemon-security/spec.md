@@ -138,3 +138,6 @@ The daemon SHALL serve plaintext gRPC only when started with `--dev` and SHALL b
 - **WHEN** the daemon starts with `--dev` and no `--bind`
 - **THEN** it listens on `127.0.0.1:7443` only
 
+#### Scenario: Started without dev mode
+- **WHEN** the daemon starts without `--dev`
+- **THEN** it serves gRPC only over mutual TLS and opens no plaintext listener
