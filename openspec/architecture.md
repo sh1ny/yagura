@@ -93,8 +93,12 @@ stateDiagram-v2
   running --> stopping: Update (stop first, restart after)
   updating --> stopped: success (then start if it was running)
   updating --> error: failure / interrupted (update_interrupted)
+  error --> updating: Update / Validate (update_interrupted, update failure)
+  stopped --> stopped: RestoreSnapshot (pre_restore snapshot first)
+  stopped --> error: restore interrupted (restore_interrupted)
+  error --> stopped: RestoreSnapshot completes (restore_interrupted)
   stopped --> starting: Start
-  error --> starting: Start (retry)
+  error --> starting: Start (crash_loop only; counter reset)
   starting --> running: health ok / start_timeout (health unknown)
   starting --> stopped: process exits in health window / hook or binding failure
   starting --> stopping: Stop (cancels the start at the next step)
@@ -104,9 +108,30 @@ stateDiagram-v2
   running --> error: crash loop
   running --> stopped: exit without stop request, policy never
   stopped --> error: settings_invalid / plugin_missing (after plugin change)
-  error --> stopped: settings fixed / Acknowledge
-  stopped --> [*]: DeleteInstance
+  error --> stopped: settings fixed / plugin restored / Acknowledge
+  stopped --> [*]: DeleteInstance (operation)
+  not_installed --> [*]: DeleteInstance (operation)
+  error --> [*]: DeleteInstance (operation)
 ```
+
+`error` always carries a reason, and each reason allows specific exits:
+
+| Reason | Allowed | Result |
+|---|---|---|
+| `crash_loop` | Start | `starting` (restart counter reset) |
+| `crash_loop` | Acknowledge | `stopped` |
+| `update_interrupted`, update failure | Update, Validate | `updating` |
+| `update_interrupted`, update failure | Acknowledge | `stopped` (warning kept: files may be inconsistent) |
+| `restore_interrupted` | RestoreSnapshot | `stopped` once the restore ends |
+| `restore_interrupted` | Acknowledge | `stopped` (warning kept: data paths may be mixed) |
+| `settings_invalid` | UpdateSettings with valid settings | `stopped` |
+| `plugin_missing` | ReloadPlugins that restores the plugin | `stopped` |
+| any | Stop | refused only while an operation runs |
+| any | Delete | refused while another operation is queued or running |
+
+Start from `error: settings_invalid` or `plugin_missing` fails `invalid_state`. A running instance whose settings become invalid on reload keeps running with flag `settings_invalid` and a notice; its next Start is refused.
+
+`DeleteInstance` is an operation on the instance's queue, allowed from `stopped`, `not_installed` and `error` and refused with `invalid_state` while another operation is queued or running; a wrong confirmation fails the call before an operation exists. With `delete_files` the order is: `pre_delete` snapshot, `.yagura/deleting` marker in the instance directory, instance rows removed, directory removed. Cancellation is honoured only before the rows are removed. The operation record outlives the instance under the normal history bound.
 
 ## State ownership
 
@@ -115,7 +140,9 @@ stateDiagram-v2
 | Instances, settings, ports, revision | Instance manager | Until instance deleted | — | SQLite |
 | `instance.json` | Instance manager | Instance dir lifetime | Rewritten after each instance commit and at startup | Derived from SQLite (ADR 0008) |
 | Instance state | Instance manager | Instance lifetime | Re-derived at startup (Failure and recovery) | SQLite + live process check |
-| Run records (relay/server PID, exe, start time) | Process supervisor | One server run | Cleared on observed exit | Launcher report (relay) plus `relay.json` (server) verified by parent PID and token user |
+| Run records (run id, run directory `.yagura/run/<run-id>/`, relay/server PID, exe, start time) | Process supervisor | One server run | Created `pending` in SQLite before `launch` is spawned; `running` once relay and server are verified; cleared on observed exit. A `pending` run at startup is resolved from its directory (wait up to 10 s for a live relay to record its server; re-attach a verified server, kill a verified relay that recorded none, else lost and `stopped`); no new run for an instance while one is unresolved | Launcher report (relay) plus `relay.json` (relay identity written before the server starts, server identity after) verified by parent PID and token user |
+| Stop records (`stop_requested_at`, `stopped_by`) | Process supervisor | One server run | `stop_requested_at` written on the run record before the stop strategy is sent; a run re-attached with it resumes `stopping` with the rest of its grace period, then kills; its exit records `stopped_by` and never counts as a crash | SQLite run record |
+| Hook worker slots | Hook runner | Daemon process | 4 slots; a timed-out call keeps its slot until its isolate exits; an isolate not gone 5 s after the watchdog is leaked and keeps the slot; at 2 leaked, hooks fail `hook_runtime_degraded` until restart | In memory; `GetHealth` reports leaked workers |
 | Operations + history | Operation runner | 30 days or 1,000 per instance | Pruned at startup and daily | SQLite |
 | Loaded manifests | Plugin registry | Daemon process | Explicit `ReloadPlugins` only; operations use a snapshot | Plugin files on disk |
 | Content store versions | Steam service (publishes), mod pipeline (GC) | Until unreferenced for 7 days | Immutable once published | Disk |
@@ -125,7 +152,7 @@ stateDiagram-v2
 | Secrets (CA key, Steam pw, RCON pw, GSLT, `yagura-srv` pw) | SecretStore, called by the owning component | Until replaced/deleted | — | SQLite blobs, DPAPI user scope of LocalSystem (ADR 0011) |
 | Devices, pairing codes | Pairing + CA | Device: until revoked; code: 10 min, single use | Expired codes pruned | SQLite |
 | Owned firewall rules | Firewall reconciler | While the port is wanted | Reconcile at startup, on port change, on request | Windows Firewall (actual) vs SQLite (desired) |
-| Save snapshots | Save snapshots | Last 3 per instance | Oldest deleted | Disk + SQLite rows |
+| Save snapshots | Save snapshots | Last 3 per instance; `pre_delete` snapshots of a deleted instance 30 days (orphan listing) | Oldest deleted, never the one restoring; `pre_restore` taken before any data path is replaced | Disk + SQLite rows |
 | Log ring buffers + offsets | Log hub | Daemon process; offsets persisted | Refilled from file tail on restart | Log files on disk |
 | Client device key + certs | Desktop client | Until unpaired | Renew before expiry; re-pair if expired | OS keychain |
 
@@ -145,7 +172,7 @@ stateDiagram-v2
 
 | Component | Dies or fails mid-operation → | Recovery | Retry safe? | Who finds out |
 |---|---|---|---|---|
-| Daemon process | Operations cut; SteamCMD dies with its job; game servers keep running under their relays | Startup: kill stray SteamCMD under Yagura dirs; mark `queued`/`running` operations `interrupted`; re-derive states (`installing` → `not_installed`, `updating` → `error: update_interrupted`, `starting`/`running`/`stopping` → re-attach or `stopped`); re-run mod staging and firewall reconcile idempotently; rewrite every `instance.json` | Yes, admin retries | Client: `interrupted` operations and per-instance notices |
+| Daemon process | Operations cut; SteamCMD dies with its job; game servers keep running under their relays | Startup (fatal and degraded steps below): kill stray SteamCMD under Yagura dirs; mark `queued`/`running` operations `interrupted`; re-derive states (`installing` → `not_installed`, `updating` → `error: update_interrupted`, `starting`/`running`/`stopping` → re-attach or `stopped`, a run with a stop request resumes `stopping`, an interrupted restore → `error: restore_interrupted`, a `.yagura/deleting` directory with no instance row removed); re-run mod staging and firewall reconcile idempotently; rewrite every `instance.json` | Yes, admin retries | Client: `interrupted` operations and per-instance notices |
 | Launcher / relay | Launcher fails: start fails with the Win32 error. Relay killed: server loses its stdout pipe | Server alive → `running` with `capture: broken`; server dead → crash handling via `exit.json` or `lost_while_daemon_down` | Yes | Client notice + log source status |
 | Game server | Exits without a stop request | Restart policy (≤3 in 10 min, then `error: crash_loop`) | Policy-limited | Client `crashed` / `crash_loop` notices with last 50 lines |
 | Hook worker | Timeout, OOM, exception, native hang | Interrupt handler, then watchdog kills the isolate; operation fails | Yes, after fixing the hook | Client operation error with hook name and stack |
@@ -159,21 +186,27 @@ stateDiagram-v2
 | Secret store | DPAPI failure | Daemon refuses to start (identity) or the call fails | No | Service exit code; client error |
 | Client connection | Network drop | Backoff reconnect; streams resume (`after_sequence`, fresh snapshot) | Yes | Client daemon status |
 
+Startup separates fatal steps from degraded ones:
+
+- **Fatal** (exit non-zero, nothing served): the data-directory lock (`LockFileEx`/`flock` on `yagurad.lock`, released by the OS when the holder dies; the holder writes its PID at offset 0 and locks one byte at offset 2^32, so a refused daemon can report the holder's PID), database open and migration. The secret store and daemon identity join them in M2.
+- **Degraded** (the listener still opens; notice plus a `GetHealth` flag): the stray SteamCMD sweep (a stray that cannot be terminated makes its installation unavailable, operations needing it fail `steamcmd_unavailable` without spawning, and the sweep is retried every 60 s), plugin load failures, state recovery, log tailing, autostart, the `instance.json` rewrite, and firewall reconcile from M2. Per-instance failures affect only that instance.
+
 ## Resource bounds
 
 | Flow / store | Bound | At the bound | On failure | Who finds out |
 |---|---|---|---|---|
-| Hook call | 5 s default deadline (manifest up to 60 s), 64 MiB heap, 4 MiB context, 1 MiB result; host call input/output 16 MiB; 4 workers per host | Interrupt / rejected / queued | Operation fails with hook name, JS stack | Client, daemon log |
-| Operations | 1 running per instance, 10 queued per instance; 4 heavy (install/update/validate/mods) per host | Queued with position / rejected `RESOURCE_EXHAUSTED` | Operation `failed` | Client |
+| Hook call | 5 s default deadline (manifest up to 60 s), 64 MiB heap, 4 MiB context, 1 MiB result; host call input/output 16 MiB; 4 workers per host, timed-out ones included (deadline + 2 s watchdog; an isolate not gone 5 s later is leaked and keeps its slot); 2 leaked max | Interrupt / rejected / queued (the wait does not count against the deadline) / `hook_runtime_degraded` at 2 leaked | Operation fails with hook name, JS stack | Client, daemon log |
+| Operations | 1 running per instance, 10 queued per instance; 4 heavy (install/update/validate/mods) per host, a heavy slot taken only after any SteamCMD lock is held (the SteamCMD stall timer starts when SteamCMD starts) | Queued with position / `waiting_for_steamcmd` / rejected `RESOURCE_EXHAUSTED` | Operation `failed` | Client |
 | SteamCMD | 1 run per installation; fail after 15 min without progress; 12 h hard cap; login step 10 min | Queued / killed | Raw last 50 lines attached | Client |
 | Content store | free space ≥ 2× expected size before acquisition; GC of versions unreferenced 7 days | Refuse `insufficient_disk` | — | Client |
-| Save snapshots | last 3 per instance; free space ≥ 2× data size | Oldest deleted / refuse with `insufficient_disk` (update or delete does not proceed) | — | Client |
+| Save snapshots | last 3 per instance; orphans (`pre_delete` of a deleted instance) 30 days; free space ≥ 2× data size on the snapshots volume | Oldest deleted, never the one restoring / refuse with `insufficient_disk` (update or delete does not proceed) | — | Client |
 | Log ring buffer | 10,000 lines or 4 MiB per source | Oldest evicted | Source event | Client log view |
 | Stdout capture | 10 MiB × 5 files per instance | Oldest file deleted | — | — |
 | Client log stream | 1,000 lines behind per subscriber | `dropped N` marker | Stream closed with status | Client |
 | Backlog request | 5,000 lines | Truncated with marker | — | Client |
-| Instance watch subscribers | 32 per daemon; 1,000 events behind | `resync_required` + new snapshot | — | Client |
+| Instance watch subscribers | 32 per daemon; 1,000 events or 8 MiB behind per subscriber | `resync_required` + new snapshot | — | Client |
 | Operations history | 1,000 per instance / 30 days | Pruned | — | — |
+| Operation events | Progress coalesced per step; other events 2,000 per operation | `events_dropped` marker on resume | — | Client |
 | Audit log (mutating + auth calls only) | 100,000 rows | Oldest pruned | — | — |
 | RCON | 1 session per instance, 8 console subscribers, 10 s command timeout | Rejected | Reconnect 1→30 s backoff | Client console |
 | Pairing attempts | 5 wrong codes per 10 min | Code invalidated | — | CLI + audit |
