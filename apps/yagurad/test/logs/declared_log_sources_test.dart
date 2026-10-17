@@ -38,7 +38,9 @@ void main() {
 
   test('pattern_matches_nothing', () async {
     final env = TestEnv();
-    env.installValheim();
+    // The server never writes its log, so health is the process check.
+    env.process.readyLine = null;
+    env.installValheimHealth('type: process');
     var now = DateTime.utc(2026, 10, 17, 12);
     final daemon = await env.start(clock: () => now);
     final instance = await createRunning(daemon);

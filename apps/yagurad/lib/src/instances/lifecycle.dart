@@ -278,6 +278,7 @@ class Lifecycle {
     RunningServer? server;
     var runId = '';
     var serverGone = false;
+    LogMatchWatch? logWatch;
     try {
       var extraArgs = const <String>[];
       var env = const <String, String>{};
@@ -286,6 +287,21 @@ class Lifecycle {
         extraArgs = hook.args ?? const [];
         env = hook.env ?? const {};
       });
+
+      // The log is marked before the launch, so a line left from the
+      // previous run cannot pass the check.
+      final healthSpec = manifest.health;
+      if (healthSpec case HealthSpec(
+        type: HealthType.logMatch,
+        logMatch: final pattern?,
+        source: final source?,
+      )) {
+        logWatch = await _manager.logMatchWatch?.call(
+          record.id,
+          source,
+          RegExp(pattern),
+        );
+      }
 
       final launched = await ctx.step('spawn', () async {
         final executable = manifest.executables[_manager.os]!;
@@ -339,6 +355,7 @@ class Lifecycle {
           ports: record.ports,
           server: launched,
           cancelled: ctx.cancel.whenCancelled,
+          logMatch: logWatch?.check,
         );
         switch (outcome) {
           case HealthPassed():
@@ -400,6 +417,8 @@ class Lifecycle {
       if (!cancelled) record.lastRequestedRunning = false;
       _manager.setState(record, InstanceState.stopped);
       rethrow;
+    } finally {
+      await logWatch?.close();
     }
   }
 

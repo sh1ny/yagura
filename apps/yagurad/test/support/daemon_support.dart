@@ -78,6 +78,11 @@ class FakeProcessHost implements ProcessHost {
   /// unless forced.
   bool stopFailsGracefully = false;
 
+  /// Appended to `<instance>/logs/server.log` on launch, like the Valheim
+  /// server's ready line, so the fixture's `log_match` health check passes.
+  /// Null writes nothing (the `log_match` tests write the line themselves).
+  String? readyLine = 'Game server connected';
+
   @override
   Future<RunningServer> launch(LaunchRequest request) async {
     launches.add(request);
@@ -85,6 +90,11 @@ class FakeProcessHost implements ProcessHost {
     if (launchError case final error?) throw error;
     final server = FakeServer(_nextPid++, request.executable);
     servers.add(server);
+    if (readyLine case final line?) {
+      File(p.join(request.instanceDirectory, 'logs', 'server.log'))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('$line\n', mode: FileMode.append);
+    }
     onLaunch?.call(server);
     return server;
   }

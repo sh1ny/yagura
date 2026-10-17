@@ -117,19 +117,19 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | instance-lifecycle → Deleting files survives a daemon crash | Daemon killed while removing files | apps/yagurad/test/instances/deleting_files_survives_a_daemon_crash_test.dart | daemon_killed_while_removing_files | 6 (M1) | green |
 | instance-lifecycle → Save data is declared and snapshotted | Daemon killed during a restore | apps/yagurad/test/instances/save_data_is_declared_and_snapshotted_test.dart | daemon_killed_during_a_restore | 6 (M1) | green |
 | steam-content → Install, update and validate apps | First install without a known size | apps/yagurad/test/steam/install_update_and_validate_apps_test.dart | first_install_without_a_known_size | 6 (M1) | green |
-| plugin-manifest → Stop and health declarations | Log-match health check | apps/yagurad/test/instances/log_match_health_check_test.dart | log_match_health_check | 7 (M1) | red |
-| log-streaming → Bounded buffer and backlog | Backlog after restart | apps/yagurad/test/logs/bounded_buffer_and_backlog_test.dart | backlog_after_restart | 7 (M1) | red |
-| log-streaming → Bounded buffer and backlog | Request above the limit | apps/yagurad/test/logs/bounded_buffer_and_backlog_test.dart | request_above_the_limit | 7 (M1) | red |
-| log-streaming → Bounded buffer and backlog | Line without a newline | apps/yagurad/test/logs/bounded_buffer_and_backlog_test.dart | line_without_a_newline | 7 (M1) | red |
-| log-streaming → Declared log sources | Newest file followed after rotation | apps/yagurad/test/logs/declared_log_sources_test.dart | newest_file_followed_after_rotation | 7 (M1) | red |
-| log-streaming → Declared log sources | Pattern matches nothing | apps/yagurad/test/logs/declared_log_sources_test.dart | pattern_matches_nothing | 7 (M1) | red |
-| log-streaming → Encoding-aware decoding | SCUM UTF-16 log | apps/yagurad/test/logs/encoding_aware_decoding_test.dart | scum_utf_16_log | 7 (M1) | red |
-| log-streaming → Encoding-aware decoding | Invalid bytes | apps/yagurad/test/logs/encoding_aware_decoding_test.dart | invalid_bytes | 7 (M1) | red |
-| log-streaming → Live follow with backpressure | Live lines delivered | apps/yagurad/test/logs/live_follow_with_backpressure_test.dart | live_lines_delivered | 7 (M1) | red |
-| log-streaming → Live follow with backpressure | Slow subscriber | apps/yagurad/test/logs/live_follow_with_backpressure_test.dart | slow_subscriber | 7 (M1) | red |
-| log-streaming → Stdout captured to a file | Stdout survives daemon restart | apps/yagurad/test/logs/stdout_captured_to_a_file_test.dart | stdout_survives_daemon_restart | 7 (M1) | red |
-| log-streaming → Stdout captured to a file | Capture file rotation | apps/yagurad/test/logs/stdout_captured_to_a_file_test.dart | capture_file_rotation | 7 (M1) | red |
-| plugin-manifest → Stop and health declarations | Log file rewritten past its old size | apps/yagurad/test/instances/log_match_health_check_test.dart | log_file_rewritten_past_its_old_size | 7 (M1) | red |
+| plugin-manifest → Stop and health declarations | Log-match health check | apps/yagurad/test/instances/log_match_health_check_test.dart | log_match_health_check | 7 (M1) | green |
+| log-streaming → Bounded buffer and backlog | Backlog after restart | apps/yagurad/test/logs/bounded_buffer_and_backlog_test.dart | backlog_after_restart | 7 (M1) | green |
+| log-streaming → Bounded buffer and backlog | Request above the limit | apps/yagurad/test/logs/bounded_buffer_and_backlog_test.dart | request_above_the_limit | 7 (M1) | green |
+| log-streaming → Bounded buffer and backlog | Line without a newline | apps/yagurad/test/logs/bounded_buffer_and_backlog_test.dart | line_without_a_newline | 7 (M1) | green |
+| log-streaming → Declared log sources | Newest file followed after rotation | apps/yagurad/test/logs/declared_log_sources_test.dart | newest_file_followed_after_rotation | 7 (M1) | green |
+| log-streaming → Declared log sources | Pattern matches nothing | apps/yagurad/test/logs/declared_log_sources_test.dart | pattern_matches_nothing | 7 (M1) | green |
+| log-streaming → Encoding-aware decoding | SCUM UTF-16 log | apps/yagurad/test/logs/encoding_aware_decoding_test.dart | scum_utf_16_log | 7 (M1) | green |
+| log-streaming → Encoding-aware decoding | Invalid bytes | apps/yagurad/test/logs/encoding_aware_decoding_test.dart | invalid_bytes | 7 (M1) | green |
+| log-streaming → Live follow with backpressure | Live lines delivered | apps/yagurad/test/logs/live_follow_with_backpressure_test.dart | live_lines_delivered | 7 (M1) | green |
+| log-streaming → Live follow with backpressure | Slow subscriber | apps/yagurad/test/logs/live_follow_with_backpressure_test.dart | slow_subscriber | 7 (M1) | green |
+| log-streaming → Stdout captured to a file | Stdout survives daemon restart | apps/yagurad/test/logs/stdout_captured_to_a_file_test.dart | stdout_survives_daemon_restart | 7 (M1) | green |
+| log-streaming → Stdout captured to a file | Capture file rotation | apps/yagurad/test/logs/stdout_captured_to_a_file_test.dart | capture_file_rotation | 7 (M1) | green |
+| plugin-manifest → Stop and health declarations | Log file rewritten past its old size | apps/yagurad/test/instances/log_match_health_check_test.dart | log_file_rewritten_past_its_old_size | 7 (M1) | green |
 | plugin-hooks → Hook deadline | Infinite loop interrupted | apps/yagurad/test/hooks/hook_deadline_test.dart | infinite_loop_interrupted | 8 (M1) | green |
 | plugin-hooks → Hook host calls are bounded | Degraded hook runtime | apps/yagurad/test/hooks/hook_host_calls_are_bounded_test.dart | degraded_hook_runtime | 8 (M1) | green |
 | daemon-protocol → Instance state and event stream | Snapshot then deltas | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | snapshot_then_deltas | 8 (M1) | green |
@@ -219,7 +219,7 @@ Covers: log-streaming → Declared log sources; log-streaming → Encoding-aware
 
 - [x] 7.1 Write the failing tests for this group's rows.
 - [x] 7.2 Implement log sources (stdout capture and file globs with `newest`/`fixed` rotation), polling tailers (design D6) with persisted offsets and the current-run mark for `fixed` sources (size and first-4-KiB hash taken before each Start), decoding for utf-8, utf-16le and latin-1 with replacement characters, lines cut at 64 KiB with `truncated: true`, ring buffers (10,000 lines / 4 MiB), backlog with the 5,000 cap, follow with a lag of 1,000 lines or 4 MiB and `dropped` markers. Verify: the log rows are green.
-- [ ] 7.3 Implement the `log_match` health check on the log hub, matching only lines written after the current start, in the start-time health evaluator from 5.3. Verify: this group's rows are green; flip them.
+- [x] 7.3 Implement the `log_match` health check on the log hub, matching only lines written after the current start, in the start-time health evaluator from 5.3. Verify: this group's rows are green; flip them.
 
 ## 8. [M1] gRPC API and dev mode
 

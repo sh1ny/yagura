@@ -7,13 +7,8 @@ import 'package:yagurad/src/instances/instance.dart';
 
 import '../support/daemon_support.dart';
 
-// Both rows are task 7.3: the start-time health evaluator of task 5.3 is not
-// built yet, so a Start reaches `running` as soon as the server is launched.
-// They use only what the log hub offers the evaluator: the hub marks the run
-// before each Start (`markRun`) and `linesAfter` hands over the lines read
-// after the mark.
-
-const _skip = 'task 7.3: needs the start-time health evaluator from task 5.3';
+// The log_match check marks the log before the launch (`markRun`) and
+// matches only the lines read after that mark (`linesAfter`).
 
 const _matchLine = 'Game server connected';
 
@@ -29,14 +24,18 @@ Future<String> _startAndWaitForLaunch(
     () => env.process.launches.length > launched,
     reason: 'the server to be launched',
   );
-  // Give a health evaluator the chance to poll the log.
+  // Give the health evaluator the chance to poll the log, for longer than the
+  // 2 s settle of the `process` check, so a `log_match` held to that check
+  // would already have passed.
   await daemon.logs.pollNow(id);
+  await Future<void>.delayed(const Duration(milliseconds: 2500));
   return op.id;
 }
 
 void main() {
-  test('log_match_health_check', skip: _skip, () async {
+  test('log_match_health_check', () async {
     final env = TestEnv();
+    env.process.readyLine = null;
     env.installValheim();
     final daemon = await env.start();
     final instance = await createInstalled(daemon);
@@ -60,8 +59,9 @@ void main() {
     expect(daemon.instances.get(instance.id).state, InstanceState.running);
   });
 
-  test('log_file_rewritten_past_its_old_size', skip: _skip, () async {
+  test('log_file_rewritten_past_its_old_size', () async {
     final env = TestEnv();
+    env.process.readyLine = null;
     env.installValheim();
     final daemon = await env.start();
     final instance = await createInstalled(daemon);

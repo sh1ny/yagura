@@ -33,9 +33,20 @@ class HealthInterrupted extends HealthOutcome {
   const HealthInterrupted();
 }
 
+/// A `log_match` watch over one log source, opened before the server is
+/// launched so that only lines written by this run count (task 7.3).
+abstract interface class LogMatchWatch {
+  /// Reads what the source has gained and reports whether a line written
+  /// since the watch opened matched.
+  Future<bool> check();
+
+  Future<void> close();
+}
+
 /// The start-time health evaluator. `process` and `port` are checked here;
-/// `log_match` joins through [evaluate]'s `logMatch` probe (task 7.3), until
-/// then a manifest with it is held to the `process` check.
+/// `log_match` through [evaluate]'s `logMatch` probe, a [LogMatchWatch]
+/// opened before the launch. Without a probe (no log hub) a manifest with it
+/// is held to the `process` check.
 class HealthEvaluator {
   HealthEvaluator({
     this.pollInterval = const Duration(milliseconds: 250),

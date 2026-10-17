@@ -85,6 +85,15 @@ class InstanceManager {
   /// daemon once the log hub exists.
   Future<List<String>> Function(String instanceId, int lines)? logTail;
 
+  /// Opens a `log_match` watch on [source] of an instance (set by the daemon
+  /// once the log hub exists).
+  Future<LogMatchWatch> Function(
+    String instanceId,
+    String source,
+    RegExp pattern,
+  )?
+  logMatchWatch;
+
   /// Removes an instance directory after delete; a seam so tests can stop the
   /// daemon in the middle of it.
   final Future<void> Function(String directory) removeDirectory;

@@ -8,6 +8,7 @@ import '../instances/instance_manager.dart';
 import '../instances/instance_store.dart';
 import '../logs/instance_log_sync.dart';
 import '../logs/log_hub.dart';
+import '../logs/log_match_watch.dart';
 import '../operations/operations.dart';
 import '../plugins/plugin_registry.dart';
 import '../process/process.dart';
@@ -241,6 +242,8 @@ class Daemon {
         }
       }
     });
+    manager.logMatchWatch = (id, source, pattern) =>
+        LogHubMatchWatch.open(logs, id, source, pattern);
     manager.logTail = (id, lines) async {
       await logs.pollNow(id);
       return [for (final e in logs.backlog(id, lines: lines).entries) e.text];
