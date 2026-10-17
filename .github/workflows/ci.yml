@@ -1,0 +1,58 @@
+name: CI
+
+# Actions minutes are limited (private repository, Windows bills double), so
+# CI runs on pull requests and on demand (`gh workflow run ci.yml --ref <ref>`),
+# not on every push. On-demand runs need this workflow on the default branch;
+# until then, push a commit to a `ci/<name>` branch to run it once.
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches: ['ci/**']
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the toolchain pinned in mise.toml
+        uses: jdx/mise-action@v5
+      - name: Cache pub packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.os == 'Windows' && format('{0}\Pub\Cache', env.LOCALAPPDATA) || '~/.pub-cache' }}
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+      - name: Resolve workspace dependencies
+        run: flutter pub get
+      - name: Format check
+        run: mise run format:check
+      - name: Analyze
+        run: mise run analyze
+      # Windows runs every test not tagged `valheim`; the `windows`-tagged
+      # process tests run outside the runner's job, which forbids breakaway
+      # (spike 1.3, docs/spikes/m1-process-model.md). Linux skips them: the
+      # Linux process host is M5.
+      - name: Test
+        run: mise run test -- --exclude-tags windows,valheim
+      - name: Test the Windows process host (outside the runner job)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh tool/ci/outside-job.ps1 -Run 'Set-Location apps/yagurad; mise exec -- dart test --tags windows --exclude-tags valheim'
+      - name: AOT bundle smoke (outside the runner job)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh tool/ci/outside-job.ps1 -Run 'mise exec -- dart run tool/bundle_smoke.dart'
+      - name: Validate OpenSpec
+        if: runner.os == 'Linux'
+        run: npx -y @fission-ai/openspec@1.14.1 validate --all --strict

@@ -1,0 +1,6 @@
+# One line ending in every checkout, Windows and Linux alike.
+* text=auto eol=lf
+
+# cmd.exe needs CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf

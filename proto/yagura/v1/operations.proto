@@ -1,0 +1,123 @@
+syntax = "proto3";
+
+package yagura.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service Operations {
+  rpc GetOperation(GetOperationRequest) returns (Operation);
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse);
+  // Ordered events; pass after_sequence to resume without gaps.
+  rpc WatchOperation(WatchOperationRequest) returns (stream OperationEvent);
+  rpc CancelOperation(CancelOperationRequest) returns (Operation);
+  // Answers a prompt raised by the operation (Steam Guard code...).
+  rpc RespondToPrompt(RespondToPromptRequest) returns (Operation);
+}
+
+enum OperationStatus {
+  OPERATION_STATUS_UNSPECIFIED = 0;
+  OPERATION_STATUS_QUEUED = 1;
+  OPERATION_STATUS_RUNNING = 2;
+  OPERATION_STATUS_WAITING_FOR_INPUT = 3;
+  OPERATION_STATUS_SUCCEEDED = 4;
+  OPERATION_STATUS_FAILED = 5;
+  OPERATION_STATUS_CANCELLED = 6;
+  OPERATION_STATUS_INTERRUPTED = 7;   // daemon stopped while queued or running
+}
+
+message Operation {
+  string id = 1;
+  string instance_id = 2;             // empty for host operations (AddSteamAccount)
+  string kind = 3;                    // install | update | validate | start | stop | restart | apply_config | apply_mods | add_steam_account | ...
+  OperationStatus status = 4;
+  uint32 queue_position = 5;
+  string current_step = 6;           // includes waiting_for_steamcmd
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp started_at = 8;
+  google.protobuf.Timestamp ended_at = 9;
+  string requested_by_device_id = 10;
+  string result_reason = 11;          // failure reason, or stopped_by: graceful|kill
+  string result_message = 12;
+  repeated string warnings = 13;      // e.g. external_edit:maxPlayers, key_conflict:CF.bikey, snapshot:skipped
+  Prompt pending_prompt = 14;
+  uint64 last_sequence = 15;
+}
+
+message Prompt {
+  string id = 1;
+  string kind = 2;                    // email | authenticator | mobile_approval (Steam Guard)
+  string message = 3;
+  string steam_account = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+message OperationEvent {
+  uint64 sequence = 1;
+  google.protobuf.Timestamp at = 2;
+  oneof event {
+    StepStarted step_started = 3;
+    Progress progress = 4;
+    LogLine log = 5;                  // SteamCMD / hook output (secrets masked)
+    Prompt prompt = 6;
+    PromptResolved prompt_resolved = 7;
+    Operation finished = 8;           // terminal; stream ends after it
+    EventsDropped events_dropped = 9; // first message when after_sequence is below the retained window
+    Operation snapshot = 10;          // follows events_dropped
+  }
+}
+
+message EventsDropped {
+  uint64 from_sequence = 1;
+  uint64 to_sequence = 2;
+}
+
+message StepStarted {
+  string step = 1;                    // steam_login | download | stage_mods | apply_config | hook:onPreStart | spawn | health ...
+}
+
+message Progress {
+  string step = 1;
+  double percent = 2;                 // 0-100, -1 if unknown
+  uint64 bytes_done = 3;
+  uint64 bytes_total = 4;
+}
+
+message LogLine {
+  string text = 1;
+}
+
+message PromptResolved {
+  string prompt_id = 1;
+  string by_device_id = 2;
+  string outcome = 3;                 // answered | expired | cancelled
+}
+
+message GetOperationRequest {
+  string operation_id = 1;
+}
+
+message ListOperationsRequest {
+  string instance_id = 1;
+  uint32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListOperationsResponse {
+  repeated Operation operations = 1;
+  string next_page_token = 2;
+}
+
+message WatchOperationRequest {
+  string operation_id = 1;
+  uint64 after_sequence = 2;
+}
+
+message CancelOperationRequest {
+  string operation_id = 1;
+}
+
+message RespondToPromptRequest {
+  string operation_id = 1;
+  string prompt_id = 2;
+  string value = 3;                   // code; empty for mobile approval
+}

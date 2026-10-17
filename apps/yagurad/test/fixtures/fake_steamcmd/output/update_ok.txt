@@ -1,0 +1,17 @@
+Redirecting stderr to '{dir}/../logs/stderr.txt'
+Steam Console Client (c) Valve Corporation - version 1730000000
+-- type 'quit' to exit --
+Loading Steam API...OK
+
+Connecting anonymously to Steam Public...OK
+Waiting for client config...OK
+Waiting for user info...OK
+ Update state (0x3) reconfiguring, progress: 0.00 (0 / 0)
+ Update state (0x61) downloading, progress: 0.00 (0 / 5000)
+ Update state (0x61) downloading, progress: 25.00 (1250 / 5000)
+ Update state (0x61) downloading, progress: 50.00 (2500 / 5000)
+ Update state (0x61) downloading, progress: 75.00 (3750 / 5000)
+ Update state (0x61) downloading, progress: 100.00 (5000 / 5000)
+ Update state (0x81) verifying update, progress: 100.00 (5000 / 5000)
+ Update state (0x101) committing, progress: 100.00 (5000 / 5000)
+Success! App '{app_id}' fully installed.

@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package yagura.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service System {
+  // Allowed for any authenticated device. Clients compare api_version major.
+  rpc GetInfo(GetInfoRequest) returns (DaemonInfo);
+  rpc GetHealth(GetHealthRequest) returns (DaemonHealth);
+  // Audit log, newest first.
+  rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
+}
+
+message GetInfoRequest {}
+
+message DaemonInfo {
+  string daemon_version = 1;   // semver of yagurad
+  string api_version = 2;      // highest served, e.g. "1.0"
+  repeated string api_versions = 9; // every major.minor served (v1 and v2 overlap during a migration)
+  string host_name = 3;
+  string os = 4;               // windows | linux
+  string os_version = 5;
+  string data_dir = 6;
+  google.protobuf.Timestamp started_at = 7;
+  bool dev_mode = 8;
+}
+
+message GetHealthRequest {}
+
+message DaemonHealth {
+  bool database_ok = 1;
+  bool secret_store_ok = 2;
+  bool firewall_ok = 3;
+  uint64 data_volume_free_bytes = 4;
+  uint32 running_instances = 5;
+  uint32 queued_operations = 6;
+  uint32 leaked_hook_workers = 7;
+  bool hooks_degraded = 8;
+  bool plugins_ok = 9;
+  // Components this daemon version does not have (for example "secret_store",
+  // "firewall" in M1); their *_ok fields are false and carry no meaning.
+  repeated string not_built = 10;
+}
+
+message ListAuditRequest {
+  uint32 page_size = 1;
+  string page_token = 2;
+}
+
+message AuditEntry {
+  google.protobuf.Timestamp at = 1;
+  string device_id = 2;        // empty for unauthenticated attempts
+  string remote_address = 3;
+  string method = 4;           // e.g. "yagura.v1.Instances/DeleteInstance"
+  string target = 5;           // instance id, device id...
+  string result = 6;           // ok | <reason>
+}
+
+message ListAuditResponse {
+  repeated AuditEntry entries = 1;
+  string next_page_token = 2;
+}

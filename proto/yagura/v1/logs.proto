@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package yagura.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service Logs {
+  rpc ListSources(ListSourcesRequest) returns (ListSourcesResponse);
+  // Up to 5000 lines, oldest first, paged across messages.
+  rpc Backlog(BacklogRequest) returns (stream LogBatch);
+  // Live lines; DROPPED markers when the subscriber lags > 1000 lines.
+  rpc Follow(FollowRequest) returns (stream LogBatch);
+}
+
+message LogSource {
+  string name = 1;
+  string kind = 2;                    // stdout | file
+  string status = 3;                  // following | waiting | error
+  string current_file = 4;
+  string encoding = 5;
+  string last_error = 6;
+}
+
+message ListSourcesRequest {
+  string instance_id = 1;
+}
+
+message ListSourcesResponse {
+  repeated LogSource sources = 1;
+}
+
+message BacklogRequest {
+  string instance_id = 1;
+  repeated string sources = 2;        // empty = all
+  uint32 lines = 3;                   // capped at 5000
+}
+
+message FollowRequest {
+  string instance_id = 1;
+  repeated string sources = 2;
+}
+
+message LogEntry {
+  string source = 1;
+  uint64 sequence = 2;
+  google.protobuf.Timestamp received_at = 3;
+  string text = 4;                    // decoded, secrets masked
+}
+
+message LogBatch {
+  repeated LogEntry entries = 1;
+  uint64 dropped = 2;                 // lines skipped before this batch
+  bool truncated = 3;                 // backlog request exceeded the cap
+  string source_event = 4;            // file_switched:<name> | waiting | error:<msg>
+  string source = 5;                  // the source a source_event is about; empty for lines
+}

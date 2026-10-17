@@ -1,0 +1,20 @@
+name: yagura_proto
+description: "Dart code generated from the yagura.v1 protocol in proto/."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.13.5
+
+resolution: workspace
+
+dependencies:
+  fixnum: ^1.1.1
+  grpc: ^5.2.0
+  protobuf: ^6.1.0
+
+dev_dependencies:
+  lints: ^6.1.0
+  # Pinned: tool/gen_proto.dart compiles the protoc plugin at this version.
+  protoc_plugin: 25.1.0
+  test: ^1.25.0

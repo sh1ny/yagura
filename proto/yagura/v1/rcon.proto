@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package yagura.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service Rcon {
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  // Bidirectional console. First client message must carry instance_id.
+  rpc Console(stream ConsoleInput) returns (stream ConsoleOutput);
+}
+
+message ExecuteRequest {
+  string instance_id = 1;
+  string command = 2;
+}
+
+message ExecuteResponse {
+  string response = 1;
+}
+
+message ConsoleInput {
+  string instance_id = 1;             // first message only
+  string command = 2;
+}
+
+message ConsoleOutput {
+  google.protobuf.Timestamp at = 1;
+  oneof event {
+    string server_message = 2;        // pushed by the server
+    CommandEcho command = 3;          // a command any subscriber sent
+    string response = 4;
+    string connection = 5;            // connected | disconnected | reconnected | auth_failed
+  }
+}
+
+message CommandEcho {
+  string device_name = 1;
+  string command = 2;
+}

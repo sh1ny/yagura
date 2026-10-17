@@ -1,0 +1,23 @@
+name: yagura_plugin
+description: "Plugin manifest model, validation and launch templates."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.13.5
+
+resolution: workspace
+
+executables:
+  yagura:
+
+dependencies:
+  args: ^2.7.0
+  crypto: ^3.0.7
+  json_schema: ^5.2.2
+  path: ^1.9.1
+  yaml: ^3.1.4
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.25.0

@@ -1,6 +1,6 @@
-# Garrison protocol (`garrison.v1`)
+# Yagura protocol (`yagura.v1`)
 
-How the desktop client and `garrisond` talk, and how that channel is secured. The service definitions are in [`proto/garrison/v1/`](../proto/garrison/v1/); the behaviour contract is in the `daemon-protocol` and `daemon-security` specs; the decisions are ADR 0006 (gRPC) and ADR 0007 (mTLS and pairing).
+How the desktop client and `yagurad` talk, and how that channel is secured. The service definitions are in [`proto/yagura/v1/`](../proto/yagura/v1/); the behaviour contract is in the `daemon-protocol` and `daemon-security` specs; the decisions are ADR 0006 (gRPC) and ADR 0007 (mTLS and pairing).
 
 ## Transport
 
@@ -10,34 +10,34 @@ How the desktop client and `garrisond` talk, and how that channel is secured. Th
 | Default port | 7443/tcp (configurable `--bind`) |
 | TLS | TLS 1.3 only (1.2 refused) |
 | Keys | ECDSA P-256 for CA, server and devices |
-| Server auth | Server cert signed by the daemon CA, SAN `garrisond-<daemon-id>`; client uses the pinned CA as its only root and sets the TLS authority to that name |
+| Server auth | Server cert signed by the daemon CA, SAN `yagurad-<daemon-id>`; client uses the pinned CA as its only root and sets the TLS authority to that name |
 | Client auth | Client cert signed by the daemon CA, required on every method except `Pairing.Info` / `Pairing.Enroll` |
-| Dev mode | `--dev`: plaintext, loopback bind only, server reflection on |
+| Dev mode | `yagurad run --dev [--bind host:port]`: plaintext, loopback bind only (default `127.0.0.1:7443`), server reflection on (`grpc.reflection.v1`, and `v1alpha` under its own name) |
 | Keepalive | HTTP/2 ping every 30 s from the client; daemon closes connections idle 10 min without streams |
 | Server keepalive policy | `minIntervalBetweenPingsWithoutData` 20 s, `maxBadPings` 2 (accepts the 30 s client ping); an idle stream must survive 10 minutes (test) |
-| Max message | 4 MiB request, 16 MiB response |
+| Max message | 4 MiB request, 16 MiB response; an oversized request is refused before it is read with `RESOURCE_EXHAUSTED` / `message_too_large` and changes nothing |
 
 ## Certificates
 
 | Certificate | Subject | Validity | Key usage | Where the key lives |
 |---|---|---|---|---|
-| Daemon CA | `CN=Garrison CA <host>`; `basicConstraints CA:true, pathlen:0` | 20 years | keyCertSign, cRLSign | Daemon secret store (DPAPI), never exported |
-| Server | `CN=garrisond-<daemon-id>`; SAN: `garrisond-<daemon-id>`, `localhost` | 2 years, renewed at startup when < 30 days left | digitalSignature; EKU serverAuth | Daemon secret store |
+| Daemon CA | `CN=Yagura CA <host>`; `basicConstraints CA:true, pathlen:0` | 20 years | keyCertSign, cRLSign | Daemon secret store (DPAPI), never exported |
+| Server | `CN=yagurad-<daemon-id>`; SAN: `yagurad-<daemon-id>`, `localhost` | 2 years, renewed at startup when < 30 days left | digitalSignature; EKU serverAuth | Daemon secret store |
 | Device | `CN=<device name>`, serial = random 128-bit | 1 year from enroll, `notBefore` 1 h in the past | digitalSignature; EKU clientAuth | Client OS keychain (generated there; only the CSR leaves) |
 
 Device renewal: within 30 days of expiry the client calls `Pairing.RenewCertificate` over its existing mTLS connection with a CSR for a new key; the daemon signs it and adds the new certificate's SHA-256 to the same device; the old certificate keeps working until it expires, and revoking the device rejects both. An expired device must pair again.
 
-Because the client connects by whatever address the admin typed, it never verifies the network address: it uses the pinned CA certificate as its only trusted root and sets the TLS authority (SNI and name check) to `garrisond-<daemon-id>`, which is the server certificate's SAN. The CA certificate itself is obtained from `Pairing.Info` at pairing and checked against the fingerprint in the pairing string. Device identity on the daemon side is the SHA-256 of the client certificate DER (`dart:io`'s `X509Certificate` exposes the DER, not the serial).
+Because the client connects by whatever address the admin typed, it never verifies the network address: it uses the pinned CA certificate as its only trusted root and sets the TLS authority (SNI and name check) to `yagurad-<daemon-id>`, which is the server certificate's SAN. The CA certificate itself is obtained from `Pairing.Info` at pairing and checked against the fingerprint in the pairing string. Device identity on the daemon side is the SHA-256 of the client certificate DER (`dart:io`'s `X509Certificate` exposes the DER, not the serial).
 
 ## Pairing
 
 ```
-garrison://<host>:<port>?code=<CODE>&ca=sha256:<64 hex>&name=<daemon name>
+yagura://<host>:<port>?code=<CODE>&ca=sha256:<64 hex>&name=<daemon name>
 ```
 
 - `CODE`: 8 characters from `23456789ABCDEFGHJKMNPQRSTUVWXYZ` shown as `XXXX-XXXX` (~40 bits), single use, 10 minutes, at most one active code per daemon (issuing a new one invalidates the old).
 - Throttle: 5 wrong attempts from one address in 10 minutes block that address (`pairing_throttled`); 50 wrong attempts in total in 10 minutes invalidate the active code.
-- The pairing string travels out of band (the admin copies it from `garrisond pair`, which talks to the running service over the local admin pipe, ACL'd to SYSTEM and Administrators); that is what makes the CA fingerprint trustworthy.
+- The pairing string travels out of band (the admin copies it from `yagurad pair`, which talks to the running service over the local admin pipe, ACL'd to SYSTEM and Administrators); that is what makes the CA fingerprint trustworthy.
 
 ```mermaid
 sequenceDiagram
@@ -47,7 +47,7 @@ sequenceDiagram
   C->>D: TLS (no client cert, no verification yet) Pairing.Info
   D-->>C: CA cert DER, tls_authority
   C->>C: SHA-256(CA) == pin? (fail: fingerprint_mismatch, abort)
-  C->>D: new TLS connection, CA as sole root, authority garrisond-<id>
+  C->>D: new TLS connection, CA as sole root, authority yagurad-<id>
   C->>C: generate P-256 key in keychain, build CSR (CN=device name)
   C->>D: Pairing.Enroll(code, device_name, csr)
   D->>D: code valid & unused & not throttled? (fail: pairing_code_invalid / RESOURCE_EXHAUSTED)
@@ -75,7 +75,7 @@ Revocation closes the revoked device's open streams within 5 s (the daemon track
 | Pattern | Methods |
 |---|---|
 | Unary | most CRUD (`CreateInstance`, `UpdateSettings`, `SetSecret`, `SetMods`, `ListDevices`...) |
-| Unary returning an `Operation` | `Install`, `Update`, `Validate`, `Start`, `Stop`, `Restart`, `ApplyConfig`, `ApplyMods`, `CheckModUpdates`, `UpdateMods`, `Steam.AddAccount`, `Steam.ReauthAccount` |
+| Unary returning an `Operation` | `DeleteInstance`, `RestoreSnapshot`, `Install`, `Update`, `Validate`, `Start`, `Stop`, `Restart`, `ApplyConfig`, `ApplyMods`, `CheckModUpdates`, `UpdateMods`, `Steam.AddAccount`, `Steam.ReauthAccount` |
 | Server stream | `WatchInstances` (snapshot + slim deltas with `settings_omitted`; 1,000 events or 8 MiB per subscriber), `WatchOperation` (resumable by `after_sequence`; `events_dropped` + snapshot when the gap is no longer retained), `Logs.Backlog`, `Logs.Follow` |
 | Bidirectional | `Rcon.Console` |
 
@@ -99,22 +99,30 @@ Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violation
 
 | Area | Reasons |
 |---|---|
-| General | `internal_error`, `invalid_json`, `schema_version_mismatch`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `prompt_resolved` |
+| General | `not_implemented`, `internal_error`, `instance_not_found`, `operation_not_found`, `invalid_json`, `schema_version_mismatch`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `message_too_large`, `prompt_resolved` |
 | Auth | `pairing_code_invalid`, `pairing_throttled`, `device_revoked`, `last_device`, `unauthenticated`, `access_denied` (admin channel) |
-| Instances | `not_installed`, `invalid_state`, `instance_running`, `instance_not_running`, `port_conflict`, `unsupported_platform`, `crash_loop`, `lost_while_daemon_down`, `update_interrupted`, `install_interrupted`, `settings_invalid`, `plugin_missing`, `instance_directory_missing`, `launch_failed`, `launch_logon_failed`, `directory_not_allowed`, `run_record_rejected`, `instance_file_stale` (warning), `autostarted` (notice) |
-| Plugins | `unsupported_manifest_version`, `file_too_large`, `hook_syntax_error`, `mods_not_supported`, `rcon_not_supported` |
-| Hooks | `hook_timeout`, `hook_out_of_memory`, `hook_result_invalid`, `hook_result_too_large`, `hook_error`, `sandbox_violation`, `host_limit_exceeded`, `hook_runtime_degraded`, `not_supported` |
+| Instances | `confirmation_mismatch`, `not_installed`, `invalid_state`, `instance_running`, `instance_not_running`, `port_conflict`, `unsupported_platform`, `crash_loop`, `lost_while_daemon_down`, `update_interrupted`, `install_interrupted`, `restore_interrupted`, `settings_invalid`, `plugin_missing`, `instance_directory_missing`, `launch_failed`, `launch_logon_failed`, `directory_not_allowed`, `run_record_rejected`, `instance_file_stale` (warning), `autostarted` (notice), `stopped_by`, `pre_delete_snapshot`, `restored` (result reasons of a succeeded operation, followed by `:` and a detail: how the stop ended, or the snapshot id) |
+| Plugins | `invalid_manifest`, `unsupported_manifest_version`, `file_too_large`, `hook_syntax_error`, `unsupported_in_this_version`, `mods_not_supported`, `rcon_not_supported` |
+| Hooks | `hook_timeout`, `hook_out_of_memory`, `hook_result_invalid`, `hook_result_too_large`, `hook_error`, `sandbox_violation`, `host_limit_exceeded`, `hook_runtime_degraded`, `not_supported`, `unsupported_in_this_version` (file-edit format) |
 | Config | `binding_file_missing`, `config_parse_error`, `file_locked`, `external_edit` (event/warning; values of secret-bound keys masked) |
-| Steam | `steamcmd_unavailable`, `steam_account_required`, `steam_no_subscription`, `steam_unknown_error`, `steam_guard_invalid`, `steam_guard_timeout`, `steam_reauth_required`, `steam_stalled`, `gslt_required`, `insufficient_disk`, `workshop_item_unavailable` |
+| Steam | `steamcmd_unavailable`, `steam_account_required`, `disk_check_skipped` (warning), `steam_no_subscription`, `steam_unknown_error`, `steam_guard_invalid`, `steam_guard_timeout`, `steam_reauth_required`, `steam_stalled`, `gslt_required`, `insufficient_disk`, `workshop_item_unavailable` |
 | Mods | `stage_link_failed`, `key_conflict` (warning) |
-| Snapshots | `insufficient_disk` (snapshot) |
+| Snapshots | `insufficient_disk` (snapshot), `snapshot_not_found` |
 | RCON | `rcon_auth_failed`, `rcon_unavailable` (stop fell back to kill), `timeout` |
 | Firewall | `firewall_unavailable` (warning) |
-| Host | `data_dir_locked`, `data_dir_unwritable`, `migration_failed`, `secret_store_unavailable`, `dev_mode_requires_loopback`, `elevation_required`, `systemd_required` (CLI/startup exit reasons) |
+| Host | `data_dir_locked`, `data_dir_unwritable`, `migration_failed`, `secret_store_unavailable`, `dev_mode_requires_loopback`, `secure_mode_unavailable`, `elevation_required`, `systemd_required` (CLI/startup exit reasons) |
 
 ## Versioning
 
-- Package `garrison.v1`; `System.GetInfo.api_versions` lists every `major.minor` served; the client uses the highest major it shares.
+- Package `yagura.v1`; `System.GetInfo.api_versions` lists every `major.minor` served; the client uses the highest major it shares.
 - Minor bumps add fields, methods or enum values only. Clients ignore unknown enum values (treated as `*_UNSPECIFIED`) and hide features above the daemon's minor.
-- A breaking change creates `garrison.v2`; the daemon serves v1 and v2 side by side for at least one minor release.
+- A breaking change creates `yagura.v2`; the daemon serves v1 and v2 side by side for at least one minor release.
 - Field numbers are never reused; removed fields are `reserved`.
+
+## Methods by daemon version
+
+The whole `yagura.v1` contract is defined up front; each daemon version implements part of it. A method that a version does not implement fails `UNIMPLEMENTED` with reason `not_implemented`; services a version does not build are registered as stubs, so their methods fail the same way with an `ErrorDetail`. `GetHealth.not_built` names the components a version does not have.
+
+| Version | Services served | Methods not implemented |
+|---|---|---|
+| M1 (walking skeleton, dev mode only) | `System`, `Plugins`, `Instances`, `Operations`, `Logs` (`Pairing`, `Steam`, `Mods`, `Rcon`, `Firewall` as stubs) | Every method of the stub services; `System.ListAudit`; `Instances.ImportInstance`, `ExportInstance`, `ApplyConfig`; `Operations.RespondToPrompt`. `Instances.SetSecret` and `DeleteSecret` fail `FAILED_PRECONDITION` / `secret_store_unavailable`. `revision` is always 0 and `expected_revision` is not checked. `not_built`: `secret_store`, `firewall`. |

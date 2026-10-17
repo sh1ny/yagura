@@ -1,0 +1,82 @@
+manifest_version: 1
+id: valheim
+name: Valheim Dedicated Server
+version: 0.1.0
+description: Valheim dedicated server through anonymous SteamCMD.
+
+# Spike 1.3 (docs/spikes/m1-process-model.md): build 25909431 installed to
+# 2,112,080,121 bytes. The server finds its Steam app id in steam_appid.txt
+# in the install directory, which is its working directory.
+steam:
+  app_id: 896660
+  login: anonymous
+  size_hint_bytes: 2200000000
+
+executable:
+  windows: valheim_server.exe
+  linux: valheim_server.x86_64
+
+ports:
+  - name: game
+    default: 2456
+    protocol: udp
+    purpose: game
+  - name: query
+    derive: { from: game, offset: 1 }
+    protocol: udp
+    purpose: query
+
+# No password setting yet: it needs the secret store (M2). With `-public 0`
+# the server runs without one (spike 1.3).
+settings:
+  serverName:
+    type: string
+    label: Server name
+    default: Yagura Valheim
+    min: 1
+    max: 64
+    group: General
+  worldName:
+    type: string
+    label: World name
+    default: Dedicated
+    pattern: "^[A-Za-z0-9_]+$"
+    group: General
+
+launch:
+  args:
+    - -nographics
+    - -batchmode
+    - -name
+    - "{{settings.serverName}}"
+    - -port
+    - "{{ports.game}}"
+    - -world
+    - "{{settings.worldName}}"
+    - -savedir
+    - "{{instance}}/save"
+    - -logFile
+    - "{{instance}}/logs/server.log"
+    - -public
+    - "0"
+
+stop:
+  strategy: signal
+  grace_seconds: 30
+
+health:
+  type: log_match
+  log_match: "Game server connected"
+  source: server
+  start_timeout_seconds: 180
+
+logs:
+  - name: server
+    path: "logs/server.log"
+    encoding: utf-8
+    rotation: fixed
+
+# The whole save directory: each world save writes a new generation of
+# worlds_local/<world>/_main.<N>.* and removes the previous one.
+data_paths:
+  - "save/"

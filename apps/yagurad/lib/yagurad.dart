@@ -1,0 +1,2 @@
+/// Yagura daemon library.
+library;

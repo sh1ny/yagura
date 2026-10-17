@@ -1,0 +1,245 @@
+# Plugin hooks (`hooks.js`)
+
+A plugin may ship a `hooks.js` next to its `plugin.yaml` ([manifest](manifest.md)). It holds small synchronous JavaScript functions the daemon calls at fixed points of an instance's life, for game-specific steps the manifest cannot express. A hook **decides**; the daemon **does**: a hook returns data (extra launch arguments, environment variables, file edits) and the daemon applies it. Hooks run in a sandbox (quickjs-ng, ADR 0003) that cannot stall the daemon or reach outside the instance.
+
+## How the examples in this document are checked
+
+A test loads this file and runs the examples against a fixture instance. A fenced block tagged ```` ```js hook=<name> ```` is a complete `hooks.js` and is run as that hook. The ```` ```json context ```` block is the context it receives, ```` ```json instance ```` lists the files the fixture instance holds (path to content), and the ```` ```json result ```` block after an example is the exact result the hook must return. Blocks of any other kind are not checked.
+
+The fixture instance and context used by every example:
+
+```json context
+{
+  "instanceId": "inst-1",
+  "pluginId": "dayz",
+  "pluginVersion": "1.0.0",
+  "os": "windows",
+  "paths": { "config": "cfg", "keys": "keys" },
+  "settings": {
+    "maxPlayers": 60,
+    "rconPassword": { "secret": true, "set": false }
+  },
+  "ports": { "game": 2302 }
+}
+```
+
+```json instance
+{
+  "cfg/cfggameplay.json": "{\n  \"version\": 120,\n  \"GeneralData\": {\n    \"disableBaseDamage\": false,\n    \"restartPending\": true\n  }\n}\n",
+  "keys/a.bikey": "aaaa",
+  "keys/b.bikey": "bbbbbbbb"
+}
+```
+
+## Writing `hooks.js`
+
+`hooks.js` is a classic script (not an ES module), at most 1 MiB. A hook is found, in this order, as `exports.<name>`, `module.exports.<name>` or a top-level `function <name>`:
+
+```js
+exports.onPreStart = function (ctx) {
+  return { args: ['-freezecheck'] };
+};
+```
+
+- A hook that is not exported is skipped without a warning.
+- Hooks are synchronous. A hook that returns a promise fails with `hook_error`.
+- A hook receives one argument, the context (below), and returns a JSON object, or nothing (an empty result).
+- The script runs in a fresh runtime for every call: nothing survives between calls, so no state needs cleaning up.
+
+## Hook points
+
+| Hook | Called | Result keys |
+|---|---|---|
+| `onPostInstall` | after the daemon installed the instance's game files | `files` |
+| `onPostUpdate` | after the daemon updated the game files | `files` |
+| `onPreStart` | before the server process starts | `args`, `env`, `files` |
+| `onPostStop` | after the server process stopped | `files` |
+
+## Context
+
+Every hook receives the same JSON object:
+
+| Key | Content |
+|---|---|
+| `instanceId`, `pluginId`, `pluginVersion` | identity of the instance and the plugin |
+| `os` | `"windows"` or `"linux"` |
+| `paths` | named paths, relative to the instance root, without `..` |
+| `settings` | the instance's settings by key; a `secret` setting appears only as `{"secret": true, "set": <bool>}`, never its value |
+| `ports` | port numbers by name |
+
+The serialised context is limited to 1 MiB.
+
+## Result
+
+The result is validated against the hook's schema; **unknown keys are rejected** with `hook_result_invalid`, naming the hook and the path of the offending value (for example `args`, `args[0]`, `env.NAME`, `files[0].format`).
+
+| Key | Type | Meaning |
+|---|---|---|
+| `args` | array of strings | `onPreStart` only. Appended after the manifest's launch arguments. |
+| `env` | object of strings | `onPreStart` only. Added to the server's environment. |
+| `files` | array of file edits | Edits the daemon applies, see below. |
+
+A **file edit** is `{"path": string, "format": "json", "patch": object}`. The path is relative to the instance root. The patch is an [RFC 7386](https://www.rfc-editor.org/rfc/rfc7386) merge patch: objects merge recursively, `null` removes a key, anything else (arrays included) replaces the value. The daemon keeps the file's key order and formatting, appends new keys in the layout of their neighbours, and creates the file (and its directories) when it does not exist.
+
+The daemon applies all edits of one result or none: it resolves every path and computes every new content first, writes each file to a temporary file in its directory and moves it over the target with an atomic rename, and restores the files already replaced if a later step fails. An edit whose path resolves outside the instance root (including through a link or junction) fails with `sandbox_violation`. In this version `json` is the only format; any other fails with `unsupported_in_this_version` naming the path and format, and no file changes.
+
+## Host API
+
+Hooks reach the system only through the global `yagura` object. There is no network, process, environment-variable, timer or `console` access, and hooks cannot write files.
+
+| Call | Returns |
+|---|---|
+| `yagura.log(message)`, `yagura.log(level, message)` | nothing. Level is `debug`, `info` (default), `warn` or `error`. Recorded in the operation history; at most 500 entries of 4096 characters. |
+| `yagura.fs.readText(path)` | the file's text (UTF-8). At most 16 MiB. |
+| `yagura.fs.list(path)` | array of `{name, size, isDirectory}`. At most 10,000 entries. |
+| `yagura.formats.json.parse(text)` | the parsed value; throws `invalid_json` on bad input. At most 16 MiB. |
+| `yagura.formats.json.serialize(value, indent?)` | JSON text; `indent` is 0 to 10 spaces. At most 16 MiB. |
+
+Paths are relative to the instance root. Each path is resolved, following links, to its final location, and a path outside the instance root throws `sandbox_violation` inside the hook; nothing outside is read. Absolute paths are accepted only when they point inside the root.
+
+A failing host call throws a JavaScript `Error` whose `code` property is the reason:
+
+| `code` | When |
+|---|---|
+| `sandbox_violation` | the path resolves outside the instance root |
+| `host_limit_exceeded` | a read or parse call over 16 MiB, or a listing over 10,000 entries; the message names the limit |
+| `not_supported` | any other member of `yagura.fs`, such as `writeText`: `yagura.fs` has no write functions, return file edits instead |
+| `unsupported_in_this_version` | `yagura.formats.<format>` for any format but `json` |
+| `invalid_json` | `yagura.formats.json.parse` on invalid JSON |
+| `hook_error` | a call with wrong arguments |
+| `ENOENT`, `EISDIR`, `ENOTDIR` | the file or directory does not exist, or is of the wrong kind |
+
+An error a hook does not catch fails the operation, so a hook can let `e.code` surface or handle it:
+
+```js
+try {
+  text = yagura.fs.readText('cfg/optional.json');
+} catch (e) {
+  if (e.code !== 'ENOENT') throw e;
+}
+```
+
+## Limits and failures
+
+| Limit | Value | Failure |
+|---|---|---|
+| Deadline | 5 s by default, or the manifest's `hooks.timeout_seconds` up to 60 s | `hook_timeout` |
+| Heap | 64 MiB | `hook_out_of_memory` |
+| Result | 1 MiB serialised | `hook_result_too_large` |
+| Script stack | 512 KiB | `hook_error` (`stack overflow`) |
+| Concurrent hook workers | 4 per daemon | the call waits; waiting does not count against its deadline |
+
+The deadline stops the script inside the engine (a script cannot catch it) and frees its runtime. If the worker still has not stopped 2 s after the deadline, the call fails with `hook_timeout` anyway and the worker is asked to exit; its slot stays reserved until it has. After 2 workers have failed to exit within 5 s of that point, every hook call fails with `hook_runtime_degraded` until the daemon restarts.
+
+| Failure | Reason | Carries |
+|---|---|---|
+| `hooks.js` does not parse | `hook_syntax_error` | message and `hooks.js:<line>` |
+| a hook throws | `hook_error` | the error's message and its stack, with `hooks.js:<line>:<column>` locations |
+| result has the wrong shape | `hook_result_invalid` | hook name and path |
+| edit in another format | `unsupported_in_this_version` | path and format |
+| edit outside the instance | `sandbox_violation` | path |
+
+## Examples
+
+One example per hook point. Each is run by the test described above.
+
+### `onPostInstall`
+
+Count the server's key files and make sure the damage setting starts enabled.
+
+```js hook=onPostInstall
+exports.onPostInstall = function (ctx) {
+  const keys = yagura.fs.list(ctx.paths.keys).filter(function (e) {
+    return !e.isDirectory;
+  });
+  yagura.log('info', 'found ' + keys.length + ' key files');
+  return {
+    files: [{
+      path: ctx.paths.config + '/cfggameplay.json',
+      format: 'json',
+      patch: { GeneralData: { disableBaseDamage: false } }
+    }]
+  };
+};
+```
+
+```json result
+{
+  "files": [
+    {
+      "path": "cfg/cfggameplay.json",
+      "format": "json",
+      "patch": { "GeneralData": { "disableBaseDamage": false } }
+    }
+  ]
+}
+```
+
+### `onPostUpdate`
+
+Raise the gameplay file's version after an update, only when it is older.
+
+```js hook=onPostUpdate
+exports.onPostUpdate = function (ctx) {
+  const path = ctx.paths.config + '/cfggameplay.json';
+  const current = yagura.formats.json.parse(yagura.fs.readText(path));
+  if (current.version >= 122) return {};
+  return { files: [{ path: path, format: 'json', patch: { version: 122 } }] };
+};
+```
+
+```json result
+{
+  "files": [
+    { "path": "cfg/cfggameplay.json", "format": "json", "patch": { "version": 122 } }
+  ]
+}
+```
+
+### `onPreStart`
+
+Add launch arguments and an environment variable from the settings.
+
+```js hook=onPreStart
+exports.onPreStart = function (ctx) {
+  return {
+    args: ['-freezecheck', '-maxPlayers=' + ctx.settings.maxPlayers],
+    env: { SteamAppId: '221100' }
+  };
+};
+```
+
+```json result
+{
+  "args": ["-freezecheck", "-maxPlayers=60"],
+  "env": { "SteamAppId": "221100" }
+}
+```
+
+### `onPostStop`
+
+Clear a flag the server left in its gameplay file (`null` removes a key).
+
+```js hook=onPostStop
+exports.onPostStop = function (ctx) {
+  return {
+    files: [{
+      path: ctx.paths.config + '/cfggameplay.json',
+      format: 'json',
+      patch: { GeneralData: { restartPending: null } }
+    }]
+  };
+};
+```
+
+```json result
+{
+  "files": [
+    {
+      "path": "cfg/cfggameplay.json",
+      "format": "json",
+      "patch": { "GeneralData": { "restartPending": null } }
+    }
+  ]
+}
+```

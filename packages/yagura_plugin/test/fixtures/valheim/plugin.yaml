@@ -1,0 +1,79 @@
+manifest_version: 1
+id: valheim
+name: Valheim Dedicated Server
+version: 0.1.0
+description: Valheim dedicated server through anonymous SteamCMD.
+
+steam:
+  app_id: 896660
+  login: anonymous
+  size_hint_bytes: 1500000000
+
+executable:
+  windows: valheim_server.exe
+  linux: valheim_server.x86_64
+
+ports:
+  - name: game
+    default: 2456
+    protocol: udp
+    purpose: game
+  - name: query
+    derive: { from: game, offset: 1 }
+    protocol: udp
+    purpose: query
+
+settings:
+  serverName:
+    type: string
+    label: Server name
+    default: Yagura Valheim
+    min: 1
+    max: 64
+    group: General
+  worldName:
+    type: string
+    label: World name
+    default: Dedicated
+    pattern: "^[A-Za-z0-9_]+$"
+    group: General
+  password:
+    type: secret
+    label: Server password
+    group: General
+
+launch:
+  args:
+    - -nographics
+    - -batchmode
+    - -name
+    - "{{settings.serverName}}"
+    - -port
+    - "{{ports.game}}"
+    - -world
+    - "{{settings.worldName}}"
+    - -savedir
+    - "{{instance}}/save"
+    - -logFile
+    - "{{instance}}/logs/server.log"
+    - -public
+    - "0"
+
+stop:
+  strategy: signal
+  grace_seconds: 30
+
+health:
+  type: log_match
+  log_match: "Game server connected"
+  source: server
+  start_timeout_seconds: 180
+
+logs:
+  - name: server
+    path: "logs/server.log"
+    encoding: utf-8
+    rotation: fixed
+
+data_paths:
+  - "save/"
