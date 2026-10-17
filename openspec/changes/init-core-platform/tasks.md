@@ -161,7 +161,7 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | desktop-client → Logs and console views | Pause longer than the buffer | apps/yagura_desktop/test/logs_and_console_views_test.dart | pause_longer_than_the_buffer | 9 (M1) | green |
 | desktop-client → Connection to one daemon | Daemon restarted | apps/yagura_desktop/test/connection_to_one_daemon_test.dart | daemon_restarted | 9 (M1) | green |
 | desktop-client → Instance actions | Start from the client | apps/yagura_desktop/test/instance_actions_test.dart | start_from_the_client | 9 (M1) | green |
-| instance-lifecycle → Graceful stop per plugin strategy | Valheim saves on a signal stop | apps/yagurad/test/instances/graceful_stop_per_plugin_strategy_test.dart | valheim_saves_on_a_signal_stop | 9 (M1, `valheim`) | red |
+| instance-lifecycle → Graceful stop per plugin strategy | Valheim saves on a signal stop | apps/yagurad/test/instances/graceful_stop_per_plugin_strategy_test.dart | valheim_saves_on_a_signal_stop | 9 (M1, `valheim`) | green |
 
 ## 1. [M1] Workspace and first spikes
 
@@ -239,7 +239,7 @@ Covers: desktop-client → Forms rendered from plugin schemas; desktop-client �
 - [x] 9.4 Add an AOT bundle smoke job: build `yagurad` with `dart build cli`, copy the bundle outside the repository on the Windows CI runner, and from there evaluate a test hook (the quickjs-ng native asset loads from the bundle) and start, signal and re-attach `fake_server` through the bundle's own `launch`, `relay` and `signal` modes. Verify: the smoke job is green.
 - [x] 9.5 Run the tests on CI: Windows runs every test not tagged `valheim`; Linux runs every test not tagged `windows` or `valheim` (the Linux process host is M5); plus `openspec validate --all --strict`. Verify: all pass and every test-map row not tagged `valheim` is green.
 - [x] 9.6 Write back into `openspec/architecture.md` the refinements this design owns: the error-reason exits from D17, the Resource Bounds rows marked *, the startup fatal/degraded split from D9, and the run records, stop records and timed-out hook slots from D2 and D4, `DeleteInstance` as an operation allowed from `stopped`, `not_installed` and `error` (D25) in the state diagram, and the `restore_interrupted` reason. Verify: the architecture state machine section lists the D17 exits and the bounds table lists the 8 MiB `WatchInstances` subscriber bound.
-- [ ] 9.7 On a Windows machine with Valheim installed, run the `valheim`-tagged rows and flip them, then run the M1 exit criteria from `openspec/roadmap.md` and record the results (user-verified ones by the user) in `docs/milestones/m1.md`. Verify: the `valheim` rows are green and every M1 criterion has a recorded pass.
+- [x] 9.7 On a Windows machine with Valheim installed, run the `valheim`-tagged rows and flip them, then run the M1 exit criteria from `openspec/roadmap.md` and record the results (user-verified ones by the user) in `docs/milestones/m1.md`. Verify: the `valheim` rows are green and every M1 criterion has a recorded pass.
 
 ## Workflow follow-up
 

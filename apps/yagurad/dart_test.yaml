@@ -4,6 +4,8 @@ tags:
   # The first such test also builds yagurad and fake_server (cold on CI).
   windows:
     timeout: 4x
-  # Downloads and runs the real Valheim dedicated server through SteamCMD; kept
-  # out of the default CI run.
+  # Runs the real Valheim dedicated server (minutes; ~2.1 GB through the real
+  # SteamCMD unless YAGURA_VALHEIM_SERVER names an install). Skipped by
+  # default; run it with `dart test --run-skipped -t valheim`.
   valheim:
+    skip: "runs the real Valheim server; use --run-skipped -t valheim"
