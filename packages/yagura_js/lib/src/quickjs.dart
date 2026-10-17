@@ -74,16 +74,32 @@ class QuickJsRuntime {
     this.maxStackBytes = defaultMaxStackBytes,
   }) {
     _rt = jsNewRuntime();
+    if (_rt == nullptr) throw _outOfMemory();
     jsSetMemoryLimit(_rt, memoryLimitBytes);
     jsSetMaxStackSize(_rt, maxStackBytes);
     _interruptCallable = NativeCallable<JSInterruptHandlerNative>.isolateLocal(
       _onInterrupt,
       exceptionalReturn: 1,
     );
-    jsSetInterruptHandler(_rt, _interruptCallable.nativeFunction, nullptr);
-    _ctx = jsNewContext(_rt);
-    _hostCallable = NativeCallable<JSCFunctionNative>.isolateLocal(_onHostCall);
-    _installBridge();
+    var contextCreated = false;
+    var hostCreated = false;
+    try {
+      jsSetInterruptHandler(_rt, _interruptCallable.nativeFunction, nullptr);
+      _ctx = jsNewContext(_rt);
+      if (_ctx == nullptr) throw _outOfMemory();
+      contextCreated = true;
+      _hostCallable = NativeCallable<JSCFunctionNative>.isolateLocal(
+        _onHostCall,
+      );
+      hostCreated = true;
+      _installBridge();
+    } on Object {
+      if (contextCreated) jsFreeContext(_ctx);
+      jsFreeRuntime(_rt);
+      _interruptCallable.close();
+      if (hostCreated) _hostCallable.close();
+      rethrow;
+    }
   }
 
   final int memoryLimitBytes;
@@ -149,6 +165,7 @@ class QuickJsRuntime {
     final argv = args.isEmpty ? nullptr : calloc<JSValue>(args.length);
     var parsed = 0;
     try {
+      if (fn.tag == jsTagException) throw _takeException();
       if (!jsIsFunction(_ctx, fn)) {
         throw JsException(
           name: 'TypeError',
@@ -236,6 +253,7 @@ class QuickJsRuntime {
         jsCFuncGeneric,
         0,
       );
+      if (fn.tag == jsTagException) throw _takeException();
       jsSetPropertyStr(_ctx, global, name.cast(), fn);
     } finally {
       jsFreeValue(_ctx, global);
@@ -313,12 +331,49 @@ class QuickJsRuntime {
 
   bool _isString(JSValue v) => v.tag == jsTagString || v.tag == jsTagStringRope;
 
-  /// Copies a JS string (or the string form of any value) into Dart.
-  String _toDartString(JSValue value) {
+  JsException _outOfMemory() =>
+      JsException(name: 'InternalError', message: 'out of memory');
+
+  /// Copies a JS string (or the string form of any value) into Dart. Throws
+  /// when the engine cannot convert it, typically because the heap is full.
+  String _toDartString(JSValue value) =>
+      _tryDartString(value) ?? (throw _takeNativeFailure());
+
+  /// Clears the exception left by a failed conversion and describes it
+  /// without converting further strings, which could fail the same way.
+  JsException _takeNativeFailure() {
+    final exception = jsGetException(_ctx);
+    try {
+      if (_interrupted) return JsInterruptedException();
+      String? text(String property) {
+        if (exception.tag != jsTagObject) return null;
+        final value = _getProperty(exception, property);
+        try {
+          return _isString(value) ? _tryDartString(value) : null;
+        } finally {
+          jsFreeValue(_ctx, value);
+        }
+      }
+
+      final failure = JsException(
+        name: text('name') ?? 'InternalError',
+        message: text('message') ?? 'out of memory',
+      );
+      // Failed reads above leave their own exceptions pending.
+      jsFreeValue(_ctx, jsGetException(_ctx));
+      return failure;
+    } finally {
+      jsFreeValue(_ctx, exception);
+    }
+  }
+
+  /// Like [_toDartString], but `null` when the conversion failed; the engine's
+  /// exception is left pending.
+  String? _tryDartString(JSValue value) {
     final length = calloc<Size>();
     try {
       final chars = jsToCStringLen2(_ctx, length, value, false);
-      if (chars == nullptr) return '';
+      if (chars == nullptr) return null;
       try {
         return utf8.decode(
           chars.cast<Uint8>().asTypedList(length.value),

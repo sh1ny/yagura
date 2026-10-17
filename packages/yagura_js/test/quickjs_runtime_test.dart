@@ -32,6 +32,21 @@ void main() {
       );
     });
 
+    test('a throwing global accessor surfaces its own exception', () {
+      js.eval(
+        "Object.defineProperty(globalThis, 'boom', "
+        "{get() { throw new RangeError('accessor failed'); }})",
+      );
+      expect(
+        () => js.callFunction('boom'),
+        throwsA(
+          isA<JsException>()
+              .having((e) => e.name, 'name', 'RangeError')
+              .having((e) => e.message, 'message', 'accessor failed'),
+        ),
+      );
+    });
+
     test('calling a missing function fails', () {
       expect(() => js.callFunction('nope'), throwsA(isA<JsException>()));
     });
@@ -94,6 +109,38 @@ void main() {
           ),
         ),
       );
+    });
+  });
+
+  group('native allocation failures', () {
+    test('a memory limit too small for a context is a catchable error', () {
+      expect(
+        () => QuickJsRuntime(memoryLimitBytes: 1),
+        throwsA(
+          isA<JsException>().having(
+            (e) => e.isOutOfMemory,
+            'isOutOfMemory',
+            true,
+          ),
+        ),
+      );
+    });
+
+    test('a failed string conversion is out of memory, not empty text', () {
+      final small = QuickJsRuntime(memoryLimitBytes: 16 * 1024 * 1024);
+      addTearDown(small.dispose);
+      // The 5.5 MiB Latin-1 string fits the heap; its UTF-8 copy does not.
+      expect(
+        () => small.eval("throw '\u00e9'.repeat(5.5 * 1024 * 1024)"),
+        throwsA(
+          isA<JsException>().having(
+            (e) => e.isOutOfMemory,
+            'isOutOfMemory',
+            true,
+          ),
+        ),
+      );
+      expect(small.eval('1 + 2'), 3);
     });
   });
 

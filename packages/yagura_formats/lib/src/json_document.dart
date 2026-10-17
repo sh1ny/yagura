@@ -160,7 +160,7 @@ class JsonDocument {
 
   void _addMember(JsonObject object, String key, Object value, int depth) {
     final rawKey = jsonEncode(key);
-    final node = _build(value, depth + 1);
+    final node = _build(_withoutNullMembers(value), depth + 1);
     if (object.members.isEmpty) {
       final style = _style;
       object.members.add(
@@ -191,6 +191,17 @@ class JsonDocument {
     );
     last.value.trailing = previousTrailing;
   }
+
+  /// [value] as merged into a missing target: object members that are `null`
+  /// are removal markers there, so they are dropped, recursively. Arrays
+  /// replace rather than merge, so their contents stay as they are.
+  Object? _withoutNullMembers(Object? value) => value is Map
+      ? {
+          for (final entry in value.entries)
+            if (entry.value != null)
+              entry.key: _withoutNullMembers(entry.value),
+        }
+      : value;
 
   /// Builds a node for new data in the document's detected layout.
   JsonNode _build(Object? value, int depth) {

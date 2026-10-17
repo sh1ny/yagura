@@ -69,6 +69,28 @@ void main() {
       expect(patched('{"a": 1, "b": 2}', {'c': 3}), '{"a": 1, "b": 2, "c": 3}');
     });
 
+    test('drops null markers inside an object added as a new member', () {
+      expect(
+        jsonDecode(
+          patched('{}', {
+            'a': {
+              'x': null,
+              'y': 2,
+              'z': {'n': null},
+              'l': [null, 1],
+            },
+          }),
+        ),
+        {
+          'a': {
+            'y': 2,
+            'z': <String, Object?>{},
+            'l': [null, 1],
+          },
+        },
+      );
+    });
+
     test('appends a nested object pretty printed', () {
       expect(
         patched('{\n  "a": 1\n}', {

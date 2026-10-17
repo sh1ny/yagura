@@ -84,7 +84,11 @@ Object? _validateValue(
     return _validateSecret(value, path, errors);
   }
   if (value == null) {
-    if (def.defaultValue != null) return def.defaultValue;
+    // The default goes through the same checks as a supplied value, so the
+    // defaults of an object's fields and of a list's rows are filled in.
+    if (def.defaultValue != null) {
+      return _validateValue(def, def.defaultValue, path, errors);
+    }
     if (def.required) errors.add(SettingError(path, 'is required'));
     return _unset;
   }

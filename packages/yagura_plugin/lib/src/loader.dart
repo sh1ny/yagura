@@ -56,7 +56,7 @@ PluginResult loadPlugin(String directory) {
     return PluginResult(
       id: json['id'] is String ? json['id']! as String : folder,
       status: PluginStatus.rejected,
-      name: json['name'] as String?,
+      name: json['name'] is String ? json['name']! as String : null,
       version: json['version'] is String ? json['version']! as String : null,
       platforms: executable is Map<String, Object?>
           ? (executable.keys.toList()..sort())
@@ -523,20 +523,27 @@ void _checkSemantics(PluginManifest manifest, _Report report) {
   }
 }
 
-void _checkSetting(SettingDef def, List<Object> path, _Report report) {
-  var patternOk = true;
+/// Whether every pattern in [def] and its fields compiles. A default is only
+/// validated when they all do, since validating it compiles the patterns.
+bool _checkSetting(SettingDef def, List<Object> path, _Report report) {
+  var patternsOk = true;
   if (def.pattern case final pattern?) {
     try {
       RegExp(pattern);
     } on FormatException catch (e) {
-      patternOk = false;
+      patternsOk = false;
       report.add(invalidManifestCode, [
         ...path,
         'pattern',
       ], 'invalid regular expression "$pattern": ${e.message}');
     }
   }
-  if (patternOk && def.defaultValue != null) {
+  for (final MapEntry(key: name, value: field) in def.fields.entries) {
+    if (!_checkSetting(field, [...path, 'fields', name], report)) {
+      patternsOk = false;
+    }
+  }
+  if (patternsOk && def.defaultValue != null) {
     for (final error in validateSettingValue(def, def.defaultValue)) {
       report.add(
         invalidManifestCode,
@@ -545,9 +552,7 @@ void _checkSetting(SettingDef def, List<Object> path, _Report report) {
       );
     }
   }
-  for (final MapEntry(key: name, value: field) in def.fields.entries) {
-    _checkSetting(field, [...path, 'fields', name], report);
-  }
+  return patternsOk;
 }
 
 void _checkLaunch(

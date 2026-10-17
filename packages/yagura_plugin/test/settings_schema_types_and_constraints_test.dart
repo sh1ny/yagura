@@ -169,5 +169,50 @@ void main() {
       expect(result.status, PluginStatus.rejected);
       expect(result.reasons.single.path, 'settings.code.pattern');
     });
+
+    test(
+      'an invalid nested pattern under a structured default is rejected',
+      () {
+        final result = loadPlugin(
+          writePlugin(
+            _withSettings('''
+  box:
+    type: object
+    default: { code: abc }
+    fields:
+      code: { type: string, pattern: "([x" }
+'''),
+          ),
+        );
+
+        expect(result.status, PluginStatus.rejected);
+        expect(result.reasons.single.path, 'settings.box.fields.code.pattern');
+      },
+    );
+
+    test('an object default supplies the defaults of its fields', () {
+      final manifest = _load(
+        _withSettings('''
+  limits:
+    type: object
+    default: {}
+    fields:
+      slots: { type: integer, required: true, default: 10 }
+  rows:
+    type: list
+    default: [{}]
+    fields:
+      max: { type: integer, default: 7 }
+'''),
+      );
+
+      final outcome = validateSettings(manifest, {});
+
+      expect(outcome.errors, isEmpty);
+      expect(outcome.values['limits'], {'slots': 10});
+      expect(outcome.values['rows'], [
+        {'max': 7},
+      ]);
+    });
   });
 }

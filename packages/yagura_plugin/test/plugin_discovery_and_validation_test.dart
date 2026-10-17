@@ -70,6 +70,18 @@ void main() {
       expect(result.reasons.map((r) => r.message).join('\n'), contains('name'));
     });
 
+    test('a name of the wrong type is rejected, not thrown', () {
+      final result = loadPlugin(
+        writePlugin(
+          valheimWith('name: Valheim Dedicated Server\n', 'name: 42\n'),
+        ),
+      );
+
+      expect(result.status, PluginStatus.rejected);
+      expect(result.name, isNull);
+      expect(result.reasons.map((r) => r.path), contains('name'));
+    });
+
     test('a folder without plugin.yaml is rejected', () {
       final dir = Directory.systemTemp.createTempSync('yagura_plugin_test_');
       addTearDown(() => dir.deleteSync(recursive: true));
