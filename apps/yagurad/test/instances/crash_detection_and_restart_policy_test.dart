@@ -118,6 +118,37 @@ void main() {
     await crashAndWaitForRestart(env, daemon, instance.id, 1, 6);
   });
 
+  test('deleting_during_the_restart_delay_discards_the_restart', () async {
+    final env = TestEnv();
+    env.installValheim();
+    final daemon = await env.start(
+      restartDelay: const Duration(milliseconds: 300),
+    );
+    final instance = await createRunning(daemon);
+    final crashed = collectNotices(daemon, 'crashed');
+
+    env.process.servers.single.exit(1);
+    await eventually(() => crashed.isNotEmpty, reason: 'the crash notice');
+
+    final op = daemon.instances.delete(instance.id);
+    await daemon.operations.whenDone(op.id);
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+
+    expect(env.process.launches, hasLength(1));
+    expect(daemon.instances.find(instance.id), isNull);
+    final db = YaguraDatabase.open(p.join(env.data, 'yagura.db'));
+    try {
+      expect(
+        db.sqlite.select('SELECT id FROM instances WHERE id = ?', [
+          instance.id,
+        ]),
+        isEmpty,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   test('crash_timestamps_survive_a_daemon_restart', () async {
     final env = TestEnv();
     env.installValheim();

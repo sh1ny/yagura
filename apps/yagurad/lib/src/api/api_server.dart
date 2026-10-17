@@ -43,7 +43,7 @@ class ApiServer {
       SystemApi(daemon, log, devMode: true),
       PluginsApi(daemon, log),
       InstancesApi(daemon, log, watchLimits: watchLimits),
-      OperationsApi(daemon, log),
+      OperationsApi(daemon, log, watchLimits: watchLimits),
       LogsApi(daemon, log),
       PairingStub(),
       SteamStub(),

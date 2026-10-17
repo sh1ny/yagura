@@ -63,6 +63,23 @@ void main() {
     expect(daemon.instances.list(), isEmpty);
   });
 
+  test('corrupt_database_is_a_fatal_database_step', () async {
+    final env = TestEnv();
+    DataDirectory.prepare(env.data);
+    File(p.join(env.data, 'yagura.db'))
+        .writeAsBytesSync(List.filled(4096, 0x41));
+
+    await expectLater(
+      env.start(),
+      failsWith('internal_error', details: {'step': 'database'}),
+    );
+
+    // The failed start released the data directory lock.
+    File(p.join(env.data, 'yagura.db')).deleteSync();
+    final daemon = await env.start();
+    expect(daemon.instances.list(), isEmpty);
+  });
+
   test('migration_fails', () async {
     final env = TestEnv();
     final old = seedCurrentDatabase(env);

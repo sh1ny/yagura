@@ -43,7 +43,7 @@ GrpcError toGrpcError(
   required void Function(String line) log,
 }) {
   if (error is GrpcError &&
-      (error.trailers?.containsKey(_detailsHeader) ?? false)) {
+      (error.trailers?.containsKey(errorDetailsHeader) ?? false)) {
     return error;
   }
   if (error is YaguraException && error.reason != 'internal_error') {
@@ -97,7 +97,7 @@ String newIncidentId() => [
   for (var i = 0; i < 12; i++) _random.nextInt(16).toRadixString(16),
 ].join();
 
-const _detailsHeader = 'grpc-status-details-bin';
+const errorDetailsHeader = 'grpc-status-details-bin';
 
 GrpcError _status(int code, pb.ErrorDetail detail) {
   // package:grpc does not send GrpcError.details from a server, so the
@@ -111,7 +111,11 @@ GrpcError _status(int code, pb.ErrorDetail detail) {
     detail.message,
     [Any.pack(detail)],
     null,
-    {_detailsHeader: base64Url.encode(status.toBuffer()).replaceAll('=', '')},
+    {
+      errorDetailsHeader: base64Url
+          .encode(status.toBuffer())
+          .replaceAll('=', ''),
+    },
   );
 }
 

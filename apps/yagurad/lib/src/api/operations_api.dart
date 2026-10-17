@@ -5,14 +5,24 @@ import 'package:yagura_proto/yagura_proto.dart' as pb;
 
 import '../errors.dart';
 import '../host/daemon.dart';
+import '../operations/operations.dart';
 import 'convert.dart';
+import 'instances_api.dart' show WatchLimits;
+import 'pressure.dart';
 import 'service_support.dart';
 
 /// The `Operations` service (design D3, D24).
 class OperationsApi extends pb.OperationsServiceBase with GuardedService {
-  OperationsApi(this.daemon, this.logSink);
+  OperationsApi(
+    this.daemon,
+    this.logSink, {
+    this.watchLimits = const WatchLimits(),
+  });
 
   final Daemon daemon;
+
+  /// What may wait for a `WatchOperation` client that does not read.
+  final WatchLimits watchLimits;
 
   @override
   final LogSink logSink;
@@ -69,9 +79,56 @@ class OperationsApi extends pb.OperationsServiceBase with GuardedService {
             )
           : _notFound(id);
     }
-    return daemon.operations
-        .watch(id, afterSequence: request.afterSequence.toInt())
-        .map(operationEventToPb);
+    final pressure = call is YaguraCall ? call.pressure : null;
+    // Events up to here are the replay: a bounded burst the transport takes
+    // as fast as the client reads it, which adds to what may wait.
+    final replayEnd = daemon.operations.get(id)!.lastSequence;
+    var allowedEvents = watchLimits.maxEvents;
+    var allowedBytes = watchLimits.maxBytes;
+    final source = daemon.operations.watch(
+      id,
+      afterSequence: request.afterSequence.toInt(),
+    );
+    if (pressure == null) return source.map(operationEventToPb);
+    // Events pile up in the transport for a client that does not read; at the
+    // limit they are dropped and the watch ends, so the client resumes from the
+    // last event it read (the replay reports what is no longer retained).
+    StreamSubscription<OperationEvent>? subscription;
+    late final StreamController<pb.OperationEvent> controller;
+    controller = StreamController<pb.OperationEvent>(
+      sync: true,
+      onListen: () {
+        subscription = source.listen(
+          (event) {
+            final out = operationEventToPb(event);
+            if (event.sequence <= replayEnd) {
+              allowedEvents++;
+              allowedBytes += out.writeToBuffer().length + 5;
+            } else if (pressure.queuedMessages >= allowedEvents ||
+                pressure.queuedBytes >= allowedBytes) {
+              pressure.dropQueuedData();
+              unawaited(subscription?.cancel());
+              controller
+                ..addError(
+                  YaguraException(
+                    'resync_required',
+                    'this client reads too slowly; watch again with the '
+                        'sequence of the last event it received',
+                    details: {'limit': watchLimits.maxEvents},
+                  ),
+                )
+                ..close();
+              return;
+            }
+            controller.add(out);
+          },
+          onError: controller.addError,
+          onDone: () => unawaited(controller.close()),
+        );
+      },
+      onCancel: () => subscription?.cancel(),
+    );
+    return controller.stream;
   }
 
   @override

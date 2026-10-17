@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:sqlite3/sqlite3.dart' show SqliteException;
+
 import '../errors.dart';
 import '../hooks/hooks.dart';
 import '../instances/health_check.dart';
@@ -290,6 +292,18 @@ class Daemon {
         e.reason,
         e.message,
         details: {...e.details, 'step': step},
+      );
+    } on SqliteException catch (e) {
+      throw YaguraException(
+        'internal_error',
+        'startup step $step failed: ${e.message}',
+        details: {'step': step},
+      );
+    } on FileSystemException catch (e) {
+      throw YaguraException(
+        'internal_error',
+        'startup step $step failed: ${e.message} ${e.path ?? ''}'.trimRight(),
+        details: {'step': step},
       );
     }
   }

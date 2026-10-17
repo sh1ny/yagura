@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -779,7 +780,6 @@ class InstanceManager {
       ..stateReason = reason
       ..warning = warning
       ..stateChangedAt = clock();
-    if (state == InstanceState.running) record.restartRequired = false;
     if (state != InstanceState.running) {
       record.health = InstanceHealth.unspecified;
     }
@@ -801,6 +801,7 @@ class InstanceManager {
   /// Removes the instance's rows (design D25; operation rows stay).
   void removeRows(InstanceRecord record) {
     if (_closed) return;
+    cancelRestart(record.id);
     store.delete(record.id);
     _records.remove(record.id);
     if (!_events.isClosed) _events.add(InstanceRemoved(record.id));
@@ -868,9 +869,14 @@ class InstanceManager {
   /// Reloads plugins on explicit request and reconciles the instances with
   /// the result (design D17): running operations keep the manifest they
   /// started with.
-  Future<List<PluginReloadOutcome>> reloadPlugins() async {
-    final outcomes = await registry.reload();
-    reconcilePlugins();
+  ///
+  /// With [pluginIds] only those plugins are reloaded and only their instances
+  /// reconciled; empty means all.
+  Future<List<PluginReloadOutcome>> reloadPlugins({
+    Set<String> pluginIds = const {},
+  }) async {
+    final outcomes = await registry.reload(pluginIds: pluginIds);
+    reconcilePlugins(pluginIds: pluginIds);
     if (!_closed && !_pluginsReloaded.isClosed) _pluginsReloaded.add(null);
     return outcomes;
   }
@@ -883,8 +889,11 @@ class InstanceManager {
   /// Applies the plugin registry to every instance: `plugin_missing` for a
   /// stopped instance whose plugin is gone, back to `stopped` when it is
   /// restored, and settings re-validation against the loaded manifest.
-  void reconcilePlugins() {
+  void reconcilePlugins({Set<String> pluginIds = const {}}) {
     for (final record in _records.values.toList()) {
+      if (pluginIds.isNotEmpty && !pluginIds.contains(record.pluginId)) {
+        continue;
+      }
       final plugin = registry.find(record.pluginId);
       if (plugin == null) {
         if (record.state == InstanceState.stopped) {
@@ -903,11 +912,21 @@ class InstanceManager {
       }
       final validation = validateSettings(plugin.manifest, record.settings);
       if (validation.isValid) {
+        // The normalized values carry the defaults of fields the plugin added.
+        final normalized = validation.values;
+        final changed = jsonEncode(normalized) != jsonEncode(record.settings);
         if (record.settingsInvalid ||
+            changed ||
             record.pluginVersion != plugin.manifest.version) {
           record
             ..settingsInvalid = false
+            ..settings = normalized
             ..pluginVersion = plugin.manifest.version;
+          if (changed &&
+              (record.state == InstanceState.running ||
+                  record.state == InstanceState.starting)) {
+            record.restartRequired = true;
+          }
           saveChanges(record);
         }
         continue;
@@ -1205,6 +1224,7 @@ class InstanceManager {
     _restartTimers[record.id] = Timer(restartDelay, () {
       _restartTimers.remove(record.id);
       if (_closed ||
+          !identical(_records[record.id], record) ||
           record.state != InstanceState.stopped ||
           !record.lastRequestedRunning) {
         return;
@@ -1212,6 +1232,7 @@ class InstanceManager {
       try {
         start(record.id);
       } on Object {
+        if (!identical(_records[record.id], record)) return;
         record.lastRequestedRunning = false;
         saveChanges(record);
       }
@@ -1278,20 +1299,30 @@ class InstanceManager {
   /// Finishes deletes interrupted by a crash (design D25): a directory under
   /// the instances root with a `.yagura/deleting` marker and no instance row
   /// is removed; a marker whose row still exists is removed alone, because
-  /// the rows were never deleted.
+  /// the rows were never deleted. Instances may sit below grouping
+  /// directories, so the walk goes down until it meets an instance root; it
+  /// does not follow links.
   void sweepMarkedDirectories() {
     final root = Directory(dataDirectory.instancesPath);
     if (!root.existsSync()) return;
-    for (final entry in root.listSync().whereType<Directory>()) {
+    _sweepMarked(root);
+  }
+
+  void _sweepMarked(Directory directory) {
+    for (final entry
+        in directory.listSync(followLinks: false).whereType<Directory>()) {
       final marker = File(p.join(entry.path, '.yagura', 'deleting'));
-      if (!marker.existsSync()) continue;
       final owner = _records.values.any(
         (r) => p.equals(p.normalize(p.absolute(r.directory)), entry.path),
       );
-      if (owner) {
-        marker.deleteSync();
-      } else {
-        entry.deleteSync(recursive: true);
+      if (marker.existsSync()) {
+        if (owner) {
+          marker.deleteSync();
+        } else {
+          entry.deleteSync(recursive: true);
+        }
+      } else if (!owner) {
+        _sweepMarked(entry);
       }
     }
   }

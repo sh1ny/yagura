@@ -317,7 +317,48 @@ class YaguraCall extends ServerHandler {
        );
 
   final PressureStream pressure;
+
+  /// Every non-OK status carries an `ErrorDetail`, also the ones the handler
+  /// makes itself (a request that does not decode, a missing request message)
+  /// before any service method runs. Statuses that already carry one pass.
+  @override
+  void sendTrailers({
+    int? status = 0,
+    String? message,
+    Map<String, String>? errorTrailers,
+  }) {
+    if (status == null ||
+        status == StatusCode.ok ||
+        (errorTrailers?.containsKey(errorDetailsHeader) ?? false)) {
+      super.sendTrailers(
+        status: status,
+        message: message,
+        errorTrailers: errorTrailers,
+      );
+      return;
+    }
+    // The decoder's own message names internals of the generated code.
+    final error = toGrpcError(
+      GrpcError.custom(
+        status,
+        message != null && message.startsWith(_decodeFailure)
+            ? 'the request message could not be decoded'
+            : message,
+      ),
+      StackTrace.empty,
+      method: 'transport',
+      log: (_) {},
+    );
+    super.sendTrailers(
+      status: error.code,
+      message: error.message,
+      errorTrailers: {...?errorTrailers, ...?error.trailers},
+    );
+  }
 }
+
+/// How package:grpc starts the message of a request that failed to decode.
+const _decodeFailure = 'Error deserializing request';
 
 /// A [Server] whose calls are [YaguraCall]s.
 class YaguraGrpcServer extends Server {

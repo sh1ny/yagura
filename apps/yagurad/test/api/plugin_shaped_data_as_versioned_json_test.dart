@@ -63,6 +63,53 @@ void main() {
     expect(after.settings.json, before.settings.json, reason: 'not saved');
   });
 
+  test('reload_applies_the_plugin_selection', () async {
+    final env = TestEnv()..installValheim();
+    // A second plugin, a copy of Valheim under another id.
+    final other = Directory(p.join(env.pluginsDir, 'other'))
+      ..createSync(recursive: true);
+    File(p.join(other.path, 'plugin.yaml')).writeAsStringSync(
+      File(p.join(valheimFixture, 'plugin.yaml'))
+          .readAsStringSync()
+          .replaceFirst('id: valheim', 'id: other'),
+    );
+    final api = await ApiHarness.start(env);
+    final instance = await api.instances.createInstance(
+      pb.CreateInstanceRequest(
+        pluginId: 'other',
+        name: 'Other',
+        settings: pb.JsonDocument(json: '{"serverName":"Other"}'),
+      ),
+    );
+    await api.daemon.operations.whenDone(
+      api.daemon.instances.install(instance.id).id,
+    );
+
+    // The other plugin is removed on disk; only valheim is reloaded.
+    other.deleteSync(recursive: true);
+    final response = await api.plugins.reloadPlugins(
+      pb.ReloadPluginsRequest(pluginIds: ['valheim']),
+    );
+
+    expect([for (final r in response.results) r.pluginId], ['valheim']);
+    expect(api.daemon.plugins.find('other'), isNotNull, reason: 'still loaded');
+    final untouched = await api.instances.getInstance(
+      pb.GetInstanceRequest(instanceId: instance.id),
+    );
+    expect(untouched.state, pb.InstanceState.INSTANCE_STATE_STOPPED);
+
+    // Naming it applies the removal.
+    final named = await api.plugins.reloadPlugins(
+      pb.ReloadPluginsRequest(pluginIds: ['other']),
+    );
+    expect(named.results.single.outcome, 'removed');
+    expect(api.daemon.plugins.find('other'), isNull);
+    final gone = await api.instances.getInstance(
+      pb.GetInstanceRequest(instanceId: instance.id),
+    );
+    expect(gone.state, pb.InstanceState.INSTANCE_STATE_ERROR);
+  });
+
   test('malformed_json', () async {
     final env = TestEnv()..installValheim();
     final api = await ApiHarness.start(env);

@@ -139,4 +139,23 @@ void main() {
     expect(results.whereType<Instance>(), hasLength(1));
     expect(daemon.instances.list(), hasLength(1));
   });
+
+  test('reload_stores_defaults_of_fields_a_plugin_added', () async {
+    final env = TestEnv();
+    env.installValheim();
+    final daemon = await env.start();
+    final instance = await createValheim(daemon);
+    expect(instance.settings, isNot(contains('motd')));
+
+    env.editValheim(
+      '  password:\n    type: secret',
+      '  motd:\n    type: string\n    label: Message\n    default: hello\n'
+          '  password:\n    type: secret',
+    );
+    await daemon.instances.reloadPlugins();
+
+    expect(daemon.instances.get(instance.id).settings['motd'], 'hello');
+    final file = File(p.join(instance.directory, 'instance.json'));
+    expect(file.readAsStringSync(), contains('hello'));
+  });
 }

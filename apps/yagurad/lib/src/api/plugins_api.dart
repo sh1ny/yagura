@@ -76,23 +76,23 @@ class PluginsApi extends pb.PluginsServiceBase with GuardedService {
     ServiceCall call,
     pb.ReloadPluginsRequest request,
   ) async {
-    final outcomes = await daemon.instances.reloadPlugins();
-    final wanted = request.pluginIds.toSet();
+    final outcomes = await daemon.instances.reloadPlugins(
+      pluginIds: request.pluginIds.toSet(),
+    );
     return pb.ReloadPluginsResponse(
       results: [
         for (final outcome in outcomes)
-          if (wanted.isEmpty || wanted.contains(outcome.id))
-            pb.PluginReloadResult(
-              pluginId: outcome.id,
-              outcome: switch (outcome.status) {
-                PluginReloadStatus.loaded => 'added',
-                PluginReloadStatus.reloaded => 'reloaded',
-                PluginReloadStatus.reloadFailed ||
-                PluginReloadStatus.rejected => 'reload_failed',
-                PluginReloadStatus.removed => 'removed',
-              },
-              problems: [for (final r in outcome.reasons) _problem(r)],
-            ),
+          pb.PluginReloadResult(
+            pluginId: outcome.id,
+            outcome: switch (outcome.status) {
+              PluginReloadStatus.loaded => 'added',
+              PluginReloadStatus.reloaded => 'reloaded',
+              PluginReloadStatus.reloadFailed ||
+              PluginReloadStatus.rejected => 'reload_failed',
+              PluginReloadStatus.removed => 'removed',
+            },
+            problems: [for (final r in outcome.reasons) _problem(r)],
+          ),
       ],
     );
   }

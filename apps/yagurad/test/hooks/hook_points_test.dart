@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -67,5 +68,25 @@ void main() {
     expect(await server.exitCode, 0);
     expect(file.readAsStringSync(), contains('true'));
     expect(daemon.instances.get(instance.id).state, InstanceState.stopped);
+  });
+
+  test('cancelled_stop_still_finishes_with_the_instance_stopped', () async {
+    final env = TestEnv();
+    env.installValheim(hooks: 'exports.onPostStop = () => ({});');
+    final daemon = await env.start();
+    final instance = await createRunning(daemon);
+    final gate = Completer<void>();
+    env.process.stopGate = gate.future;
+
+    final op = daemon.instances.stop(instance.id);
+    await eventually(() => env.process.stops.isNotEmpty, reason: 'the stop');
+    daemon.operations.cancel(op.id);
+    gate.complete();
+    final done = await daemon.operations.whenDone(op.id);
+
+    expect(done.status, OperationStatus.cancelled);
+    final after = daemon.instances.get(instance.id);
+    expect(after.state, InstanceState.stopped);
+    expect(after.pid, 0);
   });
 }

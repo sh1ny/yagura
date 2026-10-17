@@ -33,6 +33,27 @@ void main() {
     expect(context['ports'], containsPair('game', 2456));
   });
 
+  // The relay rotates its capture only on whole line breaks of the server's
+  // output encoding, so the launch carries the `stdout: true` source's.
+  test('launch_carries_the_stdout_encoding', () async {
+    final env = TestEnv();
+    env.installValheim(
+      from: '    rotation: fixed\n',
+      to:
+          '    rotation: fixed\n'
+          '  - name: console\n'
+          '    stdout: true\n'
+          '    encoding: utf-16le\n',
+    );
+    final daemon = await env.start();
+    final instance = await createInstalled(daemon);
+
+    final done = await runStart(daemon, instance.id);
+
+    expect(done.status, OperationStatus.succeeded, reason: done.resultMessage);
+    expect(env.process.launches.single.stdoutEncoding, 'utf-16le');
+  });
+
   test('invalid_result_shape', () async {
     final env = TestEnv();
     env.installValheim(

@@ -319,6 +319,9 @@ class Lifecycle {
           directory: runDirectory,
           at: _manager.clock(),
         );
+        // The arguments below are the settings this run uses; an edit made
+        // after this point is what a restart is needed for.
+        record.restartRequired = false;
         final launched = await _manager.processHost.launch(
           LaunchRequest(
             instanceId: record.id,
@@ -332,6 +335,12 @@ class Lifecycle {
             workingDirectory: _serverDirectory(record),
             instanceDirectory: record.directory,
             runDirectory: runDirectory,
+            stdoutEncoding:
+                [
+                  for (final source in manifest.logs)
+                    if (source.isStdout) source.encoding,
+                ].firstOrNull ??
+                'utf-8',
           ),
         );
         _manager.withRuns(
@@ -537,20 +546,25 @@ class Lifecycle {
       ),
     );
     ctx.result(reason: 'stopped_by:${by.wireName}');
-    if (plugin.hooksSource != null) {
-      // The server is gone: a failing hook is reported, it cannot undo the
-      // stop.
-      await ctx.step('hook:onPostStop', () async {
-        try {
-          await _hook(ctx, record, plugin, HookPoint.onPostStop);
-        } on YaguraException catch (e) {
-          ctx.warn('onPostStop failed: ${e.message}');
-        }
-      });
+    try {
+      if (plugin.hooksSource != null) {
+        // The server is gone: a failing hook is reported, it cannot undo the
+        // stop.
+        await ctx.step('hook:onPostStop', () async {
+          try {
+            await _hook(ctx, record, plugin, HookPoint.onPostStop);
+          } on YaguraException catch (e) {
+            ctx.warn('onPostStop failed: ${e.message}');
+          }
+        });
+      }
+    } finally {
+      // Also when the operation is cancelled before the hook: the server is
+      // gone and nothing else would finish the instance.
+      record.server = null;
+      if (clearRequested) record.lastRequestedRunning = false;
+      _manager.setState(record, InstanceState.stopped);
     }
-    record.server = null;
-    if (clearRequested) record.lastRequestedRunning = false;
-    _manager.setState(record, InstanceState.stopped);
     return by.wireName;
   }
 

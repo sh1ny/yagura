@@ -149,6 +149,35 @@ void main() {
     );
   });
 
+  test('startup_sweeps_marked_directories_below_the_first_level', () async {
+    final env = TestEnv();
+    env.installValheim();
+    final daemon = await env.start();
+    final nested = await createValheim(
+      daemon,
+      name: 'Nested',
+      directory: p.join(env.data, 'instances', 'group', 'server'),
+    );
+    await env.kill(daemon);
+    // Rows gone, files left: a nested orphan with a marker.
+    final orphan = Directory(p.join(env.data, 'instances', 'group', 'orphan'))
+      ..createSync(recursive: true);
+    File(p.join(orphan.path, 'junk')).writeAsStringSync('x');
+    Directory(p.join(orphan.path, '.yagura')).createSync();
+    File(p.join(orphan.path, '.yagura', 'deleting')).writeAsStringSync('');
+    // A nested instance whose rows were never deleted: only the marker goes.
+    Directory(p.join(nested.directory, '.yagura')).createSync(recursive: true);
+    final marker = File(p.join(nested.directory, '.yagura', 'deleting'))
+      ..writeAsStringSync('');
+
+    final restarted = await env.start();
+
+    expect(orphan.existsSync(), isFalse);
+    expect(marker.existsSync(), isFalse);
+    expect(Directory(nested.directory).existsSync(), isTrue);
+    expect(restarted.instances.list(), hasLength(1));
+  });
+
   test('delete_with_files_snapshots_first', () async {
     final env = TestEnv();
     env.installValheim();

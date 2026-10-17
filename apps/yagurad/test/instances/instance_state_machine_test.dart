@@ -181,4 +181,41 @@ void main() {
     expect(running.state, InstanceState.running);
     expect(running.health, InstanceHealth.ok);
   });
+
+  test('settings_edited_while_health_is_pending_need_a_restart', () async {
+    final env = TestEnv();
+    env.installValheimHealth(
+      'type: port\n  port: game\n  start_timeout_seconds: 30',
+    );
+    env.editValheim(
+      'protocol: udp\n    purpose: game',
+      'protocol: tcp\n    purpose: game',
+    );
+    final daemon = await env.start();
+    final port = await freePort();
+    final instance = await createValheim(daemon, ports: {'game': port});
+    await daemon.operations.whenDone(daemon.instances.install(instance.id).id);
+
+    final op = daemon.instances.start(instance.id);
+    await eventually(() => env.process.launches.isNotEmpty);
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(daemon.instances.get(instance.id).state, InstanceState.starting);
+    daemon.instances.updateSettings(
+      UpdateSettingsRequest(
+        instanceId: instance.id,
+        settings: valheimSettings(name: 'Renamed'),
+      ),
+    );
+    final listener = await ServerSocket.bind(
+      InternetAddress.loopbackIPv4,
+      port,
+    );
+    addTearDown(listener.close);
+
+    await daemon.operations.whenDone(op.id);
+
+    final running = daemon.instances.get(instance.id);
+    expect(running.state, InstanceState.running);
+    expect(running.restartRequired, isTrue);
+  });
 }

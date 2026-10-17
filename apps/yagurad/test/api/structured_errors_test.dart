@@ -59,4 +59,30 @@ void main() {
     );
     expect(error.message, isNot(contains('SqliteException')));
   });
+
+  test('malformed_request_message', () async {
+    final env = TestEnv()..installValheim();
+    final api = await ApiHarness.start(env);
+    final raw = ClientMethod<List<int>, List<int>>(
+      '/yagura.v1.Instances/GetInstance',
+      (List<int> bytes) => bytes,
+      (List<int> bytes) => bytes,
+    );
+
+    // A string field announces two bytes and carries one.
+    final error = await failureOf(
+      ResponseFuture<List<int>>(
+        api.channel.createCall<List<int>, List<int>>(
+          raw,
+          Stream<List<int>>.value(const [0x0a, 0x02, 0x61]),
+          CallOptions(),
+        ),
+      ),
+    );
+
+    final detail = errorDetailOf(error);
+    expect(detail, isNotNull, reason: 'every non-OK status has a detail');
+    expect(detail!.reason, 'internal_error');
+    expect(error.message, isNot(contains('Protocol message')));
+  });
 }

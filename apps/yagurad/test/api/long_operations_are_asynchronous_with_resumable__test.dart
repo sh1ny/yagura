@@ -4,6 +4,7 @@ import 'package:fixnum/fixnum.dart';
 import 'package:grpc/grpc.dart';
 import 'package:test/test.dart';
 import 'package:yagura_proto/yagura_proto.dart' as pb;
+import 'package:yagurad/src/api/instances_api.dart';
 import 'package:yagurad/src/host/daemon.dart';
 import 'package:yagurad/src/operations/operations.dart';
 
@@ -216,6 +217,64 @@ void main() {
       ),
     );
   });
+
+  test('stalled_watch_is_bounded', () async {
+    final env = TestEnv();
+    final daemon = await daemonWithInstance(env);
+    final instance = await createValheim(daemon);
+    // A byte bound far below the 8 MiB default, so a few hundred lines cross it.
+    final api = await ApiHarness.start(
+      env,
+      daemon: daemon,
+      watchLimits: const WatchLimits(maxBytes: 100 * 1024),
+    );
+    final gate = Completer<void>();
+    final end = Completer<void>();
+    final line = 'x' * 4096;
+    final operation = startOperation(api, instance.id, (ctx) async {
+      ctx.beginStep('work');
+      ctx.log('first');
+      await gate.future;
+      // Asynchronous batches, so the transport sees them as they come.
+      for (var batch = 0; batch < 20; batch++) {
+        for (var i = 0; i < 25; i++) {
+          ctx.log(line);
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      await end.future;
+    });
+
+    final slow = watch(api, operation.id, channel: api.connect());
+    await slow.until((e) => e.length >= 2, reason: 'the first events');
+    slow.subscription.pause();
+    gate.complete();
+    await eventually(
+      () => daemon.operations.get(operation.id)!.lastSequence >= 500,
+      reason: 'the operation to emit its lines',
+    );
+
+    slow.subscription.resume();
+    await eventually(
+      () => slow.error != null || slow.done,
+      reason: 'the stalled watch to end',
+    );
+    expect(slow.error, isA<GrpcError>());
+    expect(errorDetailOf(slow.error! as GrpcError)?.reason, 'resync_required');
+    expect(
+      slow.events.length,
+      lessThan(300),
+      reason: 'the queued backlog was dropped, not delivered',
+    );
+
+    // It reconnects after the last event it read and still sees the end.
+    final seen = slow.events.last.sequence.toInt();
+    end.complete();
+    final resumed = watch(api, operation.id, after: seen);
+    await resumed.whenDone();
+    expect(resumed.events.last.hasFinished(), isTrue);
+    expect(resumed.events.first.sequence.toInt(), greaterThan(seen));
+  }, timeout: const Timeout(Duration(seconds: 120)));
 
   test('resume_across_coalesced_progress', () async {
     final env = TestEnv();
