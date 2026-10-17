@@ -9,6 +9,7 @@ environment:
 resolution: workspace
 
 dependencies:
+  crypto: ^3.0.7
   ffi: ^2.1.4
   path: ^1.9.1
   sqlite3: ^3.7.1

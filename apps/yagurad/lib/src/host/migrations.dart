@@ -52,4 +52,14 @@ CREATE TABLE operations (
 
 CREATE INDEX operations_by_instance ON operations (instance_id, created_at);
 '''),
+  // Where each log source of each instance was read up to (design D6).
+  Migration(2, '''
+CREATE TABLE log_offsets (
+  instance_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  file TEXT NOT NULL,
+  offset INTEGER NOT NULL,
+  PRIMARY KEY (instance_id, source)
+);
+'''),
 ];

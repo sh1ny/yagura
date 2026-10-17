@@ -5,6 +5,8 @@ import '../errors.dart';
 import '../hooks/hooks.dart';
 import '../instances/instance_manager.dart';
 import '../instances/instance_store.dart';
+import '../logs/instance_log_sync.dart';
+import '../logs/log_hub.dart';
 import '../operations/operations.dart';
 import '../plugins/plugin_registry.dart';
 import '../process/process.dart';
@@ -36,6 +38,7 @@ class DaemonConfig {
     this.os,
     this.migrations,
     this.clock,
+    this.logOptions = const LogHubOptions(),
   });
 
   final String dataDirectory;
@@ -54,6 +57,9 @@ class DaemonConfig {
   final String? os;
   final List<Migration>? migrations;
   final DateTime Function()? clock;
+
+  /// Polling and persist intervals of the log hub.
+  final LogHubOptions logOptions;
 }
 
 /// The daemon core: startup sequence and the services group 8 serves.
@@ -69,21 +75,26 @@ class Daemon {
     required this.plugins,
     required this.instances,
     required this.operations,
+    required this.logs,
     required this.startupNotices,
     required SteamService steam,
+    required InstanceLogSync logSync,
   }) : _lock = lock, // ignore: prefer_initializing_formals
        _database = database, // ignore: prefer_initializing_formals
-       _steam = steam; // ignore: prefer_initializing_formals
+       _steam = steam, // ignore: prefer_initializing_formals
+       _logSync = logSync; // ignore: prefer_initializing_formals
 
   final DataDirLock _lock;
   final YaguraDatabase _database;
   final SteamService _steam;
+  final InstanceLogSync _logSync;
   var _closed = false;
 
   final DataDirectory dataDirectory;
   final PluginRegistry plugins;
   final InstanceManager instances;
   final OperationRunner operations;
+  final LogHub logs;
   final List<StartupNotice> startupNotices;
 
   static Future<Daemon> start(DaemonConfig config) async {
@@ -152,6 +163,12 @@ class Daemon {
       rethrow;
     }
 
+    final logs = LogHub(
+      database: database,
+      clock: config.clock,
+      options: config.logOptions,
+    );
+
     await degraded('steam_sweep', config.steam.sweepStrays);
     await degraded('plugins', () async {
       for (final result in await registry.load()) {
@@ -171,6 +188,14 @@ class Daemon {
     await degraded('snapshots', manager.purgeExpiredSnapshots);
     await degraded('instance_files', manager.rewriteInstanceFiles);
     await degraded('history', runner.pruneHistory);
+    final logSync = InstanceLogSync(
+      hub: logs,
+      manager: manager,
+      registry: registry,
+      os: config.os ?? (Platform.isWindows ? 'windows' : 'linux'),
+    );
+    await degraded('log_tailing', logSync.syncAll);
+    logSync.listen();
 
     return Daemon._(
       dataDirectory: dataDirectory,
@@ -179,8 +204,10 @@ class Daemon {
       plugins: registry,
       instances: manager,
       operations: runner,
+      logs: logs,
       startupNotices: List.unmodifiable(notices),
       steam: config.steam,
+      logSync: logSync,
     );
   }
 
@@ -204,7 +231,9 @@ class Daemon {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    await _logSync.close();
     await instances.close();
+    await logs.close();
     await operations.close();
     await _steam.close();
     _database.close();

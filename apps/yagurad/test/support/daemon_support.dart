@@ -8,6 +8,7 @@ import 'package:yagurad/src/host/daemon.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
 import 'package:yagurad/src/instances/instance.dart';
+import 'package:yagurad/src/logs/log_hub.dart';
 import 'package:yagurad/src/operations/operations.dart';
 import 'package:yagurad/src/process/process.dart';
 import 'package:yagurad/src/snapshots/snapshots.dart';
@@ -214,6 +215,8 @@ class TestEnv {
     SteamService? steamService,
     Snapshotter? snapshots,
     DateTime Function()? clock,
+    // Nothing polls by itself unless a test says so: tests call `pollNow`.
+    LogHubOptions logOptions = const LogHubOptions.manual(),
   }) async {
     final daemon = await Daemon.start(
       DaemonConfig(
@@ -224,6 +227,7 @@ class TestEnv {
         snapshotter: realSnapshots ? null : snapshots ?? snapshotter,
         removeDirectory: removeDirectory,
         clock: clock,
+        logOptions: logOptions,
         hookHost: hookHost,
         os: os,
         migrations: migrations,
