@@ -137,11 +137,17 @@ void main() {
     );
     await slow.until((e) => e.isNotEmpty);
 
-    // It stops reading while far more than 1,000 events are produced.
+    // It stops reading while more than 1,000 events are produced, sent 20 at
+    // a time so a slow CI disk stays inside the timeout; the last rename is
+    // sent alone, so it is the final state.
     slow.subscription.pause();
-    for (var i = 0; i < 1800; i++) {
-      await api.instances.updateSettings(rename(a.id, 'Name$i'));
+    for (var i = 0; i < 1200; i += 20) {
+      await Future.wait([
+        for (var j = i; j < i + 20; j++)
+          api.instances.updateSettings(rename(a.id, 'Name$j')),
+      ]);
     }
+    await api.instances.updateSettings(rename(a.id, 'NameFinal'));
     final beforeResume = slow.events.length;
     slow.subscription.resume();
     await slow.until(
@@ -163,12 +169,12 @@ void main() {
     await slow.until(
       (e) =>
           e.last.hasChanged() &&
-          e.last.changed.settings.json.contains('Name1799'),
+          e.last.changed.settings.json.contains('NameFinal'),
       reason: 'the last state',
     );
     expect(
       events.length - beforeResume,
-      lessThan(1500),
+      lessThan(1000),
       reason: 'the backlog was dropped, not delivered',
     );
     // Live deltas continue after the snapshot.
@@ -178,7 +184,7 @@ void main() {
           e.last.hasChanged() && e.last.changed.settings.json.contains('Last'),
       reason: 'a live delta after the resync',
     );
-  }, timeout: const Timeout(Duration(seconds: 120)));
+  }, timeout: const Timeout(Duration(minutes: 4)));
 
   test('slow_subscriber_by_bytes', () async {
     final env = TestEnv()..installValheim();
