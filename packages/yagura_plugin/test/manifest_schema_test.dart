@@ -49,6 +49,38 @@ void main() {
     }
   });
 
+  test('log sources accept every encoding and rotation', () {
+    for (final encoding in ['utf-8', 'utf-16le', 'latin-1']) {
+      expect(
+        _schemaErrors(
+          (m) => _map((m['logs']! as List<Object?>)[0])['encoding'] = encoding,
+        ),
+        isEmpty,
+        reason: encoding,
+      );
+    }
+    for (final rotation in ['fixed', 'newest']) {
+      expect(
+        _schemaErrors(
+          (m) => _map((m['logs']! as List<Object?>)[0])['rotation'] = rotation,
+        ),
+        isEmpty,
+        reason: rotation,
+      );
+    }
+  });
+
+  test('a log source can be a stdout capture', () {
+    expect(
+      _schemaErrors(
+        (m) => m['logs'] = [
+          {'name': 'console', 'stdout': true, 'encoding': 'utf-16le'},
+        ],
+      ),
+      isEmpty,
+    );
+  });
+
   final invalid = <String, void Function(Map<String, Object?>)>{
     'missing id': (m) => m.remove('id'),
     'missing launch': (m) => m.remove('launch'),
@@ -97,6 +129,20 @@ void main() {
     'negative size hint': (m) => _map(m['steam'])['size_hint_bytes'] = -1,
     'log rotation unknown': (m) =>
         _map((m['logs']! as List<Object?>)[0])['rotation'] = 'daily',
+    'log encoding latin1': (m) =>
+        _map((m['logs']! as List<Object?>)[0])['encoding'] = 'latin1',
+    'log rotation timestamped': (m) =>
+        _map((m['logs']! as List<Object?>)[0])['rotation'] = 'timestamped',
+    'log source with path and stdout': (m) =>
+        _map((m['logs']! as List<Object?>)[0])['stdout'] = true,
+    'log source with neither path nor stdout': (m) =>
+        _map((m['logs']! as List<Object?>)[0]).remove('path'),
+    'stdout false': (m) => m['logs'] = [
+      {'name': 'console', 'stdout': false},
+    ],
+    'stdout with a rotation': (m) => m['logs'] = [
+      {'name': 'console', 'stdout': true, 'rotation': 'fixed'},
+    ],
     'data_paths not a list': (m) => m['data_paths'] = 'save/',
   };
 

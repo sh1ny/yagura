@@ -109,13 +109,18 @@ const manifestSchemaV1 = r'''
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "path"],
+        "required": ["name"],
         "properties": {
           "name": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
-          "path": { "description": "Templated path inside the instance directory.", "type": "string", "minLength": 1 },
-          "encoding": { "type": "string", "enum": ["utf-8", "utf-16le", "latin1"] },
-          "rotation": { "type": "string", "enum": ["fixed", "timestamped"] }
-        }
+          "path": { "description": "File source: templated path inside the instance directory; wildcards (* and ?) only in the file name.", "type": "string", "minLength": 1 },
+          "stdout": { "description": "Stdout capture: the server's standard output and error. Use instead of path.", "const": true },
+          "encoding": { "type": "string", "enum": ["utf-8", "utf-16le", "latin-1"] },
+          "rotation": { "description": "File sources only: fixed follows one path across truncation, newest follows the most recently created match.", "type": "string", "enum": ["fixed", "newest"] }
+        },
+        "oneOf": [
+          { "required": ["path"], "not": { "required": ["stdout"] } },
+          { "required": ["stdout"], "not": { "anyOf": [{ "required": ["path"] }, { "required": ["rotation"] }] } }
+        ]
       }
     },
     "bindings": { "description": "Not supported in this release.", "type": "object" },

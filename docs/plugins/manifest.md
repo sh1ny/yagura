@@ -280,9 +280,18 @@ logs:
 | Field | Meaning |
 |---|---|
 | `name` | Lowercase identifier, unique in the plugin; referenced by `health.source`. |
-| `path` | A templated path inside the instance directory (same rules as `data_paths`). |
-| `encoding` | `utf-8` (default), `utf-16le` or `latin1`. |
-| `rotation` | `fixed` (the game rewrites the same file; default) or `timestamped`. |
+| `path` | A file source: a templated path inside the instance directory (same rules as `data_paths`). Wildcards `*` and `?` are allowed in the file name only, for example `{{instance}}/profiles/*.RPT`. |
+| `stdout` | `true` for a stdout capture: the server's standard output and error, captured by the daemon into rotating files (10 MiB, 5 files). Declare exactly one of `path` and `stdout`. |
+| `encoding` | `utf-8` (default), `utf-16le` or `latin-1`. Undecodable bytes become U+FFFD. |
+| `rotation` | File sources only: `fixed` (follows one path across truncation; default) or `newest` (follows the most recently created matching file). Not allowed with `stdout`. |
+
+A stdout source looks like this:
+
+```yaml fragment
+logs:
+  - name: console
+    stdout: true
+```
 
 ### `data_paths`
 

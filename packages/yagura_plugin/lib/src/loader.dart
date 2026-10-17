@@ -514,7 +514,9 @@ void _checkSemantics(PluginManifest manifest, _Report report) {
         'name',
       ], 'log source "${log.name}" is declared twice');
     }
-    _checkInstancePath(log.path, ['logs', i, 'path'], 'log path', report);
+    if (log.path case final path?) {
+      _checkInstancePath(path, ['logs', i, 'path'], 'log path', report);
+    }
   }
   for (final (i, path) in manifest.dataPaths.indexed) {
     _checkInstancePath(path, ['data_paths', i], 'data path', report);

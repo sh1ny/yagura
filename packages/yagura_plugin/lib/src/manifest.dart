@@ -210,16 +210,25 @@ class HealthSpec {
 class LogSource {
   const LogSource({
     required this.name,
-    required this.path,
+    this.path,
+    this.stdout = false,
     this.encoding = 'utf-8',
     this.rotation = 'fixed',
   });
   final String name;
 
-  /// Templated path inside the instance directory.
-  final String path;
+  /// Templated path inside the instance directory, with wildcards in the file
+  /// name; null for a stdout capture.
+  final String? path;
+
+  /// The source is the server's captured standard output and error.
+  final bool stdout;
   final String encoding;
+
+  /// `fixed` or `newest`; meaningful for file sources only.
   final String rotation;
+
+  bool get isStdout => stdout;
 }
 
 class SteamSpec {
@@ -312,7 +321,8 @@ class PluginManifest {
         for (final l in (json['logs'] as List<Object?>?) ?? const [])
           LogSource(
             name: (l! as Map<String, Object?>)['name']! as String,
-            path: l['path']! as String,
+            path: l['path'] as String?,
+            stdout: l['stdout'] == true,
             encoding: l['encoding'] as String? ?? 'utf-8',
             rotation: l['rotation'] as String? ?? 'fixed',
           ),
