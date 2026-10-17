@@ -12,10 +12,10 @@ How the desktop client and `yagurad` talk, and how that channel is secured. The 
 | Keys | ECDSA P-256 for CA, server and devices |
 | Server auth | Server cert signed by the daemon CA, SAN `yagurad-<daemon-id>`; client uses the pinned CA as its only root and sets the TLS authority to that name |
 | Client auth | Client cert signed by the daemon CA, required on every method except `Pairing.Info` / `Pairing.Enroll` |
-| Dev mode | `--dev`: plaintext, loopback bind only, server reflection on |
+| Dev mode | `yagurad run --dev [--bind host:port]`: plaintext, loopback bind only (default `127.0.0.1:7443`), server reflection on (`grpc.reflection.v1`, and `v1alpha` under its own name) |
 | Keepalive | HTTP/2 ping every 30 s from the client; daemon closes connections idle 10 min without streams |
 | Server keepalive policy | `minIntervalBetweenPingsWithoutData` 20 s, `maxBadPings` 2 (accepts the 30 s client ping); an idle stream must survive 10 minutes (test) |
-| Max message | 4 MiB request, 16 MiB response |
+| Max message | 4 MiB request, 16 MiB response; an oversized request is refused before it is read with `RESOURCE_EXHAUSTED` / `message_too_large` and changes nothing |
 
 ## Certificates
 
@@ -99,9 +99,9 @@ Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violation
 
 | Area | Reasons |
 |---|---|
-| General | `not_implemented`, `internal_error`, `instance_not_found`, `operation_not_found`, `invalid_json`, `schema_version_mismatch`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `prompt_resolved` |
+| General | `not_implemented`, `internal_error`, `instance_not_found`, `operation_not_found`, `invalid_json`, `schema_version_mismatch`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `message_too_large`, `prompt_resolved` |
 | Auth | `pairing_code_invalid`, `pairing_throttled`, `device_revoked`, `last_device`, `unauthenticated`, `access_denied` (admin channel) |
-| Instances | `confirmation_mismatch`, `not_installed`, `invalid_state`, `instance_running`, `instance_not_running`, `port_conflict`, `unsupported_platform`, `crash_loop`, `lost_while_daemon_down`, `update_interrupted`, `install_interrupted`, `restore_interrupted`, `settings_invalid`, `plugin_missing`, `instance_directory_missing`, `launch_failed`, `launch_logon_failed`, `directory_not_allowed`, `run_record_rejected`, `instance_file_stale` (warning), `autostarted` (notice) |
+| Instances | `confirmation_mismatch`, `not_installed`, `invalid_state`, `instance_running`, `instance_not_running`, `port_conflict`, `unsupported_platform`, `crash_loop`, `lost_while_daemon_down`, `update_interrupted`, `install_interrupted`, `restore_interrupted`, `settings_invalid`, `plugin_missing`, `instance_directory_missing`, `launch_failed`, `launch_logon_failed`, `directory_not_allowed`, `run_record_rejected`, `instance_file_stale` (warning), `autostarted` (notice), `stopped_by`, `pre_delete_snapshot`, `restored` (result reasons of a succeeded operation, followed by `:` and a detail: how the stop ended, or the snapshot id) |
 | Plugins | `invalid_manifest`, `unsupported_manifest_version`, `file_too_large`, `hook_syntax_error`, `unsupported_in_this_version`, `mods_not_supported`, `rcon_not_supported` |
 | Hooks | `hook_timeout`, `hook_out_of_memory`, `hook_result_invalid`, `hook_result_too_large`, `hook_error`, `sandbox_violation`, `host_limit_exceeded`, `hook_runtime_degraded`, `not_supported`, `unsupported_in_this_version` (file-edit format) |
 | Config | `binding_file_missing`, `config_parse_error`, `file_locked`, `external_edit` (event/warning; values of secret-bound keys masked) |

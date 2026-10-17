@@ -227,7 +227,7 @@ Covers: plugin-hooks → Hook deadline (daemon keeps serving); plugin-hooks → 
 
 - [x] 8.1 Write the failing tests for this group's rows against an in-process server and generated client.
 - [x] 8.2 Implement the gRPC server for the M1 services per design D24 (`System`, `Plugins`, `Instances`, `Operations`, `Logs`; methods not built fail `UNIMPLEMENTED` / `not_implemented`, and so does every method of the stub services `Pairing`, `Steam`, `Mods`, `Rcon` and `Firewall`, `SetSecret` and `DeleteSecret` fail `secret_store_unavailable`, `revision` 0 with `expected_revision` unchecked, `GetHealth.not_built`), `ErrorDetail` mapping with reason codes from `docs/protocol.md`, incident ids for `INTERNAL`, message size limits, `WatchInstances` with snapshot, slim deltas and the 1,000-event / 8 MiB bound (design D15), `WatchOperation` resume by `after_sequence` with `events_dropped` (coalesced progress is not a drop, design D3), JSON documents with schema-version checks, and the `--dev` loopback-only plaintext listener with reflection (default `127.0.0.1:7443`; `localhost` only when every address it resolves to is loopback; no `--dev` exits with `secure_mode_unavailable`). Verify: this group's rows are green; flip them.
-- [ ] 8.3 Add tests that every reason code the daemon can emit appears in `docs/protocol.md`, and that the M1 row of "Methods by daemon version" in `docs/protocol.md` matches what the server implements. Verify: they pass.
+- [x] 8.3 Add tests that every reason code the daemon can emit appears in `docs/protocol.md`, and that the M1 row of "Methods by daemon version" in `docs/protocol.md` matches what the server implements. Verify: they pass.
 
 ## 9. [M1] Valheim plugin, minimal desktop and M1 exit
 
