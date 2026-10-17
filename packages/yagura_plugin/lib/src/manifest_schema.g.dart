@@ -129,7 +129,7 @@ const manifestSchemaV1 = r'''
       "required": ["app_id"],
       "properties": {
         "app_id": { "type": "integer", "minimum": 1 },
-        "login": { "type": "string", "enum": ["anonymous", "account"] },
+        "login": { "type": "string", "enum": ["anonymous", "account", "account_optional"] },
         "size_hint_bytes": { "type": "integer", "minimum": 0 }
       }
     },

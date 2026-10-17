@@ -39,6 +39,16 @@ void main() {
     );
   });
 
+  test('steam.login accepts every login mode', () {
+    for (final login in ['anonymous', 'account_optional', 'account']) {
+      expect(
+        _schemaErrors((m) => _map(m['steam'])['login'] = login),
+        isEmpty,
+        reason: login,
+      );
+    }
+  });
+
   final invalid = <String, void Function(Map<String, Object?>)>{
     'missing id': (m) => m.remove('id'),
     'missing launch': (m) => m.remove('launch'),

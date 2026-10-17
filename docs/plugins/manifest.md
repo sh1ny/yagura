@@ -70,7 +70,7 @@ steam:
 | Field | Required | Meaning |
 |---|---|---|
 | `app_id` | yes | Steam application id of the dedicated server. |
-| `login` | no | `anonymous` (default) or `account`. |
+| `login` | no | `anonymous` (default), `account_optional` (installed with the anonymous login in this version) or `account` (refused with `steam_account_required` until Steam accounts exist). |
 | `size_hint_bytes` | no | Approximate install size, used to warn about disk space before installing. |
 
 The whole section is optional for games that are not installed through Steam.
