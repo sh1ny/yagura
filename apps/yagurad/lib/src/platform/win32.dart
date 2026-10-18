@@ -307,6 +307,146 @@ class Win32 {
   late final int Function() getLastError = _kernel
       .lookupFunction<Uint32 Function(), int Function()>('GetLastError');
 
+  late final int Function(Pointer<Void>) _localFree = _kernel
+      .lookupFunction<
+        IntPtr Function(Pointer<Void>),
+        int Function(Pointer<Void>)
+      >('LocalFree');
+
+  /// Frees memory the system allocated with `LocalAlloc` (SID strings,
+  /// security descriptors, DPAPI output).
+  void localFree(Pointer<Void> memory) => _localFree(memory);
+
+  // advapi32: tokens, SIDs and security descriptors.
+  late final DynamicLibrary _advapi = DynamicLibrary.open('advapi32.dll');
+
+  late final int Function(int, int, Pointer<IntPtr>) openProcessToken = _advapi
+      .lookupFunction<
+        Int32 Function(IntPtr, Uint32, Pointer<IntPtr>),
+        int Function(int, int, Pointer<IntPtr>)
+      >('OpenProcessToken');
+
+  late final int Function(int, int, Pointer<Void>, int, Pointer<Uint32>)
+  getTokenInformation = _advapi
+      .lookupFunction<
+        Int32 Function(IntPtr, Int32, Pointer<Void>, Uint32, Pointer<Uint32>),
+        int Function(int, int, Pointer<Void>, int, Pointer<Uint32>)
+      >('GetTokenInformation');
+
+  late final int Function(Pointer<Void>, Pointer<Pointer<Utf16>>)
+  convertSidToStringSid = _advapi
+      .lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Pointer<Utf16>>),
+        int Function(Pointer<Void>, Pointer<Pointer<Utf16>>)
+      >('ConvertSidToStringSidW');
+
+  late final int Function(Pointer<Utf16>, Pointer<Pointer<Void>>)
+  convertStringSidToSid = _advapi
+      .lookupFunction<
+        Int32 Function(Pointer<Utf16>, Pointer<Pointer<Void>>),
+        int Function(Pointer<Utf16>, Pointer<Pointer<Void>>)
+      >('ConvertStringSidToSidW');
+
+  late final int Function(Pointer<Void>) getLengthSid = _advapi
+      .lookupFunction<
+        Uint32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)
+      >('GetLengthSid');
+
+  late final int Function(
+    Pointer<Utf16>,
+    int,
+    Pointer<Pointer<Void>>,
+    Pointer<Uint32>,
+  )
+  convertStringSecurityDescriptorToSecurityDescriptor = _advapi
+      .lookupFunction<
+        Int32 Function(
+          Pointer<Utf16>,
+          Uint32,
+          Pointer<Pointer<Void>>,
+          Pointer<Uint32>,
+        ),
+        int Function(
+          Pointer<Utf16>,
+          int,
+          Pointer<Pointer<Void>>,
+          Pointer<Uint32>,
+        )
+      >('ConvertStringSecurityDescriptorToSecurityDescriptorW');
+
+  late final int Function(int, int, Pointer<Void>) setKernelObjectSecurity =
+      _advapi.lookupFunction<
+        Int32 Function(IntPtr, Uint32, Pointer<Void>),
+        int Function(int, int, Pointer<Void>)
+      >('SetKernelObjectSecurity');
+
+  // crypt32: DPAPI. A `DATA_BLOB` is 16 bytes: `cbData` (Uint32) at 0 and
+  // `pbData` (pointer) at 8.
+  late final DynamicLibrary _crypt = DynamicLibrary.open('crypt32.dll');
+
+  late final int Function(
+    Pointer<Void>,
+    Pointer<Utf16>,
+    Pointer<Void>,
+    Pointer<Void>,
+    Pointer<Void>,
+    int,
+    Pointer<Void>,
+  )
+  cryptProtectData = _crypt
+      .lookupFunction<
+        Int32 Function(
+          Pointer<Void>,
+          Pointer<Utf16>,
+          Pointer<Void>,
+          Pointer<Void>,
+          Pointer<Void>,
+          Uint32,
+          Pointer<Void>,
+        ),
+        int Function(
+          Pointer<Void>,
+          Pointer<Utf16>,
+          Pointer<Void>,
+          Pointer<Void>,
+          Pointer<Void>,
+          int,
+          Pointer<Void>,
+        )
+      >('CryptProtectData');
+
+  late final int Function(
+    Pointer<Void>,
+    Pointer<Pointer<Utf16>>,
+    Pointer<Void>,
+    Pointer<Void>,
+    Pointer<Void>,
+    int,
+    Pointer<Void>,
+  )
+  cryptUnprotectData = _crypt
+      .lookupFunction<
+        Int32 Function(
+          Pointer<Void>,
+          Pointer<Pointer<Utf16>>,
+          Pointer<Void>,
+          Pointer<Void>,
+          Pointer<Void>,
+          Uint32,
+          Pointer<Void>,
+        ),
+        int Function(
+          Pointer<Void>,
+          Pointer<Pointer<Utf16>>,
+          Pointer<Void>,
+          Pointer<Void>,
+          Pointer<Void>,
+          int,
+          Pointer<Void>,
+        )
+      >('CryptUnprotectData');
+
   static const invalidHandle = -1;
   static const waitObject0 = 0;
 
@@ -322,6 +462,25 @@ class Win32 {
   static const processTerminate = 0x0001;
   static const synchronize = 0x00100000;
   static const processQueryLimitedInformation = 0x1000;
+
+  /// `TOKEN_QUERY` and the `TokenUser` information class.
+  static const tokenQuery = 0x0008;
+  static const tokenUser = 1;
+
+  /// `SDDL_REVISION_1`.
+  static const sddlRevision1 = 1;
+
+  /// `SECURITY_INFORMATION` bits for [setKernelObjectSecurity].
+  static const ownerSecurityInformation = 0x1;
+  static const daclSecurityInformation = 0x4;
+  static const protectedDaclSecurityInformation = 0x80000000;
+
+  /// `WRITE_DAC` and `GENERIC_WRITE`-free open of a file for a DACL change.
+  static const writeDac = 0x00040000;
+
+  /// `FILE_FLAG_BACKUP_SEMANTICS` and `FILE_FLAG_OPEN_REPARSE_POINT`.
+  static const fileFlagBackupSemantics = 0x02000000;
+  static const fileFlagOpenReparsePoint = 0x00200000;
 
   /// `JOB_OBJECT_LIMIT_BREAKAWAY_OK`.
   static const jobBreakawayOk = 0x800;
