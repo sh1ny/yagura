@@ -16,12 +16,17 @@ import 'service_support.dart';
 /// nothing.
 const m1NotBuilt = ['secret_store', 'firewall'];
 
-/// The `System` service: `GetInfo` and `GetHealth`; `ListAudit` arrives with
-/// remote clients (M2).
+/// Service mode has the secret store; the firewall reconciler and the service
+/// accounts arrive with later task groups of M2.
+const serviceNotBuilt = ['firewall', 'service_accounts'];
+
+/// The `System` service: `GetInfo`, `GetHealth` and `ListAudit`.
 class SystemApi extends pb.SystemServiceBase with GuardedService {
   SystemApi(this.daemon, this.logSink, {required this.devMode});
 
   final Daemon daemon;
+
+  /// Whether callers are unauthenticated (the gate is `AllowAllGate`).
   final bool devMode;
 
   @override
@@ -61,6 +66,7 @@ class SystemApi extends pb.SystemServiceBase with GuardedService {
       // Unknown free space reads as 0.
     }
     final instances = daemon.instances.list();
+    final security = daemon.security;
     return pb.DaemonHealth(
       databaseOk: databaseOk,
       dataVolumeFreeBytes: Int64(free),
@@ -75,7 +81,13 @@ class SystemApi extends pb.SystemServiceBase with GuardedService {
       leakedHookWorkers: daemon.hooks.leakedWorkers,
       hooksDegraded: daemon.hooks.degraded,
       pluginsOk: daemon.plugins.results.every((r) => r.isLoaded),
-      notBuilt: m1NotBuilt,
+      notBuilt: security == null ? m1NotBuilt : serviceNotBuilt,
+      // The admin channel and the service accounts are not built yet.
+      adminChannelOk: false,
+      serviceAccountsOk: false,
+      serverCertNotAfter: security == null
+          ? null
+          : timestamp(security.identity.serverCertificate.notAfter),
     );
   }
 
@@ -83,8 +95,33 @@ class SystemApi extends pb.SystemServiceBase with GuardedService {
   Future<pb.ListAuditResponse> listAudit(
     ServiceCall call,
     pb.ListAuditRequest request,
-  ) => throw YaguraException(
-    'not_implemented',
-    'System.ListAudit is not implemented in this version',
-  );
+  ) async {
+    // A dev daemon has no devices and keeps no audit log.
+    final audit = daemon.security?.audit;
+    if (audit == null) {
+      throw YaguraException(
+        'not_implemented',
+        'System.ListAudit is not implemented in dev mode',
+      );
+    }
+    final limit = request.pageSize == 0 ? 100 : request.pageSize.clamp(1, 1000);
+    // The token is the id of the last entry of the previous page.
+    final before = int.tryParse(request.pageToken);
+    final entries = audit.list(limit: limit + 1, before: before);
+    final page = entries.take(limit).toList();
+    return pb.ListAuditResponse(
+      entries: [
+        for (final e in page)
+          pb.AuditEntry(
+            at: timestamp(e.at),
+            deviceId: e.deviceId,
+            remoteAddress: e.address,
+            method: e.method,
+            target: e.target,
+            result: e.result,
+          ),
+      ],
+      nextPageToken: entries.length > limit ? '${page.last.id}' : '',
+    );
+  }
 }

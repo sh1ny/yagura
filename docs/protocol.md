@@ -35,8 +35,8 @@ Because the client connects by whatever address the admin typed, it never verifi
 yagura://<host>:<port>?code=<CODE>&ca=sha256:<64 hex>&name=<daemon name>
 ```
 
-- `CODE`: 8 characters from `23456789ABCDEFGHJKMNPQRSTUVWXYZ` shown as `XXXX-XXXX` (~40 bits), single use, 10 minutes, at most one active code per daemon (issuing a new one invalidates the old).
-- Throttle: 5 wrong attempts from one address in 10 minutes block that address (`pairing_throttled`); 50 wrong attempts in total in 10 minutes invalidate the active code.
+- `CODE`: 10 characters of Crockford base32 (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`, 50 bits; the daemon stores only its SHA-256), single use, 10 minutes, at most one active code per daemon (issuing a new one invalidates the old).
+- Throttle: 5 wrong attempts from one address in 10 minutes block that address (`pairing_throttled`; an IPv6 address counts as its /64, and the daemon remembers at most 10,000 addresses); 50 wrong attempts in total in 10 minutes invalidate the active code.
 - The pairing string travels out of band (the admin copies it from `yagurad pair`, which talks to the running service over the local admin pipe, ACL'd to SYSTEM and Administrators); that is what makes the CA fingerprint trustworthy.
 
 ```mermaid
@@ -66,9 +66,11 @@ An interceptor runs on every call:
 3. SHA-256 of the certificate DER → device row; missing or `revoked` → `UNAUTHENTICATED` / `device_revoked`.
 4. Update `last_seen_at` / `last_address` (at most once per minute per device), attach `device_id` to the call context for audit.
 
-Note: the listener uses `requestClientCertificate: true` rather than `requireClientCertificate`, so the two pairing methods work on the same port; the interceptor enforces presence for every other method. A certificate that is presented is still chain-verified by TLS against the daemon CA (the CA is the listener's only trusted root), so an unknown certificate fails the handshake. Whether Dart's TLS stack rejects an untrusted client certificate in request (not require) mode is verified by the M2 spike; if it does not, pairing moves to a second listener on port+1 and the main listener uses `requireClientCertificate: true`.
+Note: the listener uses `requestClientCertificate: true` rather than `requireClientCertificate`, so the two pairing methods work on the same port; the interceptor enforces presence for every other method. A certificate that is presented is still chain-verified by TLS against the daemon CA (the CA is the listener's only trusted root), so an unknown certificate fails the handshake. The M2 spike confirmed that Dart's TLS stack rejects an untrusted client certificate in request mode, so pairing shares the one listener. An expired certificate is refused by the gate with `certificate_expired`; an unknown method needs a certificate too, and both reflection services are behind the same gate.
 
-Revocation closes the revoked device's open streams within 5 s (the daemon tracks open streams per device).
+Revocation ends the revoked device's open calls with `device_revoked` within 5 s (the daemon tracks open calls per device). `Pairing.RevokeDevice` refuses the last device that is not revoked (`last_device`). Each device holds at most 100 enrollments (`too_many_devices`).
+
+State-changing calls, `Pairing.Enroll` and the revocation of a device are written to the audit log when they end (`System.ListAudit`, newest first, page token is the id of the last entry): device, remote address, method, target and result. A secret's value is never recorded. Failed authentications are counted per address and 10-minute window in a separate table.
 
 ## Calls and streams
 
@@ -107,7 +109,7 @@ Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violation
 | Area | Reasons |
 |---|---|
 | General | `not_implemented`, `internal_error`, `instance_not_found`, `operation_not_found`, `invalid_json`, `schema_version_mismatch`, `revision_required`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `message_too_large`, `prompt_resolved` |
-| Auth | `pairing_code_invalid`, `pairing_throttled`, `device_revoked`, `last_device`, `unauthenticated`, `access_denied` (admin channel) |
+| Auth | `pairing_code_invalid`, `pairing_throttled`, `device_revoked`, `last_device`, `unauthenticated`, `certificate_expired`, `csr_invalid`, `device_not_found`, `device_name_invalid`, `too_many_devices`, `access_denied` (admin channel) |
 | Instances | `confirmation_mismatch`, `not_installed`, `invalid_state`, `instance_running`, `instance_not_running`, `port_conflict`, `unsupported_platform`, `crash_loop`, `lost_while_daemon_down`, `update_interrupted`, `install_interrupted`, `restore_interrupted`, `settings_invalid`, `secret_via_set_secret`, `secret_required`, `plugin_missing`, `instance_directory_missing`, `launch_failed`, `launch_logon_failed`, `directory_not_allowed`, `run_record_rejected`, `sandbox_violation` (a symbolic link or junction in the instance directory refused a file operation: start, delete with files, restore), `instance_file_stale` (warning; also raised when a link stops the `instance.json` write), `autostarted` (notice), `stopped_by`, `pre_delete_snapshot`, `restored` (result reasons of a succeeded operation, followed by `:` and a detail: how the stop ended, or the snapshot id) |
 | Plugins | `invalid_manifest`, `unsupported_manifest_version`, `file_too_large`, `hook_syntax_error`, `unsupported_in_this_version`, `mods_not_supported`, `rcon_not_supported` |
 | Hooks | `hook_timeout`, `hook_out_of_memory`, `hook_result_invalid`, `hook_result_too_large`, `hook_error`, `sandbox_violation`, `host_limit_exceeded`, `hook_runtime_degraded`, `not_supported`, `unsupported_in_this_version` (file-edit format) |
@@ -117,7 +119,7 @@ Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violation
 | Snapshots | `insufficient_disk` (snapshot), `snapshot_not_found`, `sandbox_violation` (a symbolic link or junction in the instance directory or its data paths; before M2 a link in a data path was `unsupported_in_this_version`) |
 | RCON | `rcon_auth_failed`, `rcon_unavailable` (stop fell back to kill), `timeout` |
 | Firewall | `firewall_unavailable` (warning) |
-| Host | `data_dir_locked`, `data_dir_unwritable`, `migration_failed`, `secret_store_unavailable`, `secrets_reset` (startup notice: secrets of another Windows account deleted; see [`data-directory.md`](data-directory.md)), `dev_mode_requires_loopback`, `secure_mode_unavailable`, `elevation_required`, `systemd_required` (CLI/startup exit reasons) |
+| Host | `data_dir_locked`, `data_dir_unwritable`, `migration_failed`, `secret_store_unavailable`, `secrets_reset` (startup notice: secrets of another Windows account deleted; see [`data-directory.md`](data-directory.md)), `dev_mode_requires_loopback`, `service_mode_required` (started without `--dev` outside the LocalSystem service), `bind_invalid`, `listener_unavailable` (the listener closed for a certificate rotation could not be opened again), `elevation_required`, `systemd_required` (CLI/startup exit reasons) |
 
 ## Versioning
 
@@ -133,3 +135,4 @@ The whole `yagura.v1` contract is defined up front; each daemon version implemen
 | Version | Services served | Methods not implemented |
 |---|---|---|
 | M1 (walking skeleton, dev mode only) | `System`, `Plugins`, `Instances`, `Operations`, `Logs` (`Pairing`, `Steam`, `Mods`, `Rcon`, `Firewall` as stubs) | Every method of the stub services; `System.ListAudit`; `Instances.ImportInstance`, `ExportInstance`, `ApplyConfig`; `Operations.RespondToPrompt`. `Instances.SetSecret` and `DeleteSecret` fail `FAILED_PRECONDITION` / `secret_store_unavailable`. `not_built`: `secret_store`, `firewall`. |
+| M2 (service mode) | As M1, with `Pairing` served; in service mode every call except `Pairing.Info` and `Pairing.Enroll` needs a device certificate, and `System.ListAudit` is served | The stub services `Steam`, `Mods`, `Rcon`, `Firewall`; `Instances.ImportInstance`, `ExportInstance`, `ApplyConfig`; `Operations.RespondToPrompt`. `not_built`: `firewall`, `service_accounts`; `admin_channel_ok` and `service_accounts_ok` are false until those components exist. `server_cert_not_after` carries the end of the server certificate. Dev mode keeps the M1 behaviour. |
