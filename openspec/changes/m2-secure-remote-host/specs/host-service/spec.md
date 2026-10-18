@@ -77,7 +77,7 @@ The daemon SHALL keep its state in one data directory (default `%ProgramData%\Ya
 - **THEN** the command fails with `root_in_use` naming the instance, and the root stays configured
 
 ### Requirement: Startup sequence
-On start the daemon SHALL lock the data directory, open and migrate the database, open the secret store and, in service mode, load its identity (failures here exit non-zero naming the step), then load plugins, recover instances, in service mode set up the service accounts and directory permissions and reconcile the firewall, and start log tailing, where failures are reported as notices and health flags, and then open the API listener. In service mode, secrets protected for another Windows account cannot be read; the daemon SHALL delete them, re-create what it owns, and keep every instance.
+On start the daemon SHALL lock the data directory, in service mode protect the data directory (owner Administrators, a protected SYSTEM/Administrators DACL, and a one-time no-follow walk of its existing contents outside instance directories), open and migrate the database, open the secret store and, in service mode, load its identity (failures here exit non-zero naming the step), then load plugins, recover instances, in service mode set up the service accounts and directory permissions and reconcile the firewall, and start log tailing, where failures are reported as notices and health flags, and then open the API listener. In service mode, secrets protected for another Windows account cannot be read; the daemon SHALL delete them, re-create what it owns, and keep every instance.
 
 #### Scenario: Migration with backup
 - **WHEN** a new daemon version starts on a database with an older schema
@@ -90,6 +90,22 @@ On start the daemon SHALL lock the data directory, open and migrate the database
 #### Scenario: Data directory used by a dev daemon first
 - **WHEN** a `--dev` daemon stored a secret setting for instance `A`, and the service then starts on the same data directory
 - **THEN** the service starts, instance `A` is kept with that secret setting reported `{"secret": true, "set": false}`, and notice `secrets_reset` names `A`
+
+#### Scenario: Data directory created by an earlier daemon
+- **WHEN** the service starts on a data directory whose `snapshots`, `logs` and `yagura.db` were created by an M1 or `--dev` daemon
+- **THEN** before the database is opened, those items are owned by Administrators and grant nothing to `Users`, `yagura-srv` or `yagura-steam`
+
+#### Scenario: Data directory is a link
+- **WHEN** the service first starts and `%ProgramData%\Yagura` is a junction
+- **THEN** the daemon exits non-zero with `data_dir_not_protected` naming that path, and creates nothing behind the junction
+
+#### Scenario: Layout marker planted by a standard user
+- **WHEN** the service first starts on a data directory where a standard user created `acl-layout` with the current version
+- **THEN** the walk still runs and `yagura.db` grants nothing to `Users`
+
+#### Scenario: Link in the data directory at first service start
+- **WHEN** the service first starts on a data directory where `snapshots` contains a junction
+- **THEN** the daemon exits non-zero with `data_dir_not_protected` naming the junction's path, without opening the database
 
 #### Scenario: Firewall unavailable at startup
 - **WHEN** the Windows Firewall service is stopped when the service starts

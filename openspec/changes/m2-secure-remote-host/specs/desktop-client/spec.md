@@ -49,7 +49,7 @@ The client SHALL renew its certificate with each daemon when fewer than 30 days 
 
 #### Scenario: Certificate already expired
 - **WHEN** the client's certificate for a daemon has expired
-- **THEN** the daemon is listed `expired` and the client offers re-pairing instead of retrying
+- **THEN** the daemon is listed `expired` without contacting the daemon, and the client offers re-pairing instead of retrying
 
 ## MODIFIED Requirements
 

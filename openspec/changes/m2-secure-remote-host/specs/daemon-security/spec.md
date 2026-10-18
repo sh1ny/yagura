@@ -59,8 +59,12 @@ Every call except `Pairing.Enroll` and `Pairing.Info` SHALL require a client cer
 - **THEN** its next call fails with `UNAUTHENTICATED` reason `device_revoked`, and its open streams are closed within 5 s
 
 #### Scenario: Method added without an exemption
-- **WHEN** a method that is not `Pairing.Enroll` or `Pairing.Info` is called with a certificate that is not an enrolled device's
+- **WHEN** a method that is not `Pairing.Enroll` or `Pairing.Info` is called with a certificate signed by the daemon CA that belongs to no enrolled device
 - **THEN** the call fails with `UNAUTHENTICATED`
+
+#### Scenario: Certificate from another CA
+- **WHEN** a client presents a certificate not signed by the daemon CA
+- **THEN** the TLS handshake is refused and no handler runs
 
 ### Requirement: Device certificate renewal
 A paired device SHALL be able to renew its certificate over its existing mTLS connection with a CSR for a new key. The daemon signs it for one year, keeps the device record, and accepts the old certificate until it expires.
