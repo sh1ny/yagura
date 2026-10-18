@@ -194,7 +194,7 @@
   ],
   "dependencySkills": {
     "tool": "skills 1.0.4 (dart run skills@1.0.4 get --agent claude --all)",
-    "lastRun": "2026-10-17",
+    "lastRun": "2026-10-18",
     "note": "Skills shipped by workspace dependencies. Re-run after adding a dependency to any workspace package.",
     "packages": []
   }

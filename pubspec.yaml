@@ -12,6 +12,7 @@ workspace:
   - packages/yagura_js
   - packages/yagura_formats
   - packages/yagura_plugin
+  - packages/yagura_pki
 
 dev_dependencies:
   args: ^2.7.0
