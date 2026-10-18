@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: Secret settings are write-only
-A `default` on a `secret` setting SHALL be rejected at load. A secret value SHALL enter only through `SetSecret`, be stored in the secret store and never be returned: reads give `{"secret": true, "set": <bool>}`. In other calls either placeholder or an omitted key leaves the stored value unchanged, and a value fails with `INVALID_ARGUMENT` reason `secret_via_set_secret`. `DeleteSecret` clears it.
+A `default` on a `secret` setting SHALL be rejected at load, and so SHALL a `secret` field inside an `object` or `list` setting: secret settings are top-level. A secret value SHALL enter only through `SetSecret`, be stored in the secret store and never be returned: reads give `{"secret": true, "set": <bool>}`. In other calls either placeholder or an omitted key leaves the stored value unchanged, and a value fails with `INVALID_ARGUMENT` reason `secret_via_set_secret`. `DeleteSecret` clears it.
 
 #### Scenario: Secret values are write-only
 - **WHEN** a client reads the settings of an instance with a `secret` setting that has a value
@@ -28,6 +28,10 @@ A `default` on a `secret` setting SHALL be rejected at load. A secret value SHAL
 #### Scenario: Default on a secret rejected
 - **WHEN** a manifest declares `default: "changeme"` on a `secret` setting
 - **THEN** the plugin is `rejected` at load with an error naming the setting
+
+#### Scenario: Nested secret rejected
+- **WHEN** a manifest declares a `list` setting `servers` whose rows have a `password` field of type `secret`
+- **THEN** the plugin is `rejected` at load with an error naming `servers.password`
 
 ### Requirement: Required secrets are checked at start
 An instance SHALL be created without its secret values. Start SHALL fail with `FAILED_PRECONDITION` reason `secret_required` naming any `required` secret setting that is unset.
