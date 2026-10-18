@@ -59,6 +59,12 @@ class PairingService {
   final _byAddress = <String, List<DateTime>>{};
   final _total = <DateTime>[];
 
+  /// Whether a code is active: issued, unused and not yet expired.
+  bool get hasActiveCode => _database.sqlite.select(
+    'SELECT 1 FROM pairing_codes WHERE used_at IS NULL AND expires_at > ?',
+    [_clock().millisecondsSinceEpoch],
+  ).isNotEmpty;
+
   /// Issues a code; it replaces the one that was active.
   IssuedPairingCode issueCode() {
     final now = _clock();

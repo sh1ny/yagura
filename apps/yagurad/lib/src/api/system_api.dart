@@ -96,8 +96,8 @@ class SystemApi extends pb.SystemServiceBase with GuardedService {
       pluginsOk: daemon.plugins.results.every((r) => r.isLoaded),
       secretStoreOk: secretStoreOk,
       notBuilt: notBuiltComponents(secretStore: secretStore),
-      // The admin channel and the service accounts are not built yet.
-      adminChannelOk: false,
+      // The service accounts are not built yet.
+      adminChannelOk: daemon.adminChannelOk,
       serviceAccountsOk: false,
       serverCertNotAfter: security == null
           ? null

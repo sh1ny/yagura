@@ -267,10 +267,13 @@ Win32Error? _withDescriptor(String sddl, void Function(Pointer<Void> sd) use) {
 /// Whether SDDL [sddl] converts to a security descriptor.
 bool sddlParses(String sddl) => _withDescriptor(sddl, (_) {}) == null;
 
+/// `WRITE_OWNER`.
+const writeOwner = 0x00080000;
+
 /// Replaces the DACL of the file at [path] with the one from [sddl], through
 /// `SetKernelObjectSecurity` on a handle opened for `WRITE_DAC` without
 /// following a link at [path]. The new DACL is protected: nothing inherits.
-void setFileDacl(String path, String sddl) {
+void setFileDacl(String path, String sddl, {String? ownerSid}) {
   final win32 = Win32.instance;
   final name = path.toNativeUtf16();
   final int handle;
@@ -278,7 +281,7 @@ void setFileDacl(String path, String sddl) {
   try {
     handle = win32.createFile(
       name,
-      Win32.writeDac,
+      Win32.writeDac | (ownerSid == null ? 0 : writeOwner),
       Win32.fileShareReadWrite,
       nullptr,
       Win32.openExisting,
@@ -292,20 +295,238 @@ void setFileDacl(String path, String sddl) {
   if (handle == Win32.invalidHandle) throw Win32Error('CreateFileW', openError);
   try {
     Win32Error? failure;
-    final parseError = _withDescriptor(sddl, (sd) {
-      if (win32.setKernelObjectSecurity(
-            handle,
-            Win32.daclSecurityInformation |
-                Win32.protectedDaclSecurityInformation,
-            sd,
-          ) ==
-          0) {
-        failure = _failed('SetKernelObjectSecurity');
-      }
-    });
+    final parseError = _withDescriptor(
+      ownerSid == null ? sddl : 'O:$ownerSid$sddl',
+      (sd) {
+        if (win32.setKernelObjectSecurity(
+              handle,
+              Win32.daclSecurityInformation |
+                  Win32.protectedDaclSecurityInformation |
+                  (ownerSid == null ? 0 : Win32.ownerSecurityInformation),
+              sd,
+            ) ==
+            0) {
+          failure = _failed('SetKernelObjectSecurity');
+        }
+      },
+    );
     if (parseError != null) throw parseError;
     if (failure case final error?) throw error;
   } finally {
     win32.closeHandle(handle);
+  }
+}
+
+/// Calls [use] with a `SECURITY_ATTRIBUTES` (not inheritable) that carries
+/// the descriptor of [sddl]; both are freed afterwards. Throws the
+/// conversion error when [sddl] does not parse.
+T withSecurityAttributes<T>(String sddl, T Function(Pointer<Void>) use) {
+  late T result;
+  final error = _withDescriptor(sddl, (sd) {
+    // struct { DWORD nLength; LPVOID lpSecurityDescriptor; BOOL bInherit; }
+    final attributes = calloc<Uint8>(24);
+    try {
+      attributes.cast<Uint32>().value = 24;
+      (attributes + 8).cast<Pointer<Void>>().value = sd;
+      result = use(attributes.cast<Void>());
+    } finally {
+      calloc.free(attributes);
+    }
+  });
+  if (error != null) throw error;
+  return result;
+}
+
+final DynamicLibrary _advapi = DynamicLibrary.open('advapi32.dll');
+
+final int Function(
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Void>,
+  Pointer<Uint32>,
+  Pointer<Utf16>,
+  Pointer<Uint32>,
+  Pointer<Uint32>,
+)
+_lookupAccountName = _advapi
+    .lookupFunction<
+      Int32 Function(
+        Pointer<Utf16>,
+        Pointer<Utf16>,
+        Pointer<Void>,
+        Pointer<Uint32>,
+        Pointer<Utf16>,
+        Pointer<Uint32>,
+        Pointer<Uint32>,
+      ),
+      int Function(
+        Pointer<Utf16>,
+        Pointer<Utf16>,
+        Pointer<Void>,
+        Pointer<Uint32>,
+        Pointer<Utf16>,
+        Pointer<Uint32>,
+        Pointer<Uint32>,
+      )
+    >('LookupAccountNameW');
+
+/// The string SID of the local account [account], or null when there is no
+/// such account.
+String? lookupAccountSid(String account) {
+  final name = account.toNativeUtf16();
+  final sidSize = calloc<Uint32>();
+  final domainSize = calloc<Uint32>();
+  final use = calloc<Uint32>();
+  try {
+    _lookupAccountName(
+      nullptr,
+      name,
+      nullptr,
+      sidSize,
+      nullptr,
+      domainSize,
+      use,
+    );
+    if (sidSize.value == 0) return null;
+    final sid = calloc<Uint8>(sidSize.value);
+    final domain = calloc<Uint16>(domainSize.value + 1).cast<Utf16>();
+    try {
+      if (_lookupAccountName(
+            nullptr,
+            name,
+            sid.cast(),
+            sidSize,
+            domain,
+            domainSize,
+            use,
+          ) ==
+          0) {
+        return null;
+      }
+      return _sidString(sid.cast());
+    } finally {
+      calloc
+        ..free(sid)
+        ..free(domain);
+    }
+  } finally {
+    calloc
+      ..free(name)
+      ..free(sidSize)
+      ..free(domainSize)
+      ..free(use);
+  }
+}
+
+/// The SID of the user the process [pid] runs as, or null when the process
+/// cannot be inspected.
+String? processUserSid(int pid) {
+  final win32 = Win32.instance;
+  final process = win32.openProcess(
+    Win32.processQueryLimitedInformation,
+    0,
+    pid,
+  );
+  if (process == 0) return null;
+  try {
+    return _tokenUserSid(process);
+  } finally {
+    win32.closeHandle(process);
+  }
+}
+
+String? _tokenUserSid(int process) {
+  final win32 = Win32.instance;
+  final token = calloc<IntPtr>();
+  final length = calloc<Uint32>();
+  try {
+    if (win32.openProcessToken(process, Win32.tokenQuery, token) == 0) {
+      return null;
+    }
+    try {
+      win32.getTokenInformation(
+        token.value,
+        Win32.tokenUser,
+        nullptr,
+        0,
+        length,
+      );
+      final buffer = calloc<Uint8>(length.value);
+      try {
+        if (win32.getTokenInformation(
+              token.value,
+              Win32.tokenUser,
+              buffer.cast(),
+              length.value,
+              length,
+            ) ==
+            0) {
+          return null;
+        }
+        return _sidString(buffer.cast<Pointer<Void>>().value);
+      } finally {
+        calloc.free(buffer);
+      }
+    } finally {
+      win32.closeHandle(token.value);
+    }
+  } finally {
+    calloc
+      ..free(token)
+      ..free(length);
+  }
+}
+
+/// Whether this process's token holds Administrators as a deny-only group:
+/// the user is an administrator that has not elevated.
+bool administratorsAreDenyOnly() {
+  const tokenGroups = 2;
+  const denyOnly = 0x10;
+  final win32 = Win32.instance;
+  final token = calloc<IntPtr>();
+  final length = calloc<Uint32>();
+  try {
+    if (win32.openProcessToken(
+          win32.getCurrentProcess(),
+          Win32.tokenQuery,
+          token,
+        ) ==
+        0) {
+      return false;
+    }
+    try {
+      win32.getTokenInformation(token.value, tokenGroups, nullptr, 0, length);
+      final buffer = calloc<Uint8>(length.value);
+      try {
+        if (win32.getTokenInformation(
+              token.value,
+              tokenGroups,
+              buffer.cast(),
+              length.value,
+              length,
+            ) ==
+            0) {
+          return false;
+        }
+        // TOKEN_GROUPS: DWORD GroupCount, then 16-byte SID_AND_ATTRIBUTES
+        // entries from offset 8.
+        final count = buffer.cast<Uint32>().value;
+        for (var i = 0; i < count; i++) {
+          final entry = buffer + 8 + i * 16;
+          final sid = _sidString(entry.cast<Pointer<Void>>().value);
+          final attributes = (entry + 8).cast<Uint32>().value;
+          if (sid == 'S-1-5-32-544') return attributes & denyOnly != 0;
+        }
+        return false;
+      } finally {
+        calloc.free(buffer);
+      }
+    } finally {
+      win32.closeHandle(token.value);
+    }
+  } finally {
+    calloc
+      ..free(token)
+      ..free(length);
   }
 }

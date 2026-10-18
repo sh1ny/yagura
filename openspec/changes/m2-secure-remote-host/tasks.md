@@ -24,7 +24,7 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | daemon-security → Device certificate renewal | Renewal without a valid certificate | apps/yagurad/test/security/device_certificate_renewal_test.dart | renewal_without_a_valid_certificate | 6 | green |
 | daemon-security → Device management | Revoke another device | apps/yagurad/test/security/device_management_test.dart | revoke_another_device | 6 | green |
 | daemon-security → Device management | Revoking the last device | apps/yagurad/test/security/device_management_test.dart | revoking_the_last_device | 6 | green |
-| daemon-security → Device management | Last device revoked on the host | apps/yagurad/integration_test/admin/device_management_on_the_host_test.dart (`windows`) | last_device_revoked_on_the_host | 7 | red |
+| daemon-security → Device management | Last device revoked on the host | apps/yagurad/integration_test/admin/device_management_on_the_host_test.dart (`windows`) | last_device_revoked_on_the_host | 7 | green |
 | daemon-security → Audit log | Instance deletion audited | apps/yagurad/test/security/audit_log_test.dart | instance_deletion_audited | 6 | green |
 | daemon-security → Audit log | Scanner flood | apps/yagurad/test/security/audit_log_test.dart | scanner_flood | 6 | green |
 | daemon-security → Audit log | Secret set without value in audit | apps/yagurad/test/security/audit_log_test.dart | secret_set_without_value_in_audit | 6 | green |
@@ -33,8 +33,8 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | daemon-security → Secrets never leave the daemon | Secret store fails on write | apps/yagurad/test/security/secrets_never_leave_the_daemon_test.dart | secret_store_fails_on_write | 3 | green |
 | daemon-security → Local admin channel is restricted to administrators | Administrator requests a pairing code | apps/yagurad/integration_test/admin/local_admin_channel_test.dart (`elevated`) | administrator_requests_a_pairing_code | 7 | red |
 | daemon-security → Local admin channel is restricted to administrators | Non-administrator | apps/yagurad/integration_test/admin/local_admin_channel_test.dart (`elevated`) | non_administrator | 7 | red |
-| daemon-security → Local admin channel is restricted to administrators | Channel served by another process | apps/yagurad/integration_test/admin/local_admin_channel_test.dart (`windows`) | channel_served_by_another_process | 7 | red |
-| daemon-security → Local admin channel is restricted to administrators | Daemon not running | apps/yagurad/integration_test/admin/local_admin_channel_test.dart (`windows`) | daemon_not_running | 7 | red |
+| daemon-security → Local admin channel is restricted to administrators | Channel served by another process | apps/yagurad/integration_test/admin/local_admin_channel_test.dart (`windows`) | channel_served_by_another_process | 7 | green |
+| daemon-security → Local admin channel is restricted to administrators | Daemon not running | apps/yagurad/integration_test/admin/local_admin_channel_test.dart (`windows`) | daemon_not_running | 7 | green |
 | daemon-security → Development mode is localhost only | Dev mode on loopback | apps/yagurad/test/security/development_mode_is_localhost_only_test.dart | dev_mode_on_loopback | 6 (M1) | green |
 | daemon-security → Development mode is localhost only | Dev mode on a public address | apps/yagurad/test/security/development_mode_is_localhost_only_test.dart | dev_mode_on_a_public_address | 6 (M1) | green |
 | daemon-security → Development mode is localhost only | Dev mode default bind | apps/yagurad/test/security/development_mode_is_localhost_only_test.dart | dev_mode_default_bind | 6 (M1) | green |
@@ -213,7 +213,7 @@ Covers: daemon-security → Daemon identity, Pairing with a one-time code, Mutua
 Covers: daemon-security → Local admin channel is restricted to administrators, Device management (host revoke); host-service → Data directory layout (roots); instance-lifecycle → Instance creation (directory outside the roots).
 
 - [x] 7.1 Write the failing tests for this group's rows; verify each fails for the stated reason.
-- [ ] 7.2 Implement the admin pipe (D5): `FILE_FLAG_FIRST_PIPE_INSTANCE` with the SY/BA descriptor, `admin_channel_squatted`, the CLI's LocalSystem server check (`admin_channel_untrusted`), `elevation_required`, `daemon_not_running`, and the `pair`, `devices`, `status` and `roots` commands audited as `host-admin`. Verify: the admin-channel and host-revoke rows pass (`elevated` rows in the `elevated` workflow); flip them.
+- [x] 7.2 Implement the admin pipe (D5): `FILE_FLAG_FIRST_PIPE_INSTANCE` with the SY/BA descriptor, `admin_channel_squatted`, the CLI's LocalSystem server check (`admin_channel_untrusted`), `elevation_required`, `daemon_not_running`, and the `pair`, `devices`, `status` and `roots` commands audited as `host-admin`. Verify: the admin-channel and host-revoke rows pass (`elevated` rows in the `elevated` workflow); flip them.
 - [ ] 7.3 Implement `roots add|remove|list` with the protected DACL written by `SetKernelObjectSecurity` (`root_not_protected`, `root_in_use`), and make instance creation check the configured roots with no ACL change on refusal. Verify: the roots rows and `directory_outside_the_instance_roots` pass; flip them; the M1 instance-creation rows still pass.
 - [ ] 7.4 Document the admin CLI (`pair`, `devices`, `status`, `roots`) in the operator docs. Verify: every command and reason it can print appears in the doc.
 - [ ] 7.5 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
