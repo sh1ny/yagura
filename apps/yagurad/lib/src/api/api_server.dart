@@ -219,12 +219,18 @@ class ApiServer {
     final port = listener.port;
     await listener.close(dropConnections: true);
     try {
-      _listener = await _binder(
+      final rebound = await _binder(
         _server,
         address,
         port,
         _context(identity.caCertificate, material),
       );
+      if (_closed) {
+        // close() ran while the bind was pending: nobody else will close it.
+        await rebound.close(dropConnections: true);
+        return;
+      }
+      _listener = rebound;
       identity.adopt(material);
       daemon.runtimeNotices.removeWhere(
         (n) => n.step == 'server_cert_rotation_failed',
@@ -234,20 +240,28 @@ class ApiServer {
         '${identity.serverCertificate.notAfter.toIso8601String()}',
       );
     } on Object catch (e) {
-      daemon.runtimeNotices.add(
-        StartupNotice(
-          'server_cert_rotation_failed',
+      final message =
           'the new server certificate could not be served ($e); the old one '
-              'is served again and the rotation is retried',
-        ),
-      );
+          'is served again and the rotation is retried';
+      // One notice, however many days the failure lasts. Nothing reads the
+      // runtime notices yet (no health field carries them), so the log is
+      // where an administrator finds out.
+      daemon.runtimeNotices
+        ..removeWhere((n) => n.step == 'server_cert_rotation_failed')
+        ..add(StartupNotice('server_cert_rotation_failed', message));
+      _log?.call('server_cert_rotation_failed: $message');
       try {
-        _listener = await _binder(
+        final restored = await _binder(
           _server,
           address,
           port,
           _context(identity.caCertificate, identity.serverMaterial),
         );
+        if (_closed) {
+          await restored.close(dropConnections: true);
+          return;
+        }
+        _listener = restored;
       } on Object catch (e2) {
         _listener = null;
         if (!_failed.isCompleted) {

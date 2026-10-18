@@ -121,15 +121,22 @@ class DeviceStore {
     return get(id)!;
   }
 
-  /// Adds a renewed certificate to [deviceId]; certificates of the device
-  /// that have expired are dropped.
-  void addCertificate(String deviceId, String sha256, DateTime notAfter) {
+  /// Adds a renewed certificate to [deviceId]. Only the certificate that
+  /// asked for the renewal ([presentedSha256]) is kept beside the new one;
+  /// any other certificate of the device is dropped, so a key retired by a
+  /// renewal stops working with the second one (design D4).
+  void addCertificate(
+    String deviceId,
+    String sha256,
+    DateTime notAfter, {
+    required String presentedSha256,
+  }) {
     atomically(_database, () {
       _database.sqlite
         ..execute(
           'DELETE FROM device_certificates WHERE device_id = ? '
-          'AND not_after <= ?',
-          [deviceId, _clock().millisecondsSinceEpoch],
+          'AND sha256 <> ?',
+          [deviceId, presentedSha256],
         )
         ..execute(
           'INSERT INTO device_certificates(device_id, sha256, not_after) '

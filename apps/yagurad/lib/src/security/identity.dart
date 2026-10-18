@@ -91,32 +91,29 @@ class DaemonIdentity {
       final row = rows.single;
       existingId = row['daemon_id']! as String;
       final caKeyBytes = secrets.get(caKeySecret);
-      final serverKeyBytes = secrets.get(serverKeySecret);
-      if (caKeyBytes != null && serverKeyBytes != null) {
+      if (caKeyBytes != null) {
         try {
           final caKey = EcKeyPair.fromPrivateKeyPem(utf8.decode(caKeyBytes));
-          final serverKey = EcKeyPair.fromPrivateKeyPem(
-            utf8.decode(serverKeyBytes),
-          );
           final ca = Certificate.parse(
             Uint8List.fromList(row['ca_certificate']! as List<int>),
           );
-          final server = Certificate.parse(
-            Uint8List.fromList(row['server_certificate']! as List<int>),
-          );
-          if (ca.publicKey.Q == caKey.publicKey.Q &&
-              server.publicKey.Q == serverKey.publicKey.Q &&
-              server.isSignedBy(ca)) {
-            return DaemonIdentity._(
+          if (ca.publicKey.Q == caKey.publicKey.Q) {
+            // The CA is intact. A server key or certificate that is missing
+            // or does not match is replaced alone; the CA and the devices
+            // stay (design D3: only the loss of the CA key remakes it).
+            final server = _readServer(row, secrets, ca);
+            final identity = DaemonIdentity._(
               database,
               secrets,
               clock,
               daemonId: existingId,
               caKey: caKey,
               caCertificate: ca,
-              server: ServerMaterial(serverKey, server),
+              server: server ?? _issueServer(caKey, ca, existingId, clock()),
               recreated: false,
             );
+            if (server == null) identity.adopt(identity._server);
+            return identity;
           }
         } on FormatException {
           // Unreadable: made again below.
@@ -136,6 +133,32 @@ class DaemonIdentity {
     );
   }
 
+  /// The stored server key and certificate, or null when either is missing,
+  /// unreadable, or they do not belong together under [ca].
+  static ServerMaterial? _readServer(
+    Map<String, Object?> row,
+    SecretStore secrets,
+    Certificate ca,
+  ) {
+    try {
+      final bytes = secrets.get(serverKeySecret);
+      final der = row['server_certificate'] as List<int>?;
+      if (bytes == null || der == null) return null;
+      final key = EcKeyPair.fromPrivateKeyPem(utf8.decode(bytes));
+      final cert = Certificate.parse(Uint8List.fromList(der));
+      if (cert.publicKey.Q == key.publicKey.Q && cert.isSignedBy(ca)) {
+        return ServerMaterial(key, cert);
+      }
+    } on FormatException {
+      // Replaced by the caller.
+    } on PkiException {
+      // Likewise.
+    } on DerException {
+      // Likewise.
+    }
+    return null;
+  }
+
   static DaemonIdentity _create(
     YaguraDatabase database,
     SecretStore secrets,
@@ -153,17 +176,17 @@ class DaemonIdentity {
     );
     final ca = Certificate.parse(caDer);
     final server = _issueServer(caKey, ca, daemonId, now);
-    // The keys first: a crash after them and before the row leaves no
-    // identity, and the next start makes a new one.
-    secrets.put(
-      caKeySecret,
-      Uint8List.fromList(utf8.encode(caKey.privateKeyPem)),
-    );
-    secrets.put(
-      serverKeySecret,
-      Uint8List.fromList(utf8.encode(server.key.privateKeyPem)),
-    );
+    // Keys and row in one transaction (both live in the database): a crash
+    // leaves the old identity or the whole new one, never a mixture.
     atomically(database, () {
+      secrets.put(
+        caKeySecret,
+        Uint8List.fromList(utf8.encode(caKey.privateKeyPem)),
+      );
+      secrets.put(
+        serverKeySecret,
+        Uint8List.fromList(utf8.encode(server.key.privateKeyPem)),
+      );
       database.sqlite.execute('DELETE FROM daemon_identity');
       database.sqlite.execute(
         'INSERT INTO daemon_identity(id, daemon_id, ca_certificate, '
@@ -190,14 +213,17 @@ class DaemonIdentity {
 
   /// Makes [material] the server certificate: stored, then used.
   void adopt(ServerMaterial material) {
-    _secrets.put(
-      serverKeySecret,
-      Uint8List.fromList(utf8.encode(material.key.privateKeyPem)),
-    );
-    _database.sqlite.execute(
-      'UPDATE daemon_identity SET server_certificate = ? WHERE id = 1',
-      [material.certificate.der],
-    );
+    // The key and the certificate change together or not at all.
+    atomically(_database, () {
+      _secrets.put(
+        serverKeySecret,
+        Uint8List.fromList(utf8.encode(material.key.privateKeyPem)),
+      );
+      _database.sqlite.execute(
+        'UPDATE daemon_identity SET server_certificate = ? WHERE id = 1',
+        [material.certificate.der],
+      );
+    });
     _server = material;
   }
 

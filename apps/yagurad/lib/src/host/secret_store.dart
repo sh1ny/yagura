@@ -162,6 +162,10 @@ class DatabaseSecretStore implements SecretStore {
   /// What [open] deleted; empty when every row was in this scope.
   final SecretRecovery recovery;
 
+  /// Whether this host can protect secrets at all (false where the protector
+  /// is the placeholder of a host without a store).
+  bool get available => _protector is! UnsupportedSecretProtector;
+
   /// Opens the store. Rows whose scope is not the protector's cannot be
   /// read. In [serviceMode] they are deleted in one transaction and reported
   /// in [recovery]; otherwise nothing changes and this throws

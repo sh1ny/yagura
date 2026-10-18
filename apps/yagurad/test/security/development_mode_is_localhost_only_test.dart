@@ -131,6 +131,32 @@ void main() {
     expect(await cli.exit, 0);
   });
 
+  test('LocalSystem without --service is not service mode', () async {
+    // A scheduled task or `PsExec -s` runs as SYSTEM but is not the service
+    // (design D6): --service is required as well as the token.
+    for (final arguments in [
+      ['--bind', '127.0.0.1:0'],
+      ['--console', '--bind', '127.0.0.1:0'],
+    ]) {
+      final cli = RunningCli(arguments, isLocalSystem: () => true);
+
+      final code = await cli.exit;
+
+      expect(code, isNonZero, reason: '$arguments');
+      expect(
+        cli.errors,
+        contains('service_mode_required'),
+        reason: '$arguments',
+      );
+      expect(cli.listening.isCompleted, isFalse, reason: 'no listener opened');
+      expect(
+        Directory(p.join(cli.data.path, 'data')).existsSync(),
+        isFalse,
+        reason: 'the daemon did not even start',
+      );
+    }
+  });
+
   test('started_from_a_console_without_dev_mode', () async {
     // `yagurad run` and `yagurad run --service`, from a console: the token
     // is not LocalSystem.

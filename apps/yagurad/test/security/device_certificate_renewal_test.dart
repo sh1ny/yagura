@@ -92,6 +92,39 @@ void main() {
     await fresh.instances.listInstances(pb.ListInstancesRequest());
   });
 
+  test('a second renewal retires the first certificate', () async {
+    final (h, device) = await twentyDaysLeft();
+    final first = Certificate.parse(device.certificate);
+    final secondKey = generateKeyPair();
+    final secondResponse = await renew(device, secondKey);
+    final second = renewed(h, device, secondKey, secondResponse);
+
+    final thirdKey = generateKeyPair();
+    final thirdResponse = await renew(second, thirdKey);
+    final third = renewed(h, device, thirdKey, thirdResponse);
+
+    // Only the certificate that renewed and the new one are kept.
+    final devices = (await third.pairing.listDevices(pb.ListDevicesRequest()))
+        .devices;
+    expect(
+      devices.single.certificates.map((c) => c.sha256),
+      unorderedEquals([
+        Certificate.parse(second.certificate).sha256,
+        Certificate.parse(third.certificate).sha256,
+      ]),
+    );
+    expect(
+      devices.single.certificates.map((c) => c.sha256),
+      isNot(contains(first.sha256)),
+    );
+    await expectLater(
+      pb.InstancesClient(device.connect())
+          .listInstances(pb.ListInstancesRequest()),
+      failsWithStatus(StatusCode.unauthenticated, 'unauthenticated'),
+    );
+    await second.instances.listInstances(pb.ListInstancesRequest());
+  });
+
   test('revoking_a_renewed_device', () async {
     final (h, device) = await twentyDaysLeft();
     final admin = await h.pair('admin');

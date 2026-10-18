@@ -52,7 +52,13 @@ void main() {
       final health = await api.system.getHealth(pb.GetHealthRequest());
 
       expect(health.databaseOk, isTrue);
-      expect(health.notBuilt, unorderedEquals(['secret_store', 'firewall']));
+      // Dev mode opens the secret store too (design D3); the firewall and the
+      // service accounts are service-mode components of later groups.
+      expect(health.secretStoreOk, isTrue);
+      expect(
+        health.notBuilt,
+        unorderedEquals(['firewall', 'service_accounts']),
+      );
       expect(health.leakedHookWorkers, 0);
       expect(health.hooksDegraded, isFalse);
     });

@@ -172,6 +172,7 @@ void main() {
         health.notBuilt,
         unorderedEquals(['firewall', 'service_accounts']),
       );
+      expect(health.secretStoreOk, isTrue);
       expect(health.adminChannelOk, isFalse);
       expect(health.serviceAccountsOk, isFalse);
     },

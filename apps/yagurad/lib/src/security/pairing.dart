@@ -146,6 +146,7 @@ class PairingService {
   pb.EnrollResponse renew({
     required String deviceId,
     required Uint8List csrDer,
+    required String presentedSha256,
   }) {
     final device = _devices.get(deviceId);
     if (device == null || device.revoked) {
@@ -157,7 +158,12 @@ class PairingService {
       name: device.name,
     );
     final parsed = Certificate.parse(certificate);
-    _devices.addCertificate(deviceId, parsed.sha256, parsed.notAfter);
+    _devices.addCertificate(
+      deviceId,
+      parsed.sha256,
+      parsed.notAfter,
+      presentedSha256: presentedSha256,
+    );
     return pb.EnrollResponse(
       deviceId: deviceId,
       clientCertificateDer: certificate,

@@ -6,19 +6,21 @@ import 'package:yagura_proto/yagura_proto.dart' as pb;
 
 import '../errors.dart';
 import '../host/daemon.dart';
+import '../host/secret_store.dart';
 import '../instances/instance.dart';
 import '../platform/disk_space.dart';
 import '../version.dart';
 import 'convert.dart';
 import 'service_support.dart';
 
-/// Components M1 does not have (design D24); their `*_ok` fields mean
-/// nothing.
-const m1NotBuilt = ['secret_store', 'firewall'];
-
-/// Service mode has the secret store; the firewall reconciler and the service
-/// accounts arrive with later task groups of M2.
-const serviceNotBuilt = ['firewall', 'service_accounts'];
+/// Components this daemon version does not build yet (design D7, D11). The
+/// secret store joins them on a host without one.
+// TODO(D10, group 9): add `steam_account` here until the Steam account exists.
+List<String> notBuiltComponents({required bool secretStore}) => [
+  if (!secretStore) 'secret_store',
+  'firewall',
+  'service_accounts',
+];
 
 /// The `System` service: `GetInfo`, `GetHealth` and `ListAudit`.
 class SystemApi extends pb.SystemServiceBase with GuardedService {
@@ -67,6 +69,17 @@ class SystemApi extends pb.SystemServiceBase with GuardedService {
     }
     final instances = daemon.instances.list();
     final security = daemon.security;
+    final store = daemon.secrets;
+    final secretStore = store is DatabaseSecretStore && store.available;
+    var secretStoreOk = false;
+    if (secretStore) {
+      try {
+        store.contains('health-probe');
+        secretStoreOk = true;
+      } on Object {
+        // Reads as not ok.
+      }
+    }
     return pb.DaemonHealth(
       databaseOk: databaseOk,
       dataVolumeFreeBytes: Int64(free),
@@ -81,7 +94,8 @@ class SystemApi extends pb.SystemServiceBase with GuardedService {
       leakedHookWorkers: daemon.hooks.leakedWorkers,
       hooksDegraded: daemon.hooks.degraded,
       pluginsOk: daemon.plugins.results.every((r) => r.isLoaded),
-      notBuilt: security == null ? m1NotBuilt : serviceNotBuilt,
+      secretStoreOk: secretStoreOk,
+      notBuilt: notBuiltComponents(secretStore: secretStore),
       // The admin channel and the service accounts are not built yet.
       adminChannelOk: false,
       serviceAccountsOk: false,

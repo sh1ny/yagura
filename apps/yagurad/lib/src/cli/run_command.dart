@@ -132,8 +132,8 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
     // Runs in this console as the current user (design D2).
     ..addFlag('console', negatable: false)
     ..addFlag('dev', negatable: false, help: 'Serve plaintext on loopback.')
-    // What the Windows service passes (design D6). The mode is decided by who
-    // runs the daemon: LocalSystem serves mutual TLS.
+    // What the Windows service passes (design D6); with the LocalSystem token
+    // it serves mutual TLS.
     ..addFlag(
       'service',
       negatable: false,
@@ -154,15 +154,18 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
     return exitUsage;
   }
 
-  // Service mode is the LocalSystem token (design D5): the admin channel
-  // that the CLI trusts is served by that account only.
-  if (!dev && !(env.isLocalSystem ?? _runsAsLocalSystem)()) {
+  // Service mode is `--service` as LocalSystem (design D5, D6): the flag
+  // turns on the service-only paths, and the admin channel that the CLI
+  // trusts is served by that account only. Neither alone is enough.
+  if (!dev &&
+      !((args['service'] as bool) &&
+          (env.isLocalSystem ?? _runsAsLocalSystem)())) {
     return _fail(
       env,
       YaguraException(
         'service_mode_required',
-        'without --dev the daemon runs as the Windows service (LocalSystem); '
-            'start it with `yagurad service install`, or use --dev for the '
+        'without --dev the daemon runs as the Windows service (`run --service` as '
+            'LocalSystem); start it with `yagurad service install`, or use --dev for the '
             'unauthenticated loopback listener',
       ),
     );

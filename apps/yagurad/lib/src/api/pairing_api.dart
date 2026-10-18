@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:grpc/grpc.dart';
+import 'package:yagura_pki/yagura_pki.dart';
 import 'package:yagura_proto/yagura_proto.dart' as pb;
 
 import '../errors.dart';
@@ -122,6 +123,7 @@ class PairingApi extends pb.PairingServiceBase with GuardedService {
   ) async => security.pairing.renew(
     deviceId: security.gate.callerOf(call)!,
     csrDer: Uint8List.fromList(request.csrDer),
+    presentedSha256: sha256Hex(call.clientCertificate!.der),
   );
 
   pb.Device _toPb(DeviceRecord device, bool isCaller) => pb.Device(

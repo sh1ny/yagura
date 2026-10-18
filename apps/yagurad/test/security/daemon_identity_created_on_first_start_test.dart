@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -11,6 +12,7 @@ import 'package:yagurad/src/api/secure_listener.dart';
 import 'package:yagurad/src/errors.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/host/secret_store.dart';
+import 'package:yagurad/src/security/identity.dart';
 
 import '../support/cli_support.dart';
 import '../support/daemon_support.dart';
@@ -194,6 +196,92 @@ void main() {
     },
   );
 
+  test('a failing rotation is logged and keeps one notice', () async {
+    final real = DateTime.now().toUtc();
+    final clock = TestClock(real.subtract(const Duration(days: 701)));
+    var failures = 0;
+    final h = await SecureHarness.start(
+      TestEnv(),
+      clock: clock,
+      serve: (daemon, lines) => ApiServer.serveSecure(
+        daemon,
+        address: InternetAddress.loopbackIPv4,
+        port: 0,
+        logSink: lines.add,
+        binder: (server, address, port, context) async {
+          if (failures > 0) {
+            failures--;
+            throw const SocketException('address in use');
+          }
+          return SecureListener.bind(server, address, port, context);
+        },
+      ),
+    );
+    clock.time = real;
+
+    for (var day = 0; day < 3; day++) {
+      failures = 1;
+      await h.server.checkCertificateRotation();
+    }
+
+    expect(
+      h.daemon.runtimeNotices.where(
+        (n) => n.step == 'server_cert_rotation_failed',
+      ),
+      hasLength(1),
+    );
+    expect(
+      h.logLines.where((l) => l.contains('server_cert_rotation_failed')),
+      hasLength(3),
+      reason: 'each failed attempt is logged',
+    );
+  });
+
+  test('closing during a rotation re-bind closes the new listener', () async {
+    final real = DateTime.now().toUtc();
+    final clock = TestClock(real.subtract(const Duration(days: 701)));
+    final gate = Completer<void>();
+    var binds = 0;
+    SecureListener? late;
+    final h = await SecureHarness.start(
+      TestEnv(),
+      clock: clock,
+      serve: (daemon, lines) => ApiServer.serveSecure(
+        daemon,
+        address: InternetAddress.loopbackIPv4,
+        port: 0,
+        logSink: lines.add,
+        binder: (server, address, port, context) async {
+          if (++binds == 2) await gate.future;
+          final listener = await SecureListener.bind(
+            server,
+            address,
+            port,
+            context,
+          );
+          if (binds == 2) late = listener;
+          return listener;
+        },
+      ),
+    );
+    clock.time = real;
+    final port = h.server.port;
+
+    final rotation = h.server.checkCertificateRotation();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    final closing = h.server.close();
+    gate.complete();
+    await rotation;
+    await closing;
+
+    expect(late, isNotNull);
+    await expectLater(
+      Socket.connect(InternetAddress.loopbackIPv4, port),
+      throwsA(isA<SocketException>()),
+      reason: 'the port is not left bound',
+    );
+  });
+
   test('a rotation that cannot bind at all ends the daemon', () async {
     final real = DateTime.now().toUtc();
     final clock = TestClock(real.subtract(const Duration(days: 701)));
@@ -288,6 +376,89 @@ void main() {
       (await reconnected.system.getInfo(pb.GetInfoRequest())).devMode,
       isFalse,
     );
+  });
+
+  for (final damage in ['missing', 'mismatched']) {
+    test(
+      'a $damage server key makes a new server certificate, not a new CA',
+      () async {
+        final env = TestEnv();
+        final protector = FakeSecretProtector(serviceSid);
+        final first = await SecureHarness.start(
+          env,
+          secretProtector: protector,
+        );
+        final device = await first.pair('desk-01');
+        final ca = first.security.identity.caFingerprint;
+        final id = first.security.identity.daemonId;
+        final oldServer = first.security.identity.serverCertificate.sha256;
+        await first.server.close();
+        await first.daemon.close();
+
+        final db = YaguraDatabase.open(p.join(env.data, 'yagura.db'));
+        if (damage == 'missing') {
+          db.sqlite.execute('DELETE FROM secrets WHERE id = ?', [
+            serverKeySecret,
+          ]);
+        } else {
+          DatabaseSecretStore.open(db, protector, serviceMode: true).put(
+            serverKeySecret,
+            Uint8List.fromList(utf8.encode(generateKeyPair().privateKeyPem)),
+          );
+        }
+        db.close();
+
+        final second = await SecureHarness.start(
+          env,
+          secretProtector: protector,
+        );
+        expect(second.security.identity.caFingerprint, ca);
+        expect(second.security.identity.daemonId, id);
+        expect(second.security.identity.recreated, isFalse);
+        expect(
+          second.security.identity.serverCertificate.sha256,
+          isNot(oldServer),
+        );
+        expect(second.security.devices.lookup(device.sha256)!.revoked, isFalse);
+        final again = PairedDevice.forTest(
+          second,
+          device.name,
+          device.deviceId,
+          device.key,
+          device.certificate,
+        );
+        expect(
+          (await again.system.getInfo(pb.GetInfoRequest())).devMode,
+          isFalse,
+        );
+      },
+    );
+  }
+
+  test('adopting a server certificate is all or nothing', () async {
+    final env = TestEnv();
+    final protector = FakeSecretProtector(serviceSid);
+    Directory(env.data).createSync(recursive: true);
+    final db = YaguraDatabase.open(p.join(env.data, 'yagura.db'));
+    addTearDown(db.close);
+    final store = DatabaseSecretStore.open(db, protector, serviceMode: true);
+    final identity = DaemonIdentity.open(db, store, clock: TestClock().call);
+    final keyBefore = store.get(serverKeySecret);
+    final certBefore = identity.serverCertificate.sha256;
+
+    // The certificate write fails (a full disk, say).
+    db.sqlite.execute(
+      'CREATE TRIGGER refuse_update BEFORE UPDATE ON daemon_identity '
+      "BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+    expect(() => identity.adopt(identity.issueServer()), throwsA(anything));
+
+    expect(store.get(serverKeySecret), keyBefore, reason: 'key rolled back');
+    expect(identity.serverCertificate.sha256, certBefore);
+    db.sqlite.execute('DROP TRIGGER refuse_update');
+    final reopened = DaemonIdentity.open(db, store, clock: TestClock().call);
+    expect(reopened.caFingerprint, identity.caFingerprint);
+    expect(reopened.recreated, isFalse);
   });
 
   test('a dev daemon makes no identity', () async {
