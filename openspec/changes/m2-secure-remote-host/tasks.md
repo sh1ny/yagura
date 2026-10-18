@@ -212,7 +212,7 @@ Covers: daemon-security → Daemon identity, Pairing with a one-time code, Mutua
 
 Covers: daemon-security → Local admin channel is restricted to administrators, Device management (host revoke); host-service → Data directory layout (roots); instance-lifecycle → Instance creation (directory outside the roots).
 
-- [ ] 7.1 Write the failing tests for this group's rows; verify each fails for the stated reason.
+- [x] 7.1 Write the failing tests for this group's rows; verify each fails for the stated reason.
 - [ ] 7.2 Implement the admin pipe (D5): `FILE_FLAG_FIRST_PIPE_INSTANCE` with the SY/BA descriptor, `admin_channel_squatted`, the CLI's LocalSystem server check (`admin_channel_untrusted`), `elevation_required`, `daemon_not_running`, and the `pair`, `devices`, `status` and `roots` commands audited as `host-admin`. Verify: the admin-channel and host-revoke rows pass (`elevated` rows in the `elevated` workflow); flip them.
 - [ ] 7.3 Implement `roots add|remove|list` with the protected DACL written by `SetKernelObjectSecurity` (`root_not_protected`, `root_in_use`), and make instance creation check the configured roots with no ACL change on refusal. Verify: the roots rows and `directory_outside_the_instance_roots` pass; flip them; the M1 instance-creation rows still pass.
 - [ ] 7.4 Document the admin CLI (`pair`, `devices`, `status`, `roots`) in the operator docs. Verify: every command and reason it can print appears in the doc.

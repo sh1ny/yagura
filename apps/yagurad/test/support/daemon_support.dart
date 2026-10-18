@@ -4,7 +4,9 @@ import 'dart:math';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/admin/admin_transport.dart';
 import 'package:yagurad/src/errors.dart';
+import 'package:yagurad/src/platform/acl_writer.dart';
 import 'package:yagurad/src/host/daemon.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
@@ -308,6 +310,10 @@ class TestEnv {
     DateTime Function()? clock,
     bool serviceMode = false,
     SecretProtector? secretProtector,
+    AdminListener Function()? adminListener,
+    AclWriter? aclWriter,
+    AccountSids? accountSids,
+    Future<List<InternetAddress>> Function()? hostAddresses,
     // Nothing polls by itself unless a test says so: tests call `pollNow`.
     LogHubOptions logOptions = const LogHubOptions.manual(),
   }) async {
@@ -328,6 +334,10 @@ class TestEnv {
         clock: clock,
         serviceMode: serviceMode,
         secretProtector: secretProtector,
+        adminListener: adminListener,
+        aclWriter: aclWriter,
+        accountSids: accountSids,
+        hostAddresses: hostAddresses,
         logOptions: logOptions,
         hookHost: hookHost,
         os: os,
