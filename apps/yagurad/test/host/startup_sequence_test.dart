@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -7,6 +8,7 @@ import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/host/migrations.dart';
 
 import '../support/daemon_support.dart';
+import '../support/secret_support.dart';
 
 /// A database at the current schema, closed again, with one operation row.
 int seedCurrentDatabase(TestEnv env) {
@@ -111,5 +113,61 @@ void main() {
     // The failed start released the data directory lock.
     final daemon = await env.start();
     expect(daemon.instances.list(), isEmpty);
+  });
+
+  test('data_directory_used_by_a_dev_daemon_first', () async {
+    final env = TestEnv()..installValheim();
+    var daemon = await env.start(secretProtector: FakeSecretProtector(devSid));
+    final a = await createValheim(daemon, name: 'A');
+    daemon.secrets.put(
+      'valheim-password',
+      Uint8List.fromList([1, 2, 3]),
+      instanceId: a.id,
+      setting: 'password',
+    );
+    await env.closeDaemons();
+
+    daemon = await env.start(
+      serviceMode: true,
+      secretProtector: FakeSecretProtector(serviceSid),
+    );
+
+    final kept = daemon.instances.get(a.id);
+    expect(kept.name, 'A');
+    expect(kept.settings['password'], {'secret': true, 'set': false});
+    expect(daemon.secrets.get('valheim-password'), isNull);
+    final reset = daemon.startupNotices.where((n) => n.step == 'secrets_reset');
+    expect(reset, hasLength(1));
+    expect(reset.single.message, allOf(contains(a.id), contains('A')));
+  });
+
+  test('dev_daemon_refuses_a_data_directory_of_the_service', () async {
+    final env = TestEnv();
+    final service = await env.start(
+      serviceMode: true,
+      secretProtector: FakeSecretProtector(serviceSid),
+    );
+    service.secrets.put('ca-key', Uint8List.fromList([9]));
+    await env.closeDaemons();
+
+    await expectLater(
+      env.start(secretProtector: FakeSecretProtector(devSid)),
+      failsWith(
+        'secret_store_unavailable',
+        messageHas: [serviceSid, devSid],
+        details: {'step': 'secret_store'},
+      ),
+    );
+
+    // The refusal released the lock and changed nothing.
+    final again = await env.start(
+      serviceMode: true,
+      secretProtector: FakeSecretProtector(serviceSid),
+    );
+    expect(again.secrets.get('ca-key'), Uint8List.fromList([9]));
+    expect(
+      again.startupNotices.where((n) => n.step == 'secrets_reset'),
+      isEmpty,
+    );
   });
 }

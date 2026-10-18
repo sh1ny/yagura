@@ -12,6 +12,7 @@ import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/logs/log_hub.dart';
 import 'package:yagurad/src/logs/log_models.dart';
 import 'package:yagurad/src/operations/operations.dart';
+import 'package:yagurad/src/host/secret_store.dart';
 import 'package:yagurad/src/process/process.dart';
 import 'package:yagurad/src/snapshots/snapshots.dart';
 import 'package:yagurad/src/steam/steam.dart';
@@ -305,6 +306,8 @@ class TestEnv {
     SteamService? steamService,
     Snapshotter? snapshots,
     DateTime Function()? clock,
+    bool serviceMode = false,
+    SecretProtector? secretProtector,
     // Nothing polls by itself unless a test says so: tests call `pollNow`.
     LogHubOptions logOptions = const LogHubOptions.manual(),
   }) async {
@@ -323,6 +326,8 @@ class TestEnv {
         snapshotter: realSnapshots ? null : snapshots ?? snapshotter,
         removeDirectory: removeDirectory,
         clock: clock,
+        serviceMode: serviceMode,
+        secretProtector: secretProtector,
         logOptions: logOptions,
         hookHost: hookHost,
         os: os,
