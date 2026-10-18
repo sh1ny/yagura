@@ -36,7 +36,7 @@ The work comes from `platform-backlog` groups 10-13. That backlog was written be
 
 - **Code**: `apps/yagurad` (security, service, launcher, instance file access, firewall, auth gate, admin channel, migrations), `apps/yagura_desktop` (daemon list, pairing, keychain, forms), `packages/yagura_proto` (the existing pairing, firewall, audit and revision fields get implementations; `DaemonHealth` gains `admin_channel_ok`, `service_accounts_ok` and `server_cert_not_after`), and `tool/winsw/`.
 - **Architecture**: `openspec/architecture.md` changes its component diagram (SteamCMD as `yagura-steam`, the admin channel), the secrets row (account passwords), the ADR index (0014 and 0015 in, 0010 and 0013 out) and the error-reason table (`run_record_rejected`).
-- **Dependencies**: a certificate library for CSR signing (`x509`/`pointycastle`, confirmed by spike), Flutter secure storage for the client keychain, and bundled WinSW 2.x (MIT).
+- **Dependencies**: `pointycastle` under a new workspace package `packages/yagura_pki` that builds and signs certificates and CSRs (the spike ruled out the `x509` package), Flutter secure storage for the client keychain, and bundled WinSW 2.x (MIT).
 - **External systems**: Windows Service Control Manager, Windows Firewall (NetSecurity), DPAPI, local accounts (`yagura-srv`, `yagura-steam`) and logon rights.
 - **ADRs**: records ADR 0014 (SteamCMD runs as a low-privilege account, superseding 0010) and ADR 0015 (game-server account and directory ACLs, superseding 0013).
 - **Backlog**: groups 10-13, their requirements, decisions and rows are removed from `platform-backlog`.

@@ -33,15 +33,19 @@ What M1 left in place:
 
 Unverified assumptions, each closed by a spike task:
 
-- **(S1)** Dart's `SecureServerSocket` in request mode (`requestClientCertificate: true`) lets a connection without a certificate complete the handshake, so `Pairing.Info`/`Enroll` can share the listener. Also, the `x509` package can sign a CSR.
+- **(S1)** Dart's `SecureServerSocket` in request mode (`requestClientCertificate: true`) lets a connection without a certificate complete the handshake, so `Pairing.Info`/`Enroll` can share the listener. Also, the `x509` package can sign a CSR. **Spike result (task 1.2, `docs/milestones/m2.md`):** the handshake part holds, and TLS refuses foreign-CA and expired client certificates once the daemon CA is the server's trusted root. The `x509` part fails: 0.2.4 drops extensions when encoding and cannot sign, so D1 takes its fallback.
 - **(S2)** A relay started as `yagura-srv` on the `YaguraSrv\Default` desktop gets a console, and `yagurad signal`, running as LocalSystem, can attach to that console to send Ctrl+C. Also, WinSW leaves relays running on stop and upgrade.
 
 ## Decisions
 
-### D1: Certificates with the `x509` package, one listener in request mode
+### D1: Certificates from a small DER builder over `pointycastle`, one listener in request mode
 
-- **Choice:** Follows ADR 0007. A P-256 CA (20 years) and a server certificate for `yagurad-<daemon-id>` plus `localhost` (2 years), created with `x509` (`TbsCertificate`, `Signer`). The listener calls `serve(security:, requestClientCertificate: true)`, which exists in grpc 5.2.0 (`server.dart:253-254`). TLS alone does not decide trust: the auth gate (D2) accepts a call only when the presented certificate's SHA-256 belongs to an enrolled, non-revoked device. A certificate from another CA that TLS lets through is therefore still rejected. If S1 shows a no-certificate handshake failing, `Pairing.Info`/`Enroll` move to a second listener on port + 1 (`docs/protocol.md:69`) before anything else is built on the listener.
-- **Rejected:** a minimal DER builder over `pointycastle` from the start, because it means owning ASN.1 encoding code when a maintained library covers it. It stays the fallback if S1 fails on signing.
+- **Choice:** Follows ADR 0007 (its named fallback). A P-256 CA (20 years) and a server certificate for `yagurad-<daemon-id>` plus `localhost` (2 years), built and signed by a new workspace package `packages/yagura_pki`: a minimal DER encoder and parser plus certificate and PKCS#10 CSR building, signing and verification over `pointycastle` (`SHA-256/ECDSA`, signatures as DER `SEQUENCE {r, s}`, keys as SEC1 `EC PRIVATE KEY` PEM). The daemon uses it for the CA, server and client certificates and to verify CSRs; the desktop uses it for the device key and CSR (D13). Its tests check every built certificate and CSR by parsing it back and by a real TLS handshake.
+  - **Listener.** It calls `serve(security:, requestClientCertificate: true)`, which exists in grpc 5.2.0 (`server.dart:253-254`), with a `ServerTlsCredentials` subclass that sets the daemon CA as the context's only trusted root (grpc's own sets none, and then every presented certificate is refused). TLS then refuses a certificate from another CA or an expired one at the handshake (spike S1); a connection without a certificate completes it.
+  - **Trust.** TLS alone does not decide trust: the auth gate (D2) accepts a call only when the presented certificate's SHA-256 belongs to an enrolled, non-revoked device, and it checks expiry itself in case TLS lets one through.
+- **Rejected:**
+  - the `x509` package (the original choice): spike S1 showed 0.2.4 dropping extensions on encoding and corrupting the key OID, with no signing API.
+  - a second listener on port + 1 for pairing: not needed, since request mode lets a certificate-less handshake through (spike S1).
 - **Reversal cost:** low (contained in Pairing + CA).
 
 ### D2: The auth gate lives in the per-method wrapper, fail-closed
@@ -170,7 +174,7 @@ As the published contract already says (`docs/protocol.md:93`, `instances.proto:
 ### D13: Desktop daemon registry with one connection per daemon
 
 - **Choice:**
-  - **Registry.** A list of daemons (id, name, address, CA fingerprint), kept in the app's support directory, capped at 32. Per daemon, the device key (P-256, generated in-process with `pointycastle`), client certificate and CA certificate live in `flutter_secure_storage`.
+  - **Registry.** A list of daemons (id, name, address, CA fingerprint), kept in the app's support directory, capped at 32. Per daemon, the device key (P-256, generated in-process with `pointycastle`; its CSR built by `packages/yagura_pki`, D1), client certificate and CA certificate live in `flutter_secure_storage`.
   - **Connections.** Each daemon gets its own `DaemonConnection` (today's class, keyed by id: `providers.dart:15-39`). It uses `ChannelCredentials.secure` with a `SecurityContext` built from the CA as the only root, the client certificate and key, and authority `yagurad-<daemon-id>`. The dev daemon stays as a registry entry with insecure credentials, allowed only to loopback.
   - **Errors to states.** `device_revoked` → `revoked`; an expired certificate or refused renewal → `expired`. Both stop the reconnect loop.
   - **Renewal.** On connect and every 24 h while connected, when under 30 days remain.
@@ -370,7 +374,7 @@ sequenceDiagram
 
 ## Risks / Trade-offs
 
-- [S1: request mode refuses certificate-less handshakes in Dart, or the client cannot build a CSR in-process] → second listener on port + 1 for `Pairing.Info`/`Enroll` (`docs/protocol.md:69`); for the CSR, a `pointycastle`-built PKCS#10. Both are decided by a spike in the first task group before the listener or pairing code is built.
+- [Owning DER encoding code in `packages/yagura_pki` (S1 ruled out `x509`)] → the package covers only the structures Yagura issues (P-256 keys, v3 certificates with basic constraints, key usage, extended key usage and DNS SANs, PKCS#10 without attributes); its tests parse every output back and complete a TLS handshake with it.
 - [S2: WinSW stops relays, or LocalSystem cannot signal a `yagura-srv` console] → native service entry point (ADR 0012), and the signal helper launched as `yagura-srv` (D7).
 - [`NtCreateFile` through FFI is undocumented-ish API surface] → it is the documented native API used by the Win32 layer. Tests cover each refusal, plus a CI row on the real filesystem.
 - [`yagura-steam` lacks a right SteamCMD needs (its self-update into `<data>/steamcmd`, temp folders)] → the spike S2 run includes a SteamCMD install as `yagura-steam`; the account's profile holds its temp folder.
