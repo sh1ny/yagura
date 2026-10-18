@@ -79,7 +79,12 @@ Revocation closes the revoked device's open streams within 5 s (the daemon track
 | Server stream | `WatchInstances` (snapshot + slim deltas with `settings_omitted`; 1,000 events or 8 MiB per subscriber), `WatchOperation` (resumable by `after_sequence`; `events_dropped` + snapshot when the gap is no longer retained), `Logs.Backlog`, `Logs.Follow` |
 | Bidirectional | `Rcon.Console` |
 
-Every mutating instance call (`UpdateSettings`, `SetSecret`, `DeleteSecret`, `SetMods`, `DeleteInstance`, `RestoreSnapshot`) carries `expected_revision`. The revision is incremented only on configuration changes (settings, ports, secrets, mods, restart policy, autostart, Steam account, snapshot restore), never on state, health, pid or queue changes; a stale revision fails `FAILED_PRECONDITION` / `revision_conflict` and the client reloads, so two admins never silently overwrite each other.
+Every mutating instance call (`UpdateSettings`, `SetSecret`, `DeleteSecret`, `SetMods`, `DeleteInstance`, `RestoreSnapshot`) carries `expected_revision`, the `Instance.revision` the caller last read. A new instance is at revision 1. The revision is incremented only on configuration changes (settings, ports, secrets, mods, restart policy, autostart, Steam account, snapshot restore), never on state, health, pid or queue changes, so an instance that crashed and restarted still has the revision the client loaded. The daemon checks and increments it in the same database transaction as the write:
+
+- A missing `expected_revision` (0, proto3's unset value) fails `INVALID_ARGUMENT` / `revision_required`.
+- A stale one fails `FAILED_PRECONDITION` / `revision_conflict` with the current revision in the `revision` metadata entry of the `ErrorDetail`. Nothing is changed and no operation is created; the client reloads, and two admins never silently overwrite each other.
+- `UpdateSettings`, `SetSecret` and `DeleteSecret` return the `Instance` with the incremented revision. `UpdateSettings` leaves `autostart` and `restart_policy` as they are when the request does not set them.
+- `RestoreSnapshot` and `DeleteInstance` return an `Operation`. An accepted restore increments the revision in the same step that creates its operation, so a second restore sent with the same revision fails `revision_conflict` while the first is queued or running; the client reads the new revision from `GetInstance` or the instance stream.
 
 Long work never blocks a unary call: it returns an `Operation` immediately. Interactive steps (Steam Guard) set the operation to `WAITING_FOR_INPUT` with a `Prompt` of kind `email`, `authenticator` or `mobile_approval`; any paired client may answer with `Operations.RespondToPrompt`, and the others see `PromptResolved`.
 
@@ -101,7 +106,7 @@ Every non-OK status carries `ErrorDetail` (`reason`, `message`, `field_violation
 
 | Area | Reasons |
 |---|---|
-| General | `not_implemented`, `internal_error`, `instance_not_found`, `operation_not_found`, `invalid_json`, `schema_version_mismatch`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `message_too_large`, `prompt_resolved` |
+| General | `not_implemented`, `internal_error`, `instance_not_found`, `operation_not_found`, `invalid_json`, `schema_version_mismatch`, `revision_required`, `revision_conflict`, `operation_expired`, `resync_required`, `interrupted`, `events_dropped`, `queue_full`, `too_many_subscribers`, `message_too_large`, `prompt_resolved` |
 | Auth | `pairing_code_invalid`, `pairing_throttled`, `device_revoked`, `last_device`, `unauthenticated`, `access_denied` (admin channel) |
 | Instances | `confirmation_mismatch`, `not_installed`, `invalid_state`, `instance_running`, `instance_not_running`, `port_conflict`, `unsupported_platform`, `crash_loop`, `lost_while_daemon_down`, `update_interrupted`, `install_interrupted`, `restore_interrupted`, `settings_invalid`, `secret_via_set_secret`, `secret_required`, `plugin_missing`, `instance_directory_missing`, `launch_failed`, `launch_logon_failed`, `directory_not_allowed`, `run_record_rejected`, `instance_file_stale` (warning), `autostarted` (notice), `stopped_by`, `pre_delete_snapshot`, `restored` (result reasons of a succeeded operation, followed by `:` and a detail: how the stop ended, or the snapshot id) |
 | Plugins | `invalid_manifest`, `unsupported_manifest_version`, `file_too_large`, `hook_syntax_error`, `unsupported_in_this_version`, `mods_not_supported`, `rcon_not_supported` |
@@ -127,4 +132,4 @@ The whole `yagura.v1` contract is defined up front; each daemon version implemen
 
 | Version | Services served | Methods not implemented |
 |---|---|---|
-| M1 (walking skeleton, dev mode only) | `System`, `Plugins`, `Instances`, `Operations`, `Logs` (`Pairing`, `Steam`, `Mods`, `Rcon`, `Firewall` as stubs) | Every method of the stub services; `System.ListAudit`; `Instances.ImportInstance`, `ExportInstance`, `ApplyConfig`; `Operations.RespondToPrompt`. `Instances.SetSecret` and `DeleteSecret` fail `FAILED_PRECONDITION` / `secret_store_unavailable`. `revision` is always 0 and `expected_revision` is not checked. `not_built`: `secret_store`, `firewall`. |
+| M1 (walking skeleton, dev mode only) | `System`, `Plugins`, `Instances`, `Operations`, `Logs` (`Pairing`, `Steam`, `Mods`, `Rcon`, `Firewall` as stubs) | Every method of the stub services; `System.ListAudit`; `Instances.ImportInstance`, `ExportInstance`, `ApplyConfig`; `Operations.RespondToPrompt`. `Instances.SetSecret` and `DeleteSecret` fail `FAILED_PRECONDITION` / `secret_store_unavailable`. `not_built`: `secret_store`, `firewall`. |
