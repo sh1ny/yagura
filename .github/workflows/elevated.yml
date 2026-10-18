@@ -32,8 +32,10 @@ jobs:
           restore-keys: pub-${{ runner.os }}-
       - name: Resolve workspace dependencies
         run: flutter pub get
+      # One test file at a time: the service rows install a real service whose
+      # admin pipe has a fixed name, so two of them cannot run side by side.
       # Outside the runner's job, which forbids the breakaway the launcher
       # needs (as in ci.yml).
       - name: Test (elevated, outside the runner job)
         shell: pwsh
-        run: pwsh tool/ci/outside-job.ps1 -Run 'Set-Location apps/yagurad; mise exec -- dart test --run-skipped --tags elevated'
+        run: pwsh tool/ci/outside-job.ps1 -Run 'Set-Location apps/yagurad; mise exec -- dart test --concurrency 1 --run-skipped --tags elevated'

@@ -16,6 +16,7 @@ import 'package:yagurad/src/logs/log_models.dart';
 import 'package:yagurad/src/operations/operations.dart';
 import 'package:yagurad/src/host/secret_store.dart';
 import 'package:yagurad/src/process/process.dart';
+import 'package:yagurad/src/service/version_sweeper.dart';
 import 'package:yagurad/src/snapshots/snapshots.dart';
 import 'package:yagurad/src/steam/steam.dart';
 
@@ -314,6 +315,7 @@ class TestEnv {
     AclWriter? aclWriter,
     AccountSids? accountSids,
     Future<List<InternetAddress>> Function()? hostAddresses,
+    VersionSweeper? versionSweeper,
     // Nothing polls by itself unless a test says so: tests call `pollNow`.
     LogHubOptions logOptions = const LogHubOptions.manual(),
   }) async {
@@ -338,6 +340,7 @@ class TestEnv {
         aclWriter: aclWriter,
         accountSids: accountSids,
         hostAddresses: hostAddresses,
+        versionSweeper: versionSweeper,
         logOptions: logOptions,
         hookHost: hookHost,
         os: os,
