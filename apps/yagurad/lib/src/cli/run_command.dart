@@ -4,13 +4,17 @@ import 'dart:io';
 import 'package:args/args.dart';
 import 'package:path/path.dart' as p;
 
+import '../admin/admin_transport.dart';
+import '../admin/named_pipe.dart';
 import '../api/api_server.dart';
 import '../api/bind_address.dart';
 import '../errors.dart';
+import 'admin_commands.dart';
 import '../host/daemon.dart';
 import '../host/secret_store.dart';
 import '../platform/win32_security.dart';
 import '../process/launcher_modes.dart';
+import '../platform/acl_writer.dart';
 import '../process/process.dart';
 import '../steam/steamcmd_service.dart';
 
@@ -38,6 +42,8 @@ class CliEnvironment {
     this.lookup = InternetAddress.lookup,
     this.isLocalSystem,
     this.secretProtector,
+    this.adminConnector,
+    this.adminListener,
   });
 
   final StringSink out;
@@ -60,6 +66,13 @@ class CliEnvironment {
 
   /// Defaults to DPAPI on Windows; a seam for tests.
   final SecretProtector? secretProtector;
+
+  /// How the host commands reach the daemon; defaults to the admin pipe.
+  final AdminConnector? adminConnector;
+
+  /// Opens the admin channel of a service-mode daemon; defaults to the admin
+  /// pipe on Windows. A seam for tests.
+  final AdminListener Function()? adminListener;
 }
 
 /// Runs the `yagurad` command line. Returns the process exit code.
@@ -77,10 +90,32 @@ Future<int> runCli(List<String> arguments, CliEnvironment env) async {
       return _run(arguments.skip(1).toList(), env);
     case 'launch' || 'relay' || 'signal':
       return _helper(mode, arguments.skip(1).toList(), env);
+    case 'pair' || 'devices' || 'status' || 'roots':
+      return _host(mode, arguments.skip(1).toList(), env);
     default:
       env.err.writeln('yagurad: unknown mode "$mode"');
       return exitUsage;
   }
+}
+
+/// The host commands (design D5): they reach the running service over the
+/// admin channel.
+Future<int> _host(String command, List<String> arguments, CliEnvironment env) {
+  final connector = env.adminConnector;
+  if (connector == null && !Platform.isWindows) {
+    env.err.writeln(
+      'yagurad: the "$command" command needs the Windows admin channel '
+      '(the Linux path is M5)',
+    );
+    return Future.value(exitUsage);
+  }
+  return runAdminCommand(
+    command,
+    arguments,
+    connector: connector ?? NamedPipeConnector(),
+    out: env.out,
+    err: env.err,
+  );
 }
 
 /// The `launch`, `relay` and `signal` modes of the process model (design D2).
@@ -197,6 +232,14 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
         steam: SteamCmdService(steamcmdRoot: p.join(dataDirectory, 'steamcmd')),
         serviceMode: !dev,
         secretProtector: env.secretProtector,
+        adminListener: dev
+            ? null
+            : env.adminListener ??
+                  (Platform.isWindows ? NamedPipeListener.new : null),
+        aclWriter: dev || !Platform.isWindows ? null : const WindowsAclWriter(),
+        accountSids: dev || !Platform.isWindows
+            ? null
+            : const WindowsAccountSids(),
       ),
     );
   } on YaguraException catch (e) {

@@ -4,18 +4,24 @@ import 'dart:io';
 import 'package:sqlite3/sqlite3.dart' show SqliteException;
 
 import '../errors.dart';
+import '../admin/admin_server.dart';
+import '../admin/admin_service.dart';
+import '../admin/admin_transport.dart';
 import '../hooks/hooks.dart';
 import '../instances/health_check.dart';
 import '../instances/instance_manager.dart';
+import '../instances/instance_roots.dart';
 import '../instances/instance_store.dart';
 import '../logs/instance_log_sync.dart';
 import '../logs/log_hub.dart';
 import '../logs/log_match_watch.dart';
 import '../operations/operations.dart';
+import '../platform/acl_writer.dart';
 import '../plugins/plugin_registry.dart';
 import '../process/process.dart';
 import '../snapshots/snapshots.dart';
 import '../steam/steam.dart';
+import '../version.dart';
 import 'data_dir_lock.dart';
 import 'data_directory.dart';
 import 'database.dart';
@@ -47,6 +53,10 @@ class DaemonConfig {
     this.clock,
     this.serviceMode = false,
     this.secretProtector,
+    this.adminListener,
+    this.aclWriter,
+    this.accountSids,
+    this.hostAddresses,
     this.logOptions = const LogHubOptions(),
     this.maxRetainedOperationEvents = 2000,
     this.restartDelay = const Duration(seconds: 5),
@@ -87,6 +97,20 @@ class DaemonConfig {
 
   /// Defaults to DPAPI on Windows; a seam for tests.
   final SecretProtector? secretProtector;
+
+  /// Opens the endpoint of the admin channel (design D5); null serves none.
+  /// The channel is served in service mode only.
+  final AdminListener Function()? adminListener;
+
+  /// Writes the protected DACLs of instance roots; null cannot protect a
+  /// root, so `roots add` fails `root_not_protected`.
+  final AclWriter? aclWriter;
+
+  /// Resolves `yagura-srv` and `yagura-steam` for the root DACL.
+  final AccountSids? accountSids;
+
+  /// The addresses `yagurad pair` picks from; defaults to the host's.
+  final Future<List<InternetAddress>> Function()? hostAddresses;
 
   /// Polling and persist intervals of the log hub.
   final LogHubOptions logOptions;
@@ -129,18 +153,22 @@ class Daemon {
     required this.hooks,
     required this.os,
     required this.secrets,
+    required this.roots,
+    required AdminServer? admin,
     required this.security,
     required this.startedAt,
     required SteamService steam,
     required InstanceLogSync logSync,
   }) : _lock = lock, // ignore: prefer_initializing_formals
        _database = database, // ignore: prefer_initializing_formals
+       _admin = admin, // ignore: prefer_initializing_formals
        _steam = steam, // ignore: prefer_initializing_formals
        _logSync = logSync; // ignore: prefer_initializing_formals
 
   final DataDirLock _lock;
   final YaguraDatabase _database;
   final SteamService _steam;
+  final AdminServer? _admin;
   final InstanceLogSync _logSync;
   var _closed = false;
 
@@ -150,6 +178,12 @@ class Daemon {
   final OperationRunner operations;
   final LogHub logs;
   final List<StartupNotice> startupNotices;
+
+  /// Where instance directories may live (design D5).
+  final HostRoots roots;
+
+  /// Whether the admin channel is served (`GetHealth.admin_channel_ok`).
+  bool get adminChannelOk => _admin?.serving ?? false;
 
   /// Identity, devices, pairing and audit; null unless service mode.
   final DaemonSecurity? security;
@@ -254,10 +288,19 @@ class Daemon {
       pluginsDirectory: dataDirectory.pluginsPath,
       hooks: hooks,
     );
+    final roots = HostRoots(
+      database,
+      defaultRoot: dataDirectory.instancesPath,
+      dataDirectory: dataDirectory.path,
+      writer: config.aclWriter,
+      accounts: config.accountSids,
+      clock: config.clock,
+    );
     final InstanceManager manager;
     try {
       manager = InstanceManager(
         store: InstanceStore(database),
+        roots: roots,
         secrets: secrets,
         runner: runner,
         registry: registry,
@@ -333,6 +376,33 @@ class Daemon {
     logSync.listen();
     manager.autostartInstances();
 
+    // The admin channel is served in service mode only, and a name another
+    // process holds is a notice, not a reason to stop (design D5).
+    AdminServer? admin;
+    final listener = config.adminListener;
+    if (security != null && listener != null) {
+      final service = AdminService(
+        security: security,
+        roots: roots,
+        instances: manager,
+        apiPort: () => config.apiPort,
+        status: () => {
+          'admin_channel': 'ok',
+          'mode': 'service',
+          'data_dir': dataDirectory.path,
+          'version': daemonVersion,
+        },
+        hostAddresses: config.hostAddresses,
+      );
+      final server = AdminServer(listener(), service.handle);
+      try {
+        await server.start();
+        admin = server;
+      } on YaguraException catch (e) {
+        notices.add(StartupNotice(e.reason, e.message));
+      }
+    }
+
     return Daemon._(
       dataDirectory: dataDirectory,
       lock: lock,
@@ -345,6 +415,8 @@ class Daemon {
       hooks: hooks,
       os: config.os ?? (Platform.isWindows ? 'windows' : 'linux'),
       secrets: secrets,
+      roots: roots,
+      admin: admin,
       security: security,
       startedAt: (config.clock ?? DateTime.now)(),
       steam: config.steam,
@@ -384,6 +456,7 @@ class Daemon {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    await _admin?.close();
     await _logSync.close();
     await instances.close();
     await logs.close();

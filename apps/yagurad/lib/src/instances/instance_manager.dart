@@ -20,6 +20,7 @@ import '../steam/steam.dart';
 import 'health_check.dart';
 import 'instance.dart';
 import 'instance_file.dart';
+import 'instance_roots.dart';
 import 'instance_store.dart';
 import 'lifecycle.dart';
 import 'restart_policy.dart';
@@ -35,6 +36,7 @@ class InstanceManager {
     required this.runner,
     required this.registry,
     required this.dataDirectory,
+    required this.roots,
     required this.apiPort,
     required this.os,
     required this.processHost,
@@ -64,6 +66,9 @@ class InstanceManager {
   final OperationRunner runner;
   final PluginRegistry registry;
   final DataDirectory dataDirectory;
+
+  /// The places instance directories may live.
+  final HostRoots roots;
 
   /// The daemon API port, which no instance may use.
   final int apiPort;
@@ -550,8 +555,8 @@ class InstanceManager {
   }
 
   /// The instance directory: `<data>/instances/<id>` by default, or a path
-  /// strictly under `<data>/instances` that overlaps no other instance
-  /// (design D21; configured roots come with the admin channel in M2).
+  /// strictly under `<data>/instances` or a root an administrator added with
+  /// `yagurad roots add` (design D5, D21) that overlaps no other instance.
   String _checkDirectory(String? requested, String id) {
     final root = p.normalize(p.absolute(dataDirectory.instancesPath));
     if (requested == null || requested.isEmpty) return p.join(root, id);
@@ -561,8 +566,10 @@ class InstanceManager {
       'directory $requested is not allowed: $why',
       details: {'path': requested},
     );
-    if (!p.isWithin(root, directory)) {
-      refuse('instances live under $root');
+    if (!roots.allows(directory)) {
+      refuse(
+        'instances live under ${[for (final r in roots.list()) r.path].join(', ')}',
+      );
     }
     for (final other in _records.values) {
       final theirs = p.normalize(p.absolute(other.directory));

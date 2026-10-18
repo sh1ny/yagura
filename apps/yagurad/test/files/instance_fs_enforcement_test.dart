@@ -36,6 +36,9 @@ const _allowed = <String, String>{
   'instances/instance_manager.dart':
       'lists the instances root (not an instance) in the marked-directory '
       'sweep; everything below an instance goes through InstanceFs',
+  'instances/instance_roots.dart':
+      'checks that a root an administrator names is a real directory and not a '
+      'link; a root is a host path outside every instance',
   // The run files. The daemon writes launch.json and cancel.json through
   // InstanceFs; what stays here is the daemon's by-path read of what the relay
   // wrote, whose trust is design D9 (group 9).

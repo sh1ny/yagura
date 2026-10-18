@@ -81,10 +81,10 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | host-service → Servers survive service stop and upgrade | Server exits while the daemon is down | apps/yagurad/integration_test/service/servers_survive_service_stop_and_upgrade_test.dart (`elevated`) | server_exits_while_the_daemon_is_down | 8 | red |
 | host-service → Data directory layout | Default layout created | apps/yagurad/test/host/data_directory_layout_test.dart | default_layout_created | 7 (M1) | green |
 | host-service → Data directory layout | Data directory not writable | apps/yagurad/test/host/data_directory_layout_test.dart | data_directory_not_writable | 7 (M1) | green |
-| host-service → Data directory layout | Instance root added locally | apps/yagurad/integration_test/admin/instance_roots_test.dart (`windows`) | instance_root_added_locally | 7 | red |
-| host-service → Data directory layout | Instance on another drive | apps/yagurad/integration_test/admin/instance_roots_test.dart (`windows`) | instance_on_another_drive | 7 | red |
-| host-service → Data directory layout | Root writable by non-administrators | apps/yagurad/integration_test/admin/instance_roots_test.dart (`windows`) | root_writable_by_non_administrators | 7 | red |
-| host-service → Data directory layout | Root still in use | apps/yagurad/integration_test/admin/instance_roots_test.dart (`windows`) | root_still_in_use | 7 | red |
+| host-service → Data directory layout | Instance root added locally | apps/yagurad/integration_test/admin/instance_roots_test.dart (`windows`) | instance_root_added_locally | 7 | green |
+| host-service → Data directory layout | Instance on another drive | apps/yagurad/integration_test/admin/instance_roots_test.dart (`windows`) | instance_on_another_drive | 7 | green |
+| host-service → Data directory layout | Root writable by non-administrators | apps/yagurad/integration_test/admin/instance_roots_test.dart (`windows`) | root_writable_by_non_administrators | 7 | green |
+| host-service → Data directory layout | Root still in use | apps/yagurad/integration_test/admin/instance_roots_test.dart (`windows`) | root_still_in_use | 7 | green |
 | host-service → Startup sequence | Migration with backup | apps/yagurad/test/host/startup_sequence_test.dart | migration_with_backup | 2 (M1) | green |
 | host-service → Startup sequence | Migration fails | apps/yagurad/test/host/startup_sequence_test.dart | migration_fails | 2 (M1) | green |
 | host-service → Startup sequence | Data directory used by a dev daemon first | apps/yagurad/test/host/startup_sequence_test.dart | data_directory_used_by_a_dev_daemon_first | 2 | green |
@@ -112,7 +112,7 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | instance-lifecycle → Instance creation validates settings against the plugin schema | Valid instance created | apps/yagurad/test/instances/instance_creation_validates_settings_against_the_test.dart | valid_instance_created | 7 (M1) | green |
 | instance-lifecycle → Instance creation validates settings against the plugin schema | Game-server account access set | apps/yagurad/integration_test/service/game_servers_run_under_a_low_privilege_account_test.dart (`elevated`) | game_server_account_access_set | 9 | red |
 | instance-lifecycle → Instance creation validates settings against the plugin schema | Setting violates the schema | apps/yagurad/test/instances/instance_creation_validates_settings_against_the_test.dart | setting_violates_the_schema | 7 (M1) | green |
-| instance-lifecycle → Instance creation validates settings against the plugin schema | Directory outside the instance roots | apps/yagurad/test/instances/instance_creation_validates_settings_against_the_test.dart | directory_outside_the_instance_roots | 7 | red |
+| instance-lifecycle → Instance creation validates settings against the plugin schema | Directory outside the instance roots | apps/yagurad/test/instances/instance_creation_validates_settings_against_the_test.dart | directory_outside_the_instance_roots | 7 | green |
 | instance-lifecycle → Instance creation validates settings against the plugin schema | Port equal to the daemon API port | apps/yagurad/test/instances/instance_creation_validates_settings_against_the_test.dart | port_equal_to_the_daemon_api_port | 7 (M1) | green |
 | instance-lifecycle → Instance creation validates settings against the plugin schema | Port collision with another instance | apps/yagurad/test/instances/instance_creation_validates_settings_against_the_test.dart | port_collision_with_another_instance | 7 (M1) | green |
 | instance-lifecycle → Save data is declared and snapshotted | Snapshot before update | apps/yagurad/test/instances/save_data_is_declared_and_snapshotted_test.dart | snapshot_before_update | 5 (M1) | green |
@@ -214,7 +214,7 @@ Covers: daemon-security → Local admin channel is restricted to administrators,
 
 - [x] 7.1 Write the failing tests for this group's rows; verify each fails for the stated reason.
 - [x] 7.2 Implement the admin pipe (D5): `FILE_FLAG_FIRST_PIPE_INSTANCE` with the SY/BA descriptor, `admin_channel_squatted`, the CLI's LocalSystem server check (`admin_channel_untrusted`), `elevation_required`, `daemon_not_running`, and the `pair`, `devices`, `status` and `roots` commands audited as `host-admin`. Verify: the admin-channel and host-revoke rows pass (`elevated` rows in the `elevated` workflow); flip them.
-- [ ] 7.3 Implement `roots add|remove|list` with the protected DACL written by `SetKernelObjectSecurity` (`root_not_protected`, `root_in_use`), and make instance creation check the configured roots with no ACL change on refusal. Verify: the roots rows and `directory_outside_the_instance_roots` pass; flip them; the M1 instance-creation rows still pass.
+- [x] 7.3 Implement `roots add|remove|list` with the protected DACL written by `SetKernelObjectSecurity` (`root_not_protected`, `root_in_use`), and make instance creation check the configured roots with no ACL change on refusal. Verify: the roots rows and `directory_outside_the_instance_roots` pass; flip them; the M1 instance-creation rows still pass.
 - [ ] 7.4 Document the admin CLI (`pair`, `devices`, `status`, `roots`) in the operator docs. Verify: every command and reason it can print appears in the doc.
 - [ ] 7.5 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
 
