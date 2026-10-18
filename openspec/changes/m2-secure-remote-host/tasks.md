@@ -168,7 +168,7 @@ Covers: host-service → Startup sequence (secret store step, scope recovery; M1
 - [x] 2.2 Add to `platform/win32.dart` the hand-written bindings the change needs: DPAPI, token queries (`OpenProcessToken`, `GetTokenInformation`), SID conversion, and the security-descriptor calls (`ConvertStringSecurityDescriptorToSecurityDescriptorW`, `SetKernelObjectSecurity`). Verify: `dart analyze` is clean, and a `windows` test round-trips a DPAPI blob and reads the current process's user SID.
 - [x] 2.3 Implement migration 4 (`secrets` with `scope_sid`, `instances.revision`, `instances.acl_layout`, `runs.launched_ports`, the device, certificate, pairing-code, audit and auth-failure tables, `instance_roots`, and the SteamCMD ready and size rows) and the DPAPI `SecretStore` (D3) as a fatal startup step, with service-mode recovery of foreign-scope rows (notice `secrets_reset`) and the dev-mode refusal. Verify: `data_directory_used_by_a_dev_daemon_first` and the store tests pass; `migration_with_backup` and `migration_fails` still pass; flip the rows.
 - [x] 2.4 Document the secret store, the scope rule and the recovery in `docs/` (operator notes next to the data-directory docs). Verify: the doc names `secrets_reset` and `secret_store_unavailable`, and the reason-code test from M1 task 8.3 passes.
-- [ ] 2.5 Review this group's diff with a fresh-context reviewer before group 3 starts; fix any P0/P1 finding. Verify: the review result has no open P0/P1.
+- [x] 2.5 Review this group's diff with a fresh-context reviewer before group 3 starts; fix any P0/P1 finding. Verify: the review result has no open P0/P1.
 
 ## 3. [M2] Secret settings contract
 
