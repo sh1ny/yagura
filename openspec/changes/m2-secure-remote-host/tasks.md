@@ -9,25 +9,25 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | daemon-security → Daemon identity created on first start | First start | apps/yagurad/test/security/daemon_identity_created_on_first_start_test.dart | first_start | 6 | green |
 | daemon-security → Daemon identity created on first start | Server certificate rotated | apps/yagurad/test/security/daemon_identity_created_on_first_start_test.dart | server_certificate_rotated | 6 | green |
 | daemon-security → Daemon identity created on first start | Secret store unavailable | apps/yagurad/test/security/daemon_identity_created_on_first_start_test.dart | secret_store_unavailable | 6 | green |
-| daemon-security → Pairing with a one-time code | Successful enrollment | apps/yagurad/test/security/pairing_with_a_one_time_code_test.dart | successful_enrollment | 6 | red |
-| daemon-security → Pairing with a one-time code | Expired or reused code | apps/yagurad/test/security/pairing_with_a_one_time_code_test.dart | expired_or_reused_code | 6 | red |
-| daemon-security → Pairing with a one-time code | Brute force from one address | apps/yagurad/test/security/pairing_with_a_one_time_code_test.dart | brute_force_from_one_address | 6 | red |
-| daemon-security → Pairing with a one-time code | Distributed guessing | apps/yagurad/test/security/pairing_with_a_one_time_code_test.dart | distributed_guessing | 6 | red |
+| daemon-security → Pairing with a one-time code | Successful enrollment | apps/yagurad/test/security/pairing_with_a_one_time_code_test.dart | successful_enrollment | 6 | green |
+| daemon-security → Pairing with a one-time code | Expired or reused code | apps/yagurad/test/security/pairing_with_a_one_time_code_test.dart | expired_or_reused_code | 6 | green |
+| daemon-security → Pairing with a one-time code | Brute force from one address | apps/yagurad/test/security/pairing_with_a_one_time_code_test.dart | brute_force_from_one_address | 6 | green |
+| daemon-security → Pairing with a one-time code | Distributed guessing | apps/yagurad/test/security/pairing_with_a_one_time_code_test.dart | distributed_guessing | 6 | green |
 | daemon-security → Client pins the daemon CA | Fingerprint mismatch at pairing | apps/yagura_desktop/test/client_pins_the_daemon_ca_test.dart | fingerprint_mismatch_at_pairing | 11 | red |
 | daemon-security → Client pins the daemon CA | Daemon CA matches stored CA | apps/yagura_desktop/test/client_pins_the_daemon_ca_test.dart | daemon_ca_matches_stored_ca | 11 | red |
-| daemon-security → Mutual TLS on every call | Call without a client certificate | apps/yagurad/test/security/mutual_tls_on_every_call_test.dart | call_without_a_client_certificate | 6 | red |
-| daemon-security → Mutual TLS on every call | Revoked device | apps/yagurad/test/security/mutual_tls_on_every_call_test.dart | revoked_device | 6 | red |
-| daemon-security → Mutual TLS on every call | Method added without an exemption | apps/yagurad/test/security/mutual_tls_on_every_call_test.dart | method_added_without_an_exemption | 6 | red |
-| daemon-security → Mutual TLS on every call | Certificate from another CA | apps/yagurad/test/security/mutual_tls_on_every_call_test.dart | certificate_from_another_ca | 6 | red |
-| daemon-security → Device certificate renewal | Renewal before expiry | apps/yagurad/test/security/device_certificate_renewal_test.dart | renewal_before_expiry | 6 | red |
-| daemon-security → Device certificate renewal | Revoking a renewed device | apps/yagurad/test/security/device_certificate_renewal_test.dart | revoking_a_renewed_device | 6 | red |
-| daemon-security → Device certificate renewal | Renewal without a valid certificate | apps/yagurad/test/security/device_certificate_renewal_test.dart | renewal_without_a_valid_certificate | 6 | red |
-| daemon-security → Device management | Revoke another device | apps/yagurad/test/security/device_management_test.dart | revoke_another_device | 6 | red |
-| daemon-security → Device management | Revoking the last device | apps/yagurad/test/security/device_management_test.dart | revoking_the_last_device | 6 | red |
+| daemon-security → Mutual TLS on every call | Call without a client certificate | apps/yagurad/test/security/mutual_tls_on_every_call_test.dart | call_without_a_client_certificate | 6 | green |
+| daemon-security → Mutual TLS on every call | Revoked device | apps/yagurad/test/security/mutual_tls_on_every_call_test.dart | revoked_device | 6 | green |
+| daemon-security → Mutual TLS on every call | Method added without an exemption | apps/yagurad/test/security/mutual_tls_on_every_call_test.dart | method_added_without_an_exemption | 6 | green |
+| daemon-security → Mutual TLS on every call | Certificate from another CA | apps/yagurad/test/security/mutual_tls_on_every_call_test.dart | certificate_from_another_ca | 6 | green |
+| daemon-security → Device certificate renewal | Renewal before expiry | apps/yagurad/test/security/device_certificate_renewal_test.dart | renewal_before_expiry | 6 | green |
+| daemon-security → Device certificate renewal | Revoking a renewed device | apps/yagurad/test/security/device_certificate_renewal_test.dart | revoking_a_renewed_device | 6 | green |
+| daemon-security → Device certificate renewal | Renewal without a valid certificate | apps/yagurad/test/security/device_certificate_renewal_test.dart | renewal_without_a_valid_certificate | 6 | green |
+| daemon-security → Device management | Revoke another device | apps/yagurad/test/security/device_management_test.dart | revoke_another_device | 6 | green |
+| daemon-security → Device management | Revoking the last device | apps/yagurad/test/security/device_management_test.dart | revoking_the_last_device | 6 | green |
 | daemon-security → Device management | Last device revoked on the host | apps/yagurad/integration_test/admin/device_management_on_the_host_test.dart (`windows`) | last_device_revoked_on_the_host | 7 | red |
-| daemon-security → Audit log | Instance deletion audited | apps/yagurad/test/security/audit_log_test.dart | instance_deletion_audited | 6 | red |
-| daemon-security → Audit log | Scanner flood | apps/yagurad/test/security/audit_log_test.dart | scanner_flood | 6 | red |
-| daemon-security → Audit log | Secret set without value in audit | apps/yagurad/test/security/audit_log_test.dart | secret_set_without_value_in_audit | 6 | red |
+| daemon-security → Audit log | Instance deletion audited | apps/yagurad/test/security/audit_log_test.dart | instance_deletion_audited | 6 | green |
+| daemon-security → Audit log | Scanner flood | apps/yagurad/test/security/audit_log_test.dart | scanner_flood | 6 | green |
+| daemon-security → Audit log | Secret set without value in audit | apps/yagurad/test/security/audit_log_test.dart | secret_set_without_value_in_audit | 6 | green |
 | daemon-security → Secrets never leave the daemon | No read path for secrets | apps/yagurad/test/security/secrets_never_leave_the_daemon_test.dart | no_read_path_for_secrets | 3 | green |
 | daemon-security → Secrets never leave the daemon | Data directory scan | apps/yagurad/integration_test/secrets_data_directory_scan_test.dart (`windows`) | data_directory_scan | 12 | red |
 | daemon-security → Secrets never leave the daemon | Secret store fails on write | apps/yagurad/test/security/secrets_never_leave_the_daemon_test.dart | secret_store_fails_on_write | 3 | green |
@@ -120,7 +120,7 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | instance-lifecycle → Save data is declared and snapshotted | Restore a snapshot | apps/yagurad/test/instances/save_data_is_declared_and_snapshotted_test.dart | restore_a_snapshot | 5 (M1) | green |
 | instance-lifecycle → Save data is declared and snapshotted | Restoring the oldest snapshot | apps/yagurad/test/instances/save_data_is_declared_and_snapshotted_test.dart | restoring_the_oldest_snapshot | 5 (M1) | green |
 | instance-lifecycle → Save data is declared and snapshotted | Daemon killed during a restore | apps/yagurad/test/instances/save_data_is_declared_and_snapshotted_test.dart | daemon_killed_during_a_restore | 5 (M1) | green |
-| instance-lifecycle → Save data is declared and snapshotted | Snapshot skipped on request | apps/yagurad/test/instances/save_data_is_declared_and_snapshotted_test.dart | snapshot_skipped_on_request | 6 | red |
+| instance-lifecycle → Save data is declared and snapshotted | Snapshot skipped on request | apps/yagurad/test/instances/save_data_is_declared_and_snapshotted_test.dart | snapshot_skipped_on_request | 6 | green |
 | instance-lifecycle → Save data is declared and snapshotted | Pre-delete snapshot of a deleted instance | apps/yagurad/test/instances/save_data_is_declared_and_snapshotted_test.dart | pre_delete_snapshot_of_a_deleted_instance | 5 (M1) | green |
 | instance-lifecycle → Deleting an instance protects game data | Delete with files snapshots first | apps/yagurad/test/instances/deleting_an_instance_protects_game_data_test.dart | delete_with_files_snapshots_first | 5 (M1) | green |
 | instance-lifecycle → Deleting an instance protects game data | Delete an instance whose plugin is missing | apps/yagurad/test/instances/deleting_an_instance_protects_game_data_test.dart | delete_an_instance_whose_plugin_is_missing | 5 (M1) | green |
@@ -204,7 +204,7 @@ Covers: daemon-security → Daemon identity, Pairing with a one-time code, Mutua
 
 - [x] 6.1 Implement `packages/yagura_pki` test-first (D1: DER encoder and parser, certificate and CSR build, sign and verify, the certificate profile and CSR rules; tests parse each output back, complete a TLS handshake, and check that TLS refuses a chain through a client certificate used as an issuer), then write the failing tests for this group's rows against an in-process server with a real TLS listener and clients holding certificates built with it; verify each fails for the stated reason.
 - [x] 6.2 Implement the CA, the server certificate and its rotation (D1, D4: close and re-serve, fallback to the old certificate with `server_cert_rotation_failed`, exit when both binds fail), with identity created only in service mode, and the `service_mode_required` exit for console starts without `--dev` (`run_command.dart:133-142`). Verify: the identity and development-mode rows pass; flip them.
-- [ ] 6.3 Implement the `AuthGate` in `GuardedService` and around both reflection services (D2), pairing (`Pairing.Info`, `Pairing.Enroll` with code format, throttles and the 50-guess invalidation), renewal, device listing and revocation with the 5 s stream cancellation, and the audit and auth-failure tables with in-memory aggregation (D4). Add the descriptor-walk test and a v1alpha reflection test. Verify: the remaining group rows pass, including `snapshot_skipped_on_request`; flip them.
+- [x] 6.3 Implement the `AuthGate` in `GuardedService` and around both reflection services (D2), pairing (`Pairing.Info`, `Pairing.Enroll` with code format, throttles and the 50-guess invalidation), renewal, device listing and revocation with the 5 s stream cancellation, and the audit and auth-failure tables with in-memory aggregation (D4). Add the descriptor-walk test and a v1alpha reflection test. Verify: the remaining group rows pass, including `snapshot_skipped_on_request`; flip them.
 - [ ] 6.4 Add `admin_channel_ok`, `service_accounts_ok` and `server_cert_not_after` to `DaemonHealth` in `proto/yagura/v1/system.proto`, regenerate `packages/yagura_proto`, and update `docs/protocol.md` (pairing flow, mTLS, reasons including `certificate_expired` and `csr_invalid` in the Auth reasons, the M2 row of "Methods by daemon version"; drop the conditional spike sentence and the port + 1 fallback from "Per-call authorization"). Verify: the M1 methods-by-version and reason-code tests pass.
 - [ ] 6.5 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
 

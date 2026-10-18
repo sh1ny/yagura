@@ -19,6 +19,7 @@ import '../steam/steam.dart';
 import 'data_dir_lock.dart';
 import 'data_directory.dart';
 import 'database.dart';
+import '../security/security.dart';
 import 'secret_store.dart';
 
 /// A step that failed without stopping the daemon (design D9).
@@ -128,6 +129,7 @@ class Daemon {
     required this.hooks,
     required this.os,
     required this.secrets,
+    required this.security,
     required this.startedAt,
     required SteamService steam,
     required InstanceLogSync logSync,
@@ -148,6 +150,12 @@ class Daemon {
   final OperationRunner operations;
   final LogHub logs;
   final List<StartupNotice> startupNotices;
+
+  /// Identity, devices, pairing and audit; null unless service mode.
+  final DaemonSecurity? security;
+
+  /// Notices raised after startup, such as a failed certificate rotation.
+  final List<StartupNotice> runtimeNotices = [];
 
   /// The secret store (design D3).
   final SecretStore secrets;
@@ -194,6 +202,26 @@ class Daemon {
       database.close();
       lock.release();
       rethrow;
+    }
+
+    // The identity exists only in service mode (design D5): a dev daemon
+    // serves plaintext and has no CA.
+    DaemonSecurity? security;
+    if (config.serviceMode) {
+      try {
+        security = _fatal(
+          'identity',
+          () => DaemonSecurity.open(
+            database,
+            secrets,
+            clock: () => (config.clock ?? DateTime.now)().toUtc(),
+          ),
+        );
+      } on Object {
+        database.close();
+        lock.release();
+        rethrow;
+      }
     }
 
     final notices = <StartupNotice>[];
@@ -317,6 +345,7 @@ class Daemon {
       hooks: hooks,
       os: config.os ?? (Platform.isWindows ? 'windows' : 'linux'),
       secrets: secrets,
+      security: security,
       startedAt: (config.clock ?? DateTime.now)(),
       steam: config.steam,
       logSync: logSync,
@@ -360,6 +389,7 @@ class Daemon {
     await logs.close();
     await operations.close();
     await _steam.close();
+    security?.close();
     _database.close();
     _lock.release();
   }
