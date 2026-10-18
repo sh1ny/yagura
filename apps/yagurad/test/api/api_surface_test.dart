@@ -6,6 +6,7 @@ import 'package:grpc/grpc.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagura_proto/yagura_proto.dart' as pb;
+import 'package:yagurad/src/host/secret_store.dart';
 
 import '../support/api_support.dart';
 import '../support/daemon_support.dart';
@@ -67,9 +68,12 @@ void main() {
   });
 
   group('Instances', () {
-    test('SetSecret fails secret_store_unavailable', () async {
+    test('SetSecret on a host without a secret store fails', () async {
       final env = TestEnv()..installValheim();
-      final api = await ApiHarness.start(env);
+      final api = await ApiHarness.start(
+        env,
+        daemon: await env.start(secretProtector: UnsupportedSecretProtector()),
+      );
       final instance = await api.createValheim();
 
       await expectLater(
@@ -79,15 +83,6 @@ void main() {
             key: 'password',
             value: 'hunter2',
           ),
-        ),
-        failsWithStatus(
-          StatusCode.failedPrecondition,
-          'secret_store_unavailable',
-        ),
-      );
-      await expectLater(
-        api.instances.deleteSecret(
-          pb.DeleteSecretRequest(instanceId: instance.id, key: 'password'),
         ),
         failsWithStatus(
           StatusCode.failedPrecondition,

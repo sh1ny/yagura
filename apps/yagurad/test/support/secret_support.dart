@@ -48,3 +48,23 @@ const devSid = 'S-1-5-21-1-2-3-1001';
 
 /// The scope of the service (LocalSystem).
 const serviceSid = 'S-1-5-18';
+
+/// A [FakeSecretProtector] whose writes can be made to fail, like a DPAPI
+/// call that returns an error: reads of earlier rows still work.
+class FlakySecretProtector extends FakeSecretProtector {
+  FlakySecretProtector(super.scopeSid, {super.machine});
+
+  /// When set, [protect] refuses with `secret_store_unavailable`.
+  bool failWrites = false;
+
+  @override
+  Uint8List protect(Uint8List plain) {
+    if (failWrites) {
+      throw YaguraException(
+        'secret_store_unavailable',
+        'the secret store refused the write',
+      );
+    }
+    return super.protect(plain);
+  }
+}

@@ -5,6 +5,7 @@ import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/operations/operations.dart';
 
 import '../support/daemon_support.dart';
+import '../support/secret_support.dart';
 
 void main() {
   test('context_contents', () async {
@@ -31,6 +32,28 @@ void main() {
     expect(context['os'], 'windows');
     expect(context['paths'], {'server': 'server'});
     expect(context['ports'], containsPair('game', 2456));
+  });
+
+  test('context_with_a_secret_set', () async {
+    final env = TestEnv();
+    env.installValheim(
+      hooks: 'exports.onPreStart = (ctx) => ({args: [JSON.stringify(ctx)]});',
+    );
+    final daemon = await env.start(
+      secretProtector: FakeSecretProtector(devSid),
+    );
+    final instance = await createInstalled(daemon);
+    daemon.instances.setSecret(instance.id, 'password', 'hunter2');
+
+    final done = await runStart(daemon, instance.id);
+
+    expect(done.status, OperationStatus.succeeded, reason: done.resultMessage);
+    final text = env.process.launches.single.args.last;
+    final settings =
+        (jsonDecode(text) as Map<String, Object?>)['settings']!
+            as Map<String, Object?>;
+    expect(settings['password'], {'secret': true, 'set': true});
+    expect(text, isNot(contains('hunter2')));
   });
 
   // The relay rotates its capture only on whole line breaks of the server's

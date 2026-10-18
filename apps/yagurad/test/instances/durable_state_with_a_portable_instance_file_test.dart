@@ -6,6 +6,7 @@ import 'package:test/test.dart';
 import 'package:yagurad/src/instances/instance.dart';
 
 import '../support/daemon_support.dart';
+import '../support/secret_support.dart';
 
 Map<String, Object?> readInstanceFile(Instance instance) => jsonDecode(
   File(p.join(instance.directory, 'instance.json')).readAsStringSync(),
@@ -77,14 +78,18 @@ void main() {
   test('secrets_excluded_from_instance_json', () async {
     final env = TestEnv();
     env.installValheim();
-    final daemon = await env.start();
+    final daemon = await env.start(
+      secretProtector: FakeSecretProtector(devSid),
+    );
     final instance = await createValheim(daemon);
+    daemon.instances.setSecret(instance.id, 'password', 'hunter2');
 
     final text = File(p.join(instance.directory, 'instance.json'))
         .readAsStringSync();
     final settings = (jsonDecode(text) as Map)['settings']! as Map;
 
     expect(settings['password'], {'secret': true});
+    expect(text, isNot(contains('hunter2')));
     expect(settings['serverName'], 'Friends');
   });
 }
