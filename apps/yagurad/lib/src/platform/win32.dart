@@ -9,7 +9,14 @@ import 'package:ffi/ffi.dart';
 ///
 /// Only touch [instance] on Windows.
 class Win32 {
-  Win32._() : _kernel = DynamicLibrary.open('kernel32.dll');
+  Win32._() : this._open(DynamicLibrary.open('kernel32.dll'));
+
+  Win32._open(this._kernel)
+    // Bound at once: binding it after a failed call (lazily) would reset the
+    // error it is about to read.
+    : getLastError = _kernel.lookupFunction<Uint32 Function(), int Function()>(
+        'GetLastError',
+      );
 
   final DynamicLibrary _kernel;
 
@@ -304,8 +311,8 @@ class Win32 {
         )
       >('PeekNamedPipe');
 
-  late final int Function() getLastError = _kernel
-      .lookupFunction<Uint32 Function(), int Function()>('GetLastError');
+  /// `GetLastError`.
+  final int Function() getLastError;
 
   late final int Function(Pointer<Void>) _localFree = _kernel
       .lookupFunction<

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/errors.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/host/secret_store.dart';
 
@@ -136,6 +137,41 @@ void main() {
     expect(store.recovery.ownedIds, ['ca']);
     expect(db.sqlite.select('SELECT id FROM secrets'), isEmpty);
     expect(db.sqlite.select('SELECT id FROM instances'), hasLength(2));
+  });
+
+  test('service_mode_with_a_dpapi_fault_deletes_nothing', () {
+    var db = openDb();
+    addInstance(db, 'A', 'Alpha');
+    DatabaseSecretStore.open(
+        db,
+        FakeSecretProtector(serviceSid),
+        serviceMode: true,
+      )
+      ..put('a1', bytes('x'), instanceId: 'A', setting: 'password')
+      ..put('ca', bytes('key'));
+    db.close();
+
+    // The same account and machine, but DPAPI fails for another reason than
+    // a wrong key: the rows are not known to be foreign.
+    db = openDb();
+    addTearDown(db.close);
+    final protector = FlakySecretProtector(serviceSid)..failReads = true;
+
+    expect(
+      () => DatabaseSecretStore.open(db, protector, serviceMode: true),
+      throwsA(
+        isA<YaguraException>()
+            .having((e) => e.reason, 'reason', 'secret_store_unavailable')
+            .having((e) => e.message, 'message', contains('1312')),
+      ),
+    );
+
+    expect(db.sqlite.select('SELECT id FROM secrets'), hasLength(2));
+    expect(db.sqlite.select('SELECT id FROM instances'), hasLength(1));
+    // With DPAPI back, the same rows open.
+    final store = openStore(db, serviceSid, service: true);
+    expect(store.recovery.isEmpty, isTrue);
+    expect(store.get('ca'), bytes('key'));
   });
 
   test('dev_mode_does_not_test_decrypt_its_own_scope', () {

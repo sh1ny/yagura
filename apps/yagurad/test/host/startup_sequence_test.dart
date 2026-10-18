@@ -154,6 +154,42 @@ void main() {
     expect(reset.single.message, allOf(contains(a.id), contains('A')));
   });
 
+  test('a_dpapi_fault_at_service_start_is_fatal_and_deletes_nothing', () async {
+    final env = TestEnv();
+    final first = await env.start(
+      serviceMode: true,
+      secretProtector: FakeSecretProtector(serviceSid),
+    );
+    first.secrets.put('ca-key', Uint8List.fromList([9]));
+    await env.closeDaemons();
+
+    await expectLater(
+      env.start(
+        serviceMode: true,
+        secretProtector: FlakySecretProtector(serviceSid)..failReads = true,
+      ),
+      failsWith(
+        'secret_store_unavailable',
+        messageHas: ['1312'],
+        details: {'step': 'secret_store'},
+      ),
+    );
+
+    final db = YaguraDatabase.open(p.join(env.data, 'yagura.db'));
+    addTearDown(db.close);
+    expect(db.sqlite.select('SELECT id FROM secrets'), hasLength(1));
+    // Restarted with a working DPAPI, the CA key is still there.
+    final again = await env.start(
+      serviceMode: true,
+      secretProtector: FakeSecretProtector(serviceSid),
+    );
+    expect(again.secrets.get('ca-key'), Uint8List.fromList([9]));
+    expect(
+      again.startupNotices.where((n) => n.step == 'secrets_reset'),
+      isEmpty,
+    );
+  });
+
   test('dev_daemon_refuses_a_data_directory_of_the_service', () async {
     final env = TestEnv();
     final service = await env.start(

@@ -12,9 +12,17 @@ abstract interface class SecretProtector {
 
   Uint8List protect(Uint8List plain);
 
-  /// Throws `secret_store_unavailable` when [blob] cannot be opened in this
-  /// scope.
+  /// Throws [WrongSecretKey] when [blob] can never be opened by this scope's
+  /// key, and any other `secret_store_unavailable` when it cannot be opened
+  /// now for another reason.
   Uint8List unprotect(Uint8List blob);
+}
+
+/// [SecretProtector.unprotect] failed because the blob belongs to another key
+/// (another account, or another machine's DPAPI key): the row is foreign, not
+/// merely unreadable at the moment.
+class WrongSecretKey extends YaguraException {
+  WrongSecretKey(String message) : super('secret_store_unavailable', message);
 }
 
 /// DPAPI user scope of the account the process runs as (ADR 0011): no
@@ -46,6 +54,9 @@ class DpapiSecretProtector implements SecretProtector {
   Uint8List unprotect(Uint8List blob) {
     try {
       return dpapiUnprotect(blob);
+    } on DpapiError catch (e) {
+      if (e.isWrongKey) throw WrongSecretKey('$e');
+      throw YaguraException('secret_store_unavailable', '$e');
     } on Win32Error catch (e) {
       throw YaguraException('secret_store_unavailable', '$e');
     }
@@ -158,7 +169,9 @@ class DatabaseSecretStore implements SecretStore {
   ///
   /// In [serviceMode] the rows of this scope are also test-decrypted once: a
   /// data directory moved to another machine keeps the SID of LocalSystem but
-  /// not its DPAPI key, so a row that fails to open counts as foreign.
+  /// not its DPAPI key, so a row that fails with a wrong-key error counts as
+  /// foreign. Any other failure throws `secret_store_unavailable` and deletes
+  /// nothing.
   static DatabaseSecretStore open(
     YaguraDatabase database,
     SecretProtector protector, {
@@ -195,7 +208,10 @@ class DatabaseSecretStore implements SecretStore {
             Uint8List.fromList(row['blob']! as List<int>),
           );
           plain.fillRange(0, plain.length, 0);
-        } on YaguraException {
+        } on WrongSecretKey {
+          // Only a wrong-key error makes a row foreign. Any other failure
+          // escapes: the step exits `secret_store_unavailable` and nothing is
+          // deleted, so a transient fault never costs a secret.
           lost.add(row);
         }
       }

@@ -32,10 +32,7 @@ class FakeSecretProtector implements SecretProtector {
     final length = blob[0];
     final tag = String.fromCharCodes(blob.sublist(1, 1 + length));
     if (tag != _tag) {
-      throw YaguraException(
-        'secret_store_unavailable',
-        'secret protected for $tag, not $_tag',
-      );
+      throw WrongSecretKey('secret protected for $tag, not $_tag');
     }
     return Uint8List.fromList([
       for (final b in blob.sublist(1 + length)) b ^ 0x5A,
@@ -56,6 +53,21 @@ class FlakySecretProtector extends FakeSecretProtector {
 
   /// When set, [protect] refuses with `secret_store_unavailable`.
   bool failWrites = false;
+
+  /// When set, [unprotect] fails like a DPAPI error that is not a wrong-key
+  /// one (the profile cannot be loaded, say): the row may well be fine.
+  bool failReads = false;
+
+  @override
+  Uint8List unprotect(Uint8List blob) {
+    if (failReads) {
+      throw YaguraException(
+        'secret_store_unavailable',
+        'CryptUnprotectData failed with error 1312',
+      );
+    }
+    return super.unprotect(blob);
+  }
 
   @override
   Uint8List protect(Uint8List plain) {

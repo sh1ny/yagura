@@ -25,6 +25,38 @@ void main() {
     expect(() => dpapiUnprotect(blob), throwsA(isA<Exception>()));
   });
 
+  test('dpapi_blob_of_an_unknown_master_key_is_a_wrong_key', () {
+    // What a blob protected on another machine looks like: its master key
+    // GUID (bytes 24 to 39) names a key this machine does not have. The code
+    // must be read right after the call: it is NTE_BAD_KEY_STATE.
+    for (var variant = 0; variant < 3; variant++) {
+      final blob = dpapiProtect(Uint8List.fromList([1, 2, 3]));
+      for (var i = 24; i < 40; i++) {
+        blob[i] = (i * 37 + variant * 11) & 0xFF;
+      }
+      expect(
+        () => dpapiUnprotect(blob),
+        throwsA(
+          isA<DpapiError>()
+              .having((e) => e.isWrongKey, 'isWrongKey', isTrue)
+              .having((e) => e.code, 'code', isNot(0)),
+        ),
+        reason: 'variant $variant',
+      );
+    }
+  });
+
+  test('dpapi_blob_that_is_too_short_is_not_a_wrong_key', () {
+    expect(
+      () => dpapiUnprotect(Uint8List(0)),
+      throwsA(
+        isA<DpapiError>()
+            .having((e) => e.code, 'code', 87)
+            .having((e) => e.isWrongKey, 'isWrongKey', isFalse),
+      ),
+    );
+  });
+
   test('current_user_sid_is_read_from_the_process_token', () {
     final sid = currentUserSid();
 

@@ -17,6 +17,39 @@ class Win32Error implements Exception {
   String toString() => 'Win32Error: $call failed with error $code';
 }
 
+/// `NTE_BAD_KEY_STATE`: the key (a DPAPI master key) is not usable in this
+/// state; what an unknown master key yields.
+const ntBadKeyState = 0x8009000B;
+
+/// `NTE_BAD_DATA`.
+const ntBadData = 0x80090005;
+
+/// `ERROR_INVALID_DATA`: the blob is damaged, or its integrity check fails.
+const errorInvalidData = 13;
+
+/// Whether a `CryptUnprotectData` failure with [code] means the blob can
+/// never be opened by this key (a wrong-key failure, design D3). Any other
+/// code, a transient or environmental fault, says nothing about the blob.
+bool isWrongKeyCode(int code) {
+  final unsigned = code & 0xFFFFFFFF;
+  return unsigned == ntBadKeyState ||
+      unsigned == ntBadData ||
+      unsigned == errorInvalidData;
+}
+
+/// A DPAPI call failed; [code] is the Win32 error.
+class DpapiError extends Win32Error {
+  DpapiError(super.call, super.code);
+
+  /// Whether the blob can never be opened by this key (see
+  /// [isWrongKeyCode]).
+  bool get isWrongKey => isWrongKeyCode(code);
+
+  @override
+  String toString() =>
+      '$call failed with error $code (0x${(code & 0xFFFFFFFF).toRadixString(16)})';
+}
+
 Win32Error _failed(String call) =>
     Win32Error(call, Win32.instance.getLastError());
 
@@ -171,8 +204,9 @@ Uint8List dpapiProtect(Uint8List plain) {
   }
 }
 
-/// Reverses [dpapiProtect]; throws [Win32Error] when the blob is damaged or
-/// protected for another scope.
+/// Reverses [dpapiProtect]; throws [DpapiError] when the blob is damaged or
+/// protected for another scope, or DPAPI fails for any other reason.
+/// [DpapiError.isWrongKey] tells the two apart.
 Uint8List dpapiUnprotect(Uint8List blob) {
   final win32 = Win32.instance;
   final input = calloc<Uint8>(16);
@@ -189,7 +223,7 @@ Uint8List dpapiUnprotect(Uint8List blob) {
           output.cast(),
         ) ==
         0) {
-      throw _failed('CryptUnprotectData');
+      throw DpapiError('CryptUnprotectData', win32.getLastError());
     }
     return _takeBlob(output);
   } finally {
