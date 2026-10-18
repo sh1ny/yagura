@@ -126,11 +126,24 @@ void main() {
       setting: 'password',
     );
     await env.closeDaemons();
+    final before = YaguraDatabase.open(p.join(env.data, 'yagura.db'));
+    final stored = before.sqlite.select('SELECT id, scope_sid FROM secrets');
+    before.close();
+    expect(
+      stored.single['scope_sid'],
+      devSid,
+      reason: 'the dev daemon stored it',
+    );
 
     daemon = await env.start(
       serviceMode: true,
       secretProtector: FakeSecretProtector(serviceSid),
     );
+
+    // Recovery deleted the row, not just hid it.
+    final db = YaguraDatabase.open(p.join(env.data, 'yagura.db'));
+    addTearDown(db.close);
+    expect(db.sqlite.select('SELECT id FROM secrets'), isEmpty);
 
     final kept = daemon.instances.get(a.id);
     expect(kept.name, 'A');

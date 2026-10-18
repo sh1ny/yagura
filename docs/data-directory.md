@@ -33,4 +33,8 @@ The service runs as LocalSystem (`S-1-5-18`); a `--dev` daemon runs as the logge
 | `secret_store_unavailable` naming two SIDs when a dev daemon starts | The data directory holds secrets of the service (or of another user) | Start the dev daemon with a different `--data-dir`; do not delete `yagura.db` |
 | `secret_store_unavailable` naming one error | DPAPI failed for the current account, for example because its profile cannot be loaded | Fix the account and restart; nothing was deleted |
 
-Moving a data directory to another Windows machine, or restoring a backup there, behaves like the service case: the service starts, keeps every instance, and reports `secrets_reset`.
+### Another machine, and Linux
+
+LocalSystem has the same SID (`S-1-5-18`) on every machine, but its DPAPI key belongs to one machine. A data directory moved or restored to another host therefore keeps matching `scope_sid` values whose blobs cannot be opened. To catch this, the service test-decrypts every row of its own scope once while it starts (the plaintext is cleared at once) and treats a row that fails like a row of another account: it is deleted, and `secrets_reset` names the instances affected. The service starts, keeps every instance, and the secret settings and daemon-owned secrets are set or created again. A dev daemon does not test-decrypt; it only refuses rows of another SID.
+
+Linux has no secret store until M5: the store opens empty and refuses to hold a secret (`secret_store_unavailable`).

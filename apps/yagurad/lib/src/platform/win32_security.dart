@@ -133,6 +133,8 @@ Uint8List _takeBlob(Pointer<Uint8> blob) {
   final length = blob.cast<Uint32>().value;
   final data = (blob + 8).cast<Pointer<Uint8>>().value;
   final bytes = Uint8List.fromList(data.asTypedList(length));
+  // The system copy may hold a secret: clear it before releasing it.
+  data.asTypedList(length).fillRange(0, length, 0);
   Win32.instance.localFree(data.cast());
   return bytes;
 }
@@ -199,9 +201,9 @@ Uint8List dpapiUnprotect(Uint8List blob) {
 }
 
 /// Converts [sddl] to a self-relative security descriptor and passes it to
-/// [use]; the descriptor is freed afterwards. Returns `false` when [sddl] does
-/// not parse.
-bool _withDescriptor(String sddl, void Function(Pointer<Void> sd) use) {
+/// [use]; the descriptor is freed afterwards. Returns the conversion error
+/// (captured right after the call) when [sddl] does not parse, else `null`.
+Win32Error? _withDescriptor(String sddl, void Function(Pointer<Void> sd) use) {
   final win32 = Win32.instance;
   final text = sddl.toNativeUtf16();
   final out = calloc<Pointer<Void>>();
@@ -213,14 +215,14 @@ bool _withDescriptor(String sddl, void Function(Pointer<Void> sd) use) {
           nullptr,
         ) ==
         0) {
-      return false;
+      return _failed('ConvertStringSecurityDescriptorToSecurityDescriptorW');
     }
     try {
       use(out.value);
     } finally {
       win32.localFree(out.value);
     }
-    return true;
+    return null;
   } finally {
     calloc
       ..free(text)
@@ -229,7 +231,7 @@ bool _withDescriptor(String sddl, void Function(Pointer<Void> sd) use) {
 }
 
 /// Whether SDDL [sddl] converts to a security descriptor.
-bool sddlParses(String sddl) => _withDescriptor(sddl, (_) {});
+bool sddlParses(String sddl) => _withDescriptor(sddl, (_) {}) == null;
 
 /// Replaces the DACL of the file at [path] with the one from [sddl], through
 /// `SetKernelObjectSecurity` on a handle opened for `WRITE_DAC` without
@@ -237,20 +239,26 @@ bool sddlParses(String sddl) => _withDescriptor(sddl, (_) {});
 void setFileDacl(String path, String sddl) {
   final win32 = Win32.instance;
   final name = path.toNativeUtf16();
-  final handle = win32.createFile(
-    name,
-    Win32.writeDac,
-    Win32.fileShareReadWrite,
-    nullptr,
-    Win32.openExisting,
-    Win32.fileFlagBackupSemantics | Win32.fileFlagOpenReparsePoint,
-    0,
-  );
-  calloc.free(name);
-  if (handle == Win32.invalidHandle) throw _failed('CreateFileW');
+  final int handle;
+  final int openError;
+  try {
+    handle = win32.createFile(
+      name,
+      Win32.writeDac,
+      Win32.fileShareReadWrite,
+      nullptr,
+      Win32.openExisting,
+      Win32.fileFlagBackupSemantics | Win32.fileFlagOpenReparsePoint,
+      0,
+    );
+    openError = handle == Win32.invalidHandle ? win32.getLastError() : 0;
+  } finally {
+    calloc.free(name);
+  }
+  if (handle == Win32.invalidHandle) throw Win32Error('CreateFileW', openError);
   try {
     Win32Error? failure;
-    final parsed = _withDescriptor(sddl, (sd) {
+    final parseError = _withDescriptor(sddl, (sd) {
       if (win32.setKernelObjectSecurity(
             handle,
             Win32.daclSecurityInformation |
@@ -261,7 +269,7 @@ void setFileDacl(String path, String sddl) {
         failure = _failed('SetKernelObjectSecurity');
       }
     });
-    if (!parsed) throw _failed('ConvertStringSecurityDescriptor');
+    if (parseError != null) throw parseError;
     if (failure case final error?) throw error;
   } finally {
     win32.closeHandle(handle);

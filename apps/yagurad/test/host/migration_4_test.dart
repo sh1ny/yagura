@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagurad/src/host/database.dart';
+import 'package:yagurad/src/host/migrations.dart';
 
 Set<String> columnsOf(YaguraDatabase db, String table) => {
   for (final row in db.sqlite.select('PRAGMA table_info($table)'))
@@ -76,17 +77,38 @@ void main() {
     });
   });
 
-  test('existing_instances_start_at_revision_1', () {
-    final old = YaguraDatabase.open(p.join(dir.path, 'old.db'));
-    addTearDown(old.close);
-    old.sqlite.execute(
-      'INSERT INTO instances(id, name, plugin_id, plugin_version, directory, '
-      'state, settings_json, created_at, state_changed_at) '
-      "VALUES ('A', 'A', 'valheim', '1', 'd', 'stopped', '{}', 1, 1)",
+  test('existing_rows_get_the_new_column_defaults', () {
+    final path = p.join(dir.path, 'old.db');
+    final v3 = YaguraDatabase.open(
+      path,
+      migrations: allMigrations.take(3).toList(),
     );
+    expect(v3.schemaVersion, 3);
+    v3.sqlite
+      ..execute(
+        'INSERT INTO instances(id, name, plugin_id, plugin_version, '
+        'directory, state, settings_json, created_at, state_changed_at) '
+        "VALUES ('A', 'A', 'valheim', '1', 'd', 'stopped', '{}', 1, 1)",
+      )
+      ..execute(
+        'INSERT INTO runs(run_id, instance_id, directory, state, created_at) '
+        "VALUES ('r1', 'A', 'd', 'ended', 1)",
+      );
+    v3.close();
 
-    final row = old.sqlite.select('SELECT revision, acl_layout FROM instances');
-    expect(row.single['revision'], 1);
-    expect(row.single['acl_layout'], 0);
+    final migrated = YaguraDatabase.open(path);
+    addTearDown(migrated.close);
+
+    expect(migrated.schemaVersion, allMigrations.last.number);
+    final instance = migrated.sqlite
+        .select('SELECT name, revision, acl_layout FROM instances')
+        .single;
+    expect(instance['name'], 'A');
+    expect(instance['revision'], 1);
+    expect(instance['acl_layout'], 0);
+    final run = migrated.sqlite
+        .select('SELECT launched_ports FROM runs')
+        .single;
+    expect(run['launched_ports'], '[]');
   });
 }

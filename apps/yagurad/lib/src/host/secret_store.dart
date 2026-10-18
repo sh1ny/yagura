@@ -20,7 +20,15 @@ abstract interface class SecretProtector {
 /// DPAPI user scope of the account the process runs as (ADR 0011): no
 /// `CRYPTPROTECT_LOCAL_MACHINE`, so another account cannot open the blobs.
 class DpapiSecretProtector implements SecretProtector {
-  DpapiSecretProtector() : scopeSid = currentUserSid();
+  DpapiSecretProtector() : scopeSid = _currentSid();
+
+  static String _currentSid() {
+    try {
+      return currentUserSid();
+    } on Win32Error catch (e) {
+      throw YaguraException('secret_store_unavailable', '$e');
+    }
+  }
 
   @override
   final String scopeSid;
@@ -139,6 +147,10 @@ class DatabaseSecretStore implements SecretStore {
   /// read. In [serviceMode] they are deleted in one transaction and reported
   /// in [recovery]; otherwise nothing changes and this throws
   /// `secret_store_unavailable` naming both SIDs.
+  ///
+  /// In [serviceMode] the rows of this scope are also test-decrypted once: a
+  /// data directory moved to another machine keeps the SID of LocalSystem but
+  /// not its DPAPI key, so a row that fails to open counts as foreign.
   static DatabaseSecretStore open(
     YaguraDatabase database,
     SecretProtector protector, {
@@ -151,10 +163,7 @@ class DatabaseSecretStore implements SecretStore {
       'WHERE s.scope_sid <> ? ORDER BY s.created_at, s.id',
       [sid],
     );
-    if (foreign.isEmpty) {
-      return DatabaseSecretStore._(database, protector, const SecretRecovery());
-    }
-    if (!serviceMode) {
+    if (foreign.isNotEmpty && !serviceMode) {
       final other = {for (final row in foreign) row['scope_sid']! as String};
       throw YaguraException(
         'secret_store_unavailable',
@@ -164,9 +173,31 @@ class DatabaseSecretStore implements SecretStore {
         details: {'current_sid': sid, 'foreign_sids': other.toList()..sort()},
       );
     }
+    final lost = [...foreign];
+    if (serviceMode) {
+      final own = database.sqlite.select(
+        'SELECT s.id, s.instance_id, s.scope_sid, i.name, s.blob '
+        'FROM secrets s LEFT JOIN instances i ON i.id = s.instance_id '
+        'WHERE s.scope_sid = ? ORDER BY s.created_at, s.id',
+        [sid],
+      );
+      for (final row in own) {
+        try {
+          final plain = protector.unprotect(
+            Uint8List.fromList(row['blob']! as List<int>),
+          );
+          plain.fillRange(0, plain.length, 0);
+        } on YaguraException {
+          lost.add(row);
+        }
+      }
+    }
+    if (lost.isEmpty) {
+      return DatabaseSecretStore._(database, protector, const SecretRecovery());
+    }
     final names = <String, String>{};
     final owned = <String>[];
-    for (final row in foreign) {
+    for (final row in lost) {
       if (row['instance_id'] case final String instance) {
         names[instance] = (row['name'] as String?) ?? '';
       } else {
@@ -174,9 +205,11 @@ class DatabaseSecretStore implements SecretStore {
       }
     }
     database.transaction(() {
-      database.sqlite.execute('DELETE FROM secrets WHERE scope_sid <> ?', [
-        sid,
-      ]);
+      for (final row in lost) {
+        database.sqlite.execute('DELETE FROM secrets WHERE id = ?', [
+          row['id'],
+        ]);
+      }
     });
     return DatabaseSecretStore._(
       database,

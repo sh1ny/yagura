@@ -109,6 +109,49 @@ void main() {
     );
   });
 
+  test('service_mode_deletes_rows_protected_on_another_machine', () {
+    var db = openDb();
+    addInstance(db, 'A', 'Alpha');
+    addInstance(db, 'B', 'Beta');
+    DatabaseSecretStore.open(
+        db,
+        FakeSecretProtector(serviceSid, machine: 'old-host'),
+        serviceMode: true,
+      )
+      ..put('a1', bytes('x'), instanceId: 'A', setting: 'password')
+      ..put('ca', bytes('key'));
+    db.close();
+
+    // Same SID (LocalSystem is S-1-5-18 everywhere), another DPAPI key.
+    db = openDb();
+    addTearDown(db.close);
+    final store = DatabaseSecretStore.open(
+      db,
+      FakeSecretProtector(serviceSid, machine: 'new-host'),
+      serviceMode: true,
+    );
+
+    expect(store.recovery.instanceIds, ['A']);
+    expect(store.recovery.instanceNames, {'A': 'Alpha'});
+    expect(store.recovery.ownedIds, ['ca']);
+    expect(db.sqlite.select('SELECT id FROM secrets'), isEmpty);
+    expect(db.sqlite.select('SELECT id FROM instances'), hasLength(2));
+  });
+
+  test('dev_mode_does_not_test_decrypt_its_own_scope', () {
+    var db = openDb();
+    openStore(db, devSid, service: false).put('s1', bytes('x'));
+    db.close();
+
+    db = openDb();
+    addTearDown(db.close);
+    final protector = FakeSecretProtector(devSid, machine: 'other-host');
+    final store = DatabaseSecretStore.open(db, protector, serviceMode: false);
+
+    expect(store.recovery.isEmpty, isTrue);
+    expect(db.sqlite.select('SELECT id FROM secrets'), hasLength(1));
+  });
+
   test('service_mode_keeps_rows_of_its_own_scope', () {
     var db = openDb();
     addInstance(db, 'A', 'Alpha');

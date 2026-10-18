@@ -49,8 +49,16 @@ void main() {
     final dir = Directory.systemTemp.createTempSync('yagurad_sddl_');
     addTearDown(() => dir.deleteSync(recursive: true));
     final file = File(p.join(dir.path, 'f.txt'))..writeAsStringSync('x');
+    String acl() => Process.runSync('icacls', [file.path]).stdout as String;
+    // A file in the temp folder inherits Administrators from its parent.
+    expect(acl(), allOf(contains('Administrators'), contains('(I)')));
+
     setFileDacl(file.path, 'D:P(A;;GA;;;${currentUserSid()})(A;;GA;;;SY)');
 
+    final after = acl();
+    expect(after, contains(r'NT AUTHORITY\SYSTEM'));
+    expect(after, isNot(contains('Administrators')));
+    expect(after, isNot(contains('(I)')), reason: 'protected: no inheritance');
     expect(file.readAsStringSync(), 'x');
   });
 }
