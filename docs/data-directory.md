@@ -38,3 +38,52 @@ The service runs as LocalSystem (`S-1-5-18`); a `--dev` daemon runs as the logge
 LocalSystem has the same SID (`S-1-5-18`) on every machine, but its DPAPI key belongs to one machine. A data directory moved or restored to another host therefore keeps matching `scope_sid` values whose blobs cannot be opened. To catch this, the service test-decrypts every row of its own scope once while it starts (the plaintext is cleared at once) and treats a row as foreign only when DPAPI fails with a wrong-key error (`NTE_BAD_KEY_STATE`, `NTE_BAD_DATA` or `ERROR_INVALID_DATA`, the errors for a blob that this key can never open). Such a row is handled like a row of another account: it is deleted, and `secrets_reset` names the instances affected. Any other DPAPI error stops the start with `secret_store_unavailable` naming the error, and nothing is deleted, so a temporary fault cannot cost the daemon's CA key. The service starts, keeps every instance, and the secret settings and daemon-owned secrets are set or created again. A dev daemon does not test-decrypt; it only refuses rows of another SID.
 
 Linux has no secret store until M5: the store opens empty and refuses to hold a secret (`secret_store_unavailable`).
+
+## Admin commands
+
+The commands that run on the host reach the running service over a local named pipe, the admin channel, and never open `yagura.db` themselves. Run them from an elevated prompt (Run as administrator). The service serves the pipe `\\.\pipe\yagurad-admin` with a descriptor that names only SYSTEM and Administrators, so no other account can open it. The pipe is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`: if another process already serves the name, the service starts without the channel (startup notice and `GetHealth.admin_channel_ok` false, reason `admin_channel_squatted`) rather than share it. The CLI in turn checks that the pipe is served by a LocalSystem process before it sends anything, so a squatter never sees a command. The channel takes 4 clients at a time (a fifth waits), 64 KiB per message, and drops a client that sends nothing for 5 seconds. A dev daemon (`--dev`) has no admin channel.
+
+What changes state is audited as the device `host-admin` (`System.ListAudit` shows it): `pair`, `devices revoke` and `roots add|remove`, including the reason when one is refused. Reading commands are not audited.
+
+| Command | Does |
+|---|---|
+| `yagurad pair` | Issues a pairing code (valid 10 minutes; it replaces any earlier code) and prints the pairing string `yagura://<host>:<port>?code=<CODE>&ca=sha256:<64 hex>&name=<name>`. The host is the first non-loopback IPv4 address of the machine and the port is the API port |
+| `yagurad pair --address <host>[:<port>]` | The same, with the host (and port) you give, for a machine reached by a name or through a gateway |
+| `yagurad devices list` | One line per device: id, name, `active` or `revoked`, last seen, and who revoked it |
+| `yagurad devices revoke <device>` | Revokes a device by id, or by name when one active device has it. The host may revoke the last device; the API refuses that (`last_device`) |
+| `yagurad status` | The mode, data directory, API port, number of active devices and instances, and `admin_channel: ok` |
+| `yagurad roots add <path>` | Makes an existing directory an instance root (see below) |
+| `yagurad roots remove <path>` | Removes a root from the configuration while no instance lives in it |
+| `yagurad roots list` | The default root (`<data>\instances`) and the roots added |
+
+### Instance roots
+
+Instances live under `<data>\instances` unless an administrator adds another root. `CreateInstance` with a `directory` accepts a path strictly below a root, never a root itself, and refuses anything else with `directory_not_allowed` without changing any ACL. There is no API method to add or remove a root; only these commands do.
+
+`roots add` first replaces the DACL of the directory (ADR 0015): protected, owner Administrators, full control (inherited) for SYSTEM and Administrators, and traverse only for `yagura-srv` and `yagura-steam` where those accounts exist. They cannot create, rename or delete anything directly in the root, and nobody else can write to it. When the descriptor cannot be written (a volume without ACLs, a link, a missing path, no right to change it), the command fails with `root_not_protected` and the path is not a root. A drive, the data directory, anything inside it, and any path that nests with another root are refused with `directory_not_allowed`. Adding a root again writes the descriptor again. Removing a root takes no ACL back: entries are never withdrawn. `roots remove` fails `root_in_use` and names the instances while one lives in the root.
+
+### Reasons
+
+| Reason | Meaning and what to do |
+|---|---|
+| `daemon_not_running` | Nothing serves the pipe. Start the service |
+| `elevation_required` | You are an administrator but this prompt is not elevated. Run as administrator |
+| `access_denied` | Your account is not an administrator; the pipe's descriptor refused it |
+| `admin_channel_untrusted` | The pipe is served by a process that is not LocalSystem. Nothing was sent. Do not use it; find the process holding `\\.\pipe\yagurad-admin` |
+| `admin_channel_squatted` | (Service startup notice) another process served the name first, so the service has no admin channel. Stop that process and restart the service |
+| `admin_channel_busy` | All 4 slots stayed busy for 5 seconds. Run the command again |
+| `admin_connection_closed` | The service closed the channel before the exchange ended |
+| `admin_request_timeout` | The service waited 5 seconds for a request and dropped the connection |
+| `admin_request_invalid` | The request was not a command the service knows, or an argument was malformed (for example a bad `--address`) |
+| `admin_api_unsupported` | The CLI and the service speak different versions of the channel (`admin_api`). Use the CLI that came with the service |
+| `admin_reply_invalid` | The reply was not a valid result or reason |
+| `message_too_large` | A message was over 64 KiB |
+| `address_required` | The machine has no non-loopback IPv4 address; pass `--address` |
+| `device_not_found` | No active device has that name or id |
+| `device_ambiguous` | Several devices have that name; the message lists their ids, pass one |
+| `device_name_invalid` | A device name was refused |
+| `root_not_protected` | The directory could not be given the protected descriptor, so it was not made a root |
+| `root_in_use` | An instance lives in the root; the message names it |
+| `root_not_found` | The path is not an added root |
+| `directory_not_allowed` | The path cannot be a root, or an instance directory is outside every root |
+| `internal_error` | The command failed inside the service; see the daemon log |
