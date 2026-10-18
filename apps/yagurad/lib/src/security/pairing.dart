@@ -7,6 +7,7 @@ import 'package:yagura_proto/yagura_proto.dart' as pb;
 
 import '../errors.dart';
 import '../host/database.dart';
+import 'address_key.dart';
 import 'atomically.dart';
 import 'audit.dart';
 import 'devices.dart';
@@ -92,7 +93,7 @@ class PairingService {
     InternetAddress? address,
   }) {
     final now = _clock();
-    final key = _addressKey(address);
+    final key = addressKey(address);
     final recent = _recent(key, now);
     if (recent.length >= wrongCodesPerAddress) {
       throw YaguraException(
@@ -151,6 +152,16 @@ class PairingService {
     final device = _devices.get(deviceId);
     if (device == null || device.revoked) {
       throw YaguraException('device_revoked', 'this device is revoked');
+    }
+    // The previous certificate keeps working until it expires, but renewing
+    // with it would retire the newer one: a leaked old key could evict the
+    // legitimate client.
+    if (device.newestCertificate?.sha256 != presentedSha256) {
+      throw YaguraException(
+        'unauthenticated',
+        'only the newest certificate of a device can renew; use the one '
+            'issued last',
+      );
     }
     final request = _parse(csrDer);
     final certificate = _identity.issueClient(
@@ -227,23 +238,6 @@ class PairingService {
       );
       _total.clear();
     }
-  }
-
-  /// IPv4 by address, IPv6 by /64, so a host cannot dodge the throttle with
-  /// the addresses of its own prefix.
-  static String _addressKey(InternetAddress? address) {
-    if (address == null) return 'unknown';
-    final raw = address.rawAddress;
-    if (address.type == InternetAddressType.IPv6 && raw.length == 16) {
-      final mapped =
-          raw.sublist(0, 10).every((b) => b == 0) &&
-          raw[10] == 0xff &&
-          raw[11] == 0xff;
-      if (mapped) return raw.sublist(12).join('.');
-      return '${raw.sublist(0, 8).map((b) => b.toRadixString(16)).join(':')}'
-          '/64';
-    }
-    return address.address;
   }
 }
 

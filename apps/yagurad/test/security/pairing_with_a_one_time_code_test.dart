@@ -22,9 +22,22 @@ Future<pb.EnrollResponse> enroll(
   String name = 'desk-01',
   Uint8List? request,
   InternetAddress? from,
-}) => pb.PairingClient(h.channelWith(from: from)).enroll(
-  pb.EnrollRequest(code: code, deviceName: name, csrDer: request ?? csr(name)),
-);
+}) async {
+  // One connection per call, closed after it: the listener allows a host
+  // only a few connections at a time.
+  final channel = h.channelWith(from: from);
+  try {
+    return await pb.PairingClient(channel).enroll(
+      pb.EnrollRequest(
+        code: code,
+        deviceName: name,
+        csrDer: request ?? csr(name),
+      ),
+    );
+  } finally {
+    await channel.terminate();
+  }
+}
 
 Future<List<pb.Device>> devicesOf(PairedDevice device) async =>
     (await device.pairing.listDevices(pb.ListDevicesRequest())).devices;

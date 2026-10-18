@@ -92,6 +92,33 @@ void main() {
     await fresh.instances.listInstances(pb.ListInstancesRequest());
   });
 
+  test('only the newest certificate can renew', () async {
+    final (h, device) = await twentyDaysLeft();
+    final older = Certificate.parse(device.certificate);
+    final newKey = generateKeyPair();
+    final response = await renew(device, newKey);
+    final current = renewed(h, device, newKey, response);
+    final newer = Certificate.parse(current.certificate);
+
+    // The previous certificate still works for ordinary calls, but renewing
+    // with it would evict the newer one.
+    await device.instances.listInstances(pb.ListInstancesRequest());
+    await expectLater(
+      renew(device, generateKeyPair()),
+      failsWithStatus(StatusCode.unauthenticated, 'unauthenticated'),
+    );
+
+    final devices = (await current.pairing.listDevices(pb.ListDevicesRequest()))
+        .devices;
+    expect(
+      devices.single.certificates.map((c) => c.sha256),
+      unorderedEquals([older.sha256, newer.sha256]),
+      reason: 'nothing was added or removed',
+    );
+    await current.instances.listInstances(pb.ListInstancesRequest());
+    await device.instances.listInstances(pb.ListInstancesRequest());
+  });
+
   test('a second renewal retires the first certificate', () async {
     final (h, device) = await twentyDaysLeft();
     final first = Certificate.parse(device.certificate);

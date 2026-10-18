@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:http2/transport.dart';
 
+import '../security/address_key.dart';
 import 'pressure.dart';
 
 /// Opens the listener of a secure server; a seam so tests can make a bind
@@ -20,21 +21,33 @@ typedef ListenerBinder = Future<SecureListener> Function(
 /// can hold is limited.
 class ListenerLimits {
   const ListenerLimits({
-    this.maxConnections = 256,
+    this.maxUnauthenticated = 64,
+    this.maxPerAddress = 8,
+    this.maxDevices = 256,
     this.handshakeTimeout = const Duration(seconds: 10),
-    this.idleTimeout = const Duration(seconds: 30),
+    this.noCertificateLifetime = const Duration(seconds: 30),
   });
 
-  /// Open connections, authenticated or not; a further one is closed at once.
-  final int maxConnections;
+  /// Connections that have not presented a client certificate, handshaking
+  /// or not. At the bound the oldest of them makes room for a new one.
+  final int maxUnauthenticated;
+
+  /// Unauthenticated connections from one remote address (IPv6 per /64); a
+  /// further one from that address is closed at accept.
+  final int maxPerAddress;
+
+  /// Connections that presented a valid client certificate; beyond it the
+  /// newest is closed. Separate from the unauthenticated pool, so a host
+  /// without a certificate cannot take a device's place.
+  final int maxDevices;
 
   /// From accept to the end of the TLS handshake.
   final Duration handshakeTimeout;
 
-  /// Without a byte from the peer, for a connection that presented no client
-  /// certificate (it can only pair). Connections with a certificate rely on
-  /// HTTP/2 keepalive.
-  final Duration idleTimeout;
+  /// How long a connection without a client certificate lives, counted from
+  /// accept. A hard lifetime, not an idle timer: no byte and no HTTP/2 PING
+  /// extends it. Pairing needs a few round trips.
+  final Duration noCertificateLifetime;
 }
 
 /// A TLS listener in client-certificate request mode that hands each
@@ -54,7 +67,11 @@ class SecureListener {
   final RawServerSocket _socket;
   final SecurityContext _context;
   final ListenerLimits limits;
-  final _sockets = <RawSocket>{};
+
+  // Insertion order is accept order: the first entry is the oldest.
+  final _unauthenticated = <_Connection>{};
+  final _perAddress = <String, int>{};
+  final _devices = <_Connection>{};
   var _epoch = 0;
 
   int get port => _socket.port;
@@ -73,15 +90,51 @@ class SecureListener {
   }
 
   void _accept(RawSocket raw) {
-    if (_sockets.length >= limits.maxConnections) {
+    String key;
+    try {
+      key = addressKey(raw.remoteAddress);
+    } on Object {
       raw.close();
       return;
     }
-    _sockets.add(raw);
-    unawaited(_handshake(raw, _epoch));
+    // One host cannot hold more than its share, whatever else is open.
+    if ((_perAddress[key] ?? 0) >= limits.maxPerAddress) {
+      raw.close();
+      return;
+    }
+    if (_unauthenticated.length >= limits.maxUnauthenticated) {
+      // The pool is full: the oldest connection without a certificate makes
+      // room (one that finished its handshake first, since it is only
+      // waiting), so a device connecting now is not refused because of them.
+      final victim =
+          _unauthenticated.where((c) => c.handshaken).firstOrNull ??
+          _unauthenticated.first;
+      victim.drop();
+    }
+    final connection = _Connection(raw, key);
+    _unauthenticated.add(connection);
+    _perAddress[key] = (_perAddress[key] ?? 0) + 1;
+    connection.release = () => _release(connection);
+    // A hard lifetime from accept for every connection until it presents a
+    // certificate; the handshake has its own, shorter, deadline.
+    connection.lifetime = Timer(limits.noCertificateLifetime, connection.drop);
+    unawaited(_handshake(connection, _epoch));
   }
 
-  Future<void> _handshake(RawSocket raw, int epoch) async {
+  void _release(_Connection connection) {
+    if (_unauthenticated.remove(connection)) {
+      final left = (_perAddress[connection.key] ?? 1) - 1;
+      if (left <= 0) {
+        _perAddress.remove(connection.key);
+      } else {
+        _perAddress[connection.key] = left;
+      }
+    }
+    _devices.remove(connection);
+  }
+
+  Future<void> _handshake(_Connection connection, int epoch) async {
+    final raw = connection.raw;
     final RawSecureSocket socket;
     try {
       raw.setOption(SocketOption.tcpNoDelay, true);
@@ -93,16 +146,19 @@ class SecureListener {
     } on Object {
       // A client that fails the handshake (another CA, an expired
       // certificate), is too slow or leaves is not an error of the listener.
-      _sockets.remove(raw);
-      raw.close();
+      connection.drop();
       return;
     }
-    if (epoch != _epoch) {
+    if (epoch != _epoch || connection.dropped) {
       // Dropped during the handshake.
-      _sockets.remove(raw);
+      connection.dropped = true;
       socket.close();
+      connection.drop();
       return;
     }
+    connection
+      ..handshaken = true
+      ..secure = socket;
     InternetAddress? remote;
     try {
       remote = socket.remoteAddress;
@@ -110,20 +166,19 @@ class SecureListener {
       // The peer is already gone.
     }
     final certificate = socket.peerCertificate;
-    final pipe = _SocketPipe(socket);
-    unawaited(pipe.done.then<void>((_) => _sockets.remove(raw)));
-    if (certificate == null) {
-      // Pairing only: a connection that goes quiet is closed.
-      Timer? idle;
-      void arm() {
-        idle?.cancel();
-        idle = Timer(limits.idleTimeout, pipe.destroy);
+    if (certificate != null) {
+      // A device: out of the unauthenticated pool, into its own.
+      if (_devices.length >= limits.maxDevices) {
+        connection.drop();
+        return;
       }
-
-      arm();
-      pipe.onActivity = arm;
-      unawaited(pipe.done.then<void>((_) => idle?.cancel()));
+      connection.lifetime?.cancel();
+      _release(connection);
+      _devices.add(connection);
     }
+    final pipe = _SocketPipe(socket);
+    connection.pipe = pipe;
+    unawaited(pipe.done.then<void>((_) => connection.drop()));
     unawaited(
       _server.serveConnection(
         connection: ServerTransportConnection.viaStreams(
@@ -144,10 +199,37 @@ class SecureListener {
       _epoch++;
       // The socket, not the HTTP/2 connection: terminating the connection
       // asserts in package:http2 while streams still hold queued messages.
-      for (final socket in [..._sockets]) {
-        socket.close();
+      for (final connection in [..._unauthenticated, ..._devices]) {
+        connection.drop();
       }
-      _sockets.clear();
+    }
+  }
+}
+
+/// One accepted connection and what the listener needs to end it.
+class _Connection {
+  _Connection(this.raw, this.key);
+
+  final RawSocket raw;
+
+  /// The remote address as counted by the limits.
+  final String key;
+  RawSecureSocket? secure;
+  _SocketPipe? pipe;
+  Timer? lifetime;
+  void Function()? release;
+  var handshaken = false;
+  var dropped = false;
+
+  /// Ends the connection at once and frees its slot.
+  void drop() {
+    dropped = true;
+    lifetime?.cancel();
+    release?.call();
+    if (pipe case final pipe?) {
+      pipe.destroy();
+    } else {
+      (secure ?? raw).close();
     }
   }
 }

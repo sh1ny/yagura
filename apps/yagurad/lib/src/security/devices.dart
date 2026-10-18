@@ -36,6 +36,10 @@ class DeviceRecord {
 
   bool get revoked => revokedAt != null;
 
+  /// The certificate issued last; the only one that may renew.
+  DeviceCertificateRow? get newestCertificate =>
+      certificates.isEmpty ? null : certificates.last;
+
   /// The end of the latest certificate.
   DateTime? get certificateExpiresAt => certificates.isEmpty
       ? null
@@ -228,7 +232,7 @@ class DeviceStore {
         certificates: [
           for (final c in _database.sqlite.select(
             'SELECT sha256, not_after FROM device_certificates '
-            'WHERE device_id = ? ORDER BY not_after',
+            'WHERE device_id = ? ORDER BY not_after, rowid',
             [row['id']],
           ))
             DeviceCertificateRow(
