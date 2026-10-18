@@ -19,6 +19,7 @@ import '../steam/steam.dart';
 import 'data_dir_lock.dart';
 import 'data_directory.dart';
 import 'database.dart';
+import 'secret_store.dart';
 
 /// A step that failed without stopping the daemon (design D9).
 class StartupNotice {
@@ -43,6 +44,8 @@ class DaemonConfig {
     this.os,
     this.migrations,
     this.clock,
+    this.serviceMode = false,
+    this.secretProtector,
     this.logOptions = const LogHubOptions(),
     this.maxRetainedOperationEvents = 2000,
     this.restartDelay = const Duration(seconds: 5),
@@ -76,6 +79,13 @@ class DaemonConfig {
   final String? os;
   final List<Migration>? migrations;
   final DateTime Function()? clock;
+
+  /// Runs as the Windows service (LocalSystem): foreign-scope secrets are
+  /// deleted at start instead of refusing it (design D3).
+  final bool serviceMode;
+
+  /// Defaults to DPAPI on Windows; a seam for tests.
+  final SecretProtector? secretProtector;
 
   /// Polling and persist intervals of the log hub.
   final LogHubOptions logOptions;
@@ -117,6 +127,7 @@ class Daemon {
     required this.startupNotices,
     required this.hooks,
     required this.os,
+    required this.secrets,
     required this.startedAt,
     required SteamService steam,
     required InstanceLogSync logSync,
@@ -137,6 +148,9 @@ class Daemon {
   final OperationRunner operations;
   final LogHub logs;
   final List<StartupNotice> startupNotices;
+
+  /// The secret store (design D3).
+  final SecretStore secrets;
 
   /// The hook host; `GetHealth` reports its leaked and degraded state.
   final HookHost hooks;
@@ -166,8 +180,26 @@ class Daemon {
       lock.release();
       rethrow;
     }
+    final DatabaseSecretStore secrets;
+    try {
+      secrets = _fatal(
+        'secret_store',
+        () => DatabaseSecretStore.open(
+          database,
+          config.secretProtector ?? defaultSecretProtector(),
+          serviceMode: config.serviceMode,
+        ),
+      );
+    } on Object {
+      database.close();
+      lock.release();
+      rethrow;
+    }
 
     final notices = <StartupNotice>[];
+    if (!secrets.recovery.isEmpty) {
+      notices.add(StartupNotice('secrets_reset', secrets.recovery.describe()));
+    }
     Future<void> degraded(String step, FutureOr<void> Function() body) async {
       try {
         await body();
@@ -277,6 +309,7 @@ class Daemon {
       startupNotices: List.unmodifiable(notices),
       hooks: hooks,
       os: config.os ?? (Platform.isWindows ? 'windows' : 'linux'),
+      secrets: secrets,
       startedAt: (config.clock ?? DateTime.now)(),
       steam: config.steam,
       logSync: logSync,
