@@ -188,6 +188,7 @@ class InstanceManager {
       stateChangedAt: record.stateChangedAt,
       pid: record.server?.pid ?? 0,
       health: record.health,
+      revision: record.revision,
     );
   }
 
@@ -289,6 +290,7 @@ class InstanceManager {
   /// the stored value unchanged.
   Instance updateSettings(UpdateSettingsRequest request) {
     final record = _require(request.instanceId);
+    _checkRevision(record, request.expectedRevision);
     final plugin = _requirePlugin(record);
     final manifest = plugin.manifest;
     _checkSchemaVersion(request.schemaVersion, plugin);
@@ -331,7 +333,7 @@ class InstanceManager {
         record.stateReason == settingsInvalidReason) {
       _applyState(record, InstanceState.stopped);
     }
-    _commit(record);
+    _commit(record, revisedFrom: record.revision);
     return view(record);
   }
 
@@ -339,8 +341,14 @@ class InstanceManager {
   /// D3). The value is never returned: the view reports `set: true`. A store
   /// that refuses the write fails `secret_store_unavailable` and leaves the
   /// previous value.
-  Instance setSecret(String id, String key, String value) {
+  Instance setSecret(
+    String id,
+    String key,
+    String value, {
+    int? expectedRevision,
+  }) {
     final record = _require(id);
+    _checkRevision(record, expectedRevision);
     _requireSecretSetting(record, key);
     final secretId = secretIdFor(id, key);
     final bytes = Uint8List.fromList(utf8.encode(value));
@@ -366,8 +374,9 @@ class InstanceManager {
   }
 
   /// Clears the secret setting [key] of instance [id].
-  Instance deleteSecret(String id, String key) {
+  Instance deleteSecret(String id, String key, {int? expectedRevision}) {
     final record = _require(id);
+    _checkRevision(record, expectedRevision);
     _requireSecretSetting(record, key);
     final secretId = secretIdFor(id, key);
     final changed = secrets.contains(secretId);
@@ -384,8 +393,27 @@ class InstanceManager {
             record.state == InstanceState.starting)) {
       record.restartRequired = true;
     }
-    _commit(record);
+    _commit(record, revisedFrom: record.revision);
     return view(record);
+  }
+
+  /// Fails `revision_required` when [expected] is 0 (proto3 omitted) and
+  /// `revision_conflict` with the current revision when it is stale (design
+  /// D12). Null skips the check, for in-process callers. The check runs
+  /// before any change, so a refused call leaves the record untouched.
+  void _checkRevision(InstanceRecord record, int? expected) {
+    if (expected == null) return;
+    if (expected <= 0) {
+      throw YaguraException(
+        'revision_required',
+        'the call needs expected_revision, the revision the caller last read '
+            '(instance "${record.name}" is at ${record.revision})',
+        details: {'instanceId': record.id},
+      );
+    }
+    if (expected != record.revision) {
+      throw revisionConflict(record.id, record.revision);
+    }
   }
 
   void _requireSecretSetting(InstanceRecord record, String key) {
@@ -644,8 +672,10 @@ class InstanceManager {
     String id, {
     bool deleteFiles = false,
     String confirmName = '',
+    int? expectedRevision,
   }) {
     final record = _require(id);
+    _checkRevision(record, expectedRevision);
     if (deleteFiles && confirmName != record.name) {
       throw YaguraException(
         'confirmation_mismatch',
@@ -664,11 +694,14 @@ class InstanceManager {
     }
     checkAllowed(record, OperationKind.delete, execution: false);
     if (deleteFiles) requirePlugin(record);
-    return runner.enqueue(
-      instanceId: id,
-      kind: OperationKind.delete,
-      body: (context) =>
-          lifecycle.delete(context, record.id, deleteFiles: deleteFiles),
+    return _revised(
+      record,
+      () => runner.enqueue(
+        instanceId: id,
+        kind: OperationKind.delete,
+        body: (context) =>
+            lifecycle.delete(context, record.id, deleteFiles: deleteFiles),
+      ),
     );
   }
 
@@ -691,7 +724,12 @@ class InstanceManager {
   /// Replaces the instance's data paths with a snapshot, as an operation on
   /// its queue (design D12). Allowed from `stopped` and from
   /// `error: restore_interrupted`.
-  Operation restoreSnapshot(String id, String snapshotId) {
+  Operation restoreSnapshot(
+    String id,
+    String snapshotId, {
+    int? expectedRevision,
+  }) {
+    _checkRevision(_require(id), expectedRevision);
     final record = _guarded(id, OperationKind.restore);
     if (!snapshotter.list(id).any((s) => s.id == snapshotId)) {
       throw YaguraException(
@@ -700,12 +738,32 @@ class InstanceManager {
         details: {'instanceId': id, 'snapshotId': snapshotId},
       );
     }
-    return runner.enqueue(
-      instanceId: id,
-      kind: OperationKind.restore,
-      body: (context) =>
-          lifecycle.restoreSnapshot(context, record.id, snapshotId),
+    return _revised(
+      record,
+      () => runner.enqueue(
+        instanceId: id,
+        kind: OperationKind.restore,
+        body: (context) =>
+            lifecycle.restoreSnapshot(context, record.id, snapshotId),
+      ),
     );
+  }
+
+  /// Accepts an operation that changes the instance's configuration: the
+  /// revision is incremented in a transaction of its own, then [enqueue]
+  /// creates the operation. When [enqueue] refuses (`queue_full`), the
+  /// increment is undone, so a refused call changes nothing.
+  Operation _revised(InstanceRecord record, Operation Function() enqueue) {
+    final before = record.revision;
+    store.setRevision(record, before, before + 1);
+    try {
+      final operation = enqueue();
+      _emitChanged(record);
+      return operation;
+    } on Object {
+      store.setRevision(record, before + 1, before);
+      rethrow;
+    }
   }
 
   /// Clears an `error` after the cause was addressed (design D17).
@@ -896,8 +954,15 @@ class InstanceManager {
     if (!_events.isClosed) _events.add(InstanceRemoved(record.id));
   }
 
-  void _commit(InstanceRecord record) {
-    store.save(record);
+  /// Persists [record]. With [revisedFrom] the write is a configuration
+  /// change: it checks the stored revision and increments it in the same
+  /// transaction (design D12).
+  void _commit(InstanceRecord record, {int? revisedFrom}) {
+    if (revisedFrom == null) {
+      store.save(record);
+    } else {
+      store.saveRevised(record, revisedFrom);
+    }
     writeInstanceFile(record);
     _emitChanged(record);
   }

@@ -234,6 +234,7 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
             : null,
         autostart: request.hasAutostart() ? request.autostart : null,
         schemaVersion: version == 0 ? null : version,
+        expectedRevision: request.expectedRevision.toInt(),
       ),
     );
     return instanceToPb(instance);
@@ -245,7 +246,12 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
     ServiceCall call,
     pb.SetSecretRequest request,
   ) async => instanceToPb(
-    daemon.instances.setSecret(request.instanceId, request.key, request.value),
+    daemon.instances.setSecret(
+      request.instanceId,
+      request.key,
+      request.value,
+      expectedRevision: request.expectedRevision.toInt(),
+    ),
   );
 
   @override
@@ -253,7 +259,11 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
     ServiceCall call,
     pb.DeleteSecretRequest request,
   ) async => instanceToPb(
-    daemon.instances.deleteSecret(request.instanceId, request.key),
+    daemon.instances.deleteSecret(
+      request.instanceId,
+      request.key,
+      expectedRevision: request.expectedRevision.toInt(),
+    ),
   );
 
   @override
@@ -265,6 +275,7 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
       request.instanceId,
       deleteFiles: request.deleteFiles,
       confirmName: request.confirmName,
+      expectedRevision: request.expectedRevision.toInt(),
     ),
   );
 
@@ -361,7 +372,11 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
     ServiceCall call,
     pb.RestoreSnapshotRequest request,
   ) async => operationToPb(
-    daemon.instances.restoreSnapshot(request.instanceId, request.snapshotId),
+    daemon.instances.restoreSnapshot(
+      request.instanceId,
+      request.snapshotId,
+      expectedRevision: request.expectedRevision.toInt(),
+    ),
   );
 
   @override

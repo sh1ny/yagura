@@ -35,8 +35,6 @@ pb.Protocol protocolToPb(plugin.PortProtocol protocol) => switch (protocol) {
 /// The wire form of [instance]. With [includeSettings] false the settings
 /// document is left out and `settings_omitted` is set (a slim delta, design
 /// D15).
-///
-/// `revision` is always 0 (design D24).
 pb.Instance instanceToPb(Instance instance, {bool includeSettings = true}) {
   return pb.Instance(
     id: instance.id,
@@ -72,7 +70,7 @@ pb.Instance instanceToPb(Instance instance, {bool includeSettings = true}) {
       InstanceHealth.ok => pb.Health.HEALTH_OK,
       InstanceHealth.unknown => pb.Health.HEALTH_UNKNOWN,
     },
-    revision: Int64.ZERO,
+    revision: Int64(instance.revision),
     restartRequired: instance.restartRequired,
     autostart: instance.autostart,
     settingsInvalid: instance.settingsInvalid,

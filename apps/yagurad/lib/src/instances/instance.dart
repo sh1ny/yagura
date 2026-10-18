@@ -76,6 +76,7 @@ class Instance {
     required this.createdAt,
     required this.stateChangedAt,
     required this.pid,
+    this.revision = 1,
     this.schemaVersion,
     this.health = InstanceHealth.unspecified,
   });
@@ -121,8 +122,10 @@ class Instance {
   /// within `start_timeout`; `unspecified` while it is not running.
   final InstanceHealth health;
 
-  /// M1 keeps every revision at 0 and does not check `expected_revision`.
-  int get revision => 0;
+  /// The configuration revision (design D12): starts at 1 and increments
+  /// only on configuration changes, never on state, health, pid or queue
+  /// changes.
+  final int revision;
 
   Map<String, int> get portNumbers => {for (final p in ports) p.name: p.number};
 }
@@ -202,9 +205,14 @@ class UpdateSettingsRequest {
     this.steamAccountId,
     this.autostart,
     this.schemaVersion,
+    this.expectedRevision,
   });
 
   final String instanceId;
+
+  /// The revision the caller last read. Null skips the check (in-process
+  /// callers); the API always passes it, and 0 fails `revision_required`.
+  final int? expectedRevision;
 
   /// When set, must equal the plugin's current settings schema version, so a
   /// form opened before a plugin reload cannot write stale fields.

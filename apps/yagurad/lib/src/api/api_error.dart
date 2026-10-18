@@ -21,6 +21,7 @@ int statusCodeFor(String reason) => switch (reason) {
   'plugin_missing' => StatusCode.notFound,
   'settings_invalid' ||
   'secret_via_set_secret' ||
+  'revision_required' ||
   'invalid_json' ||
   'confirmation_mismatch' ||
   'directory_not_allowed' => StatusCode.invalidArgument,
