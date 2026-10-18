@@ -217,11 +217,18 @@ class SteamCmdService implements SteamService {
     SteamRunReporter reporter,
     CancelToken cancel,
   ) async {
-    if (_remembered.isReady(installation)) return;
+    if (_remembered.isReady(installation)) {
+      // The ready state is only as good as the directory it describes (ADR
+      // 0014): one that is gone, or is not a plain directory, is built again.
+      final entry = _fs.stat(installation);
+      if (entry != null && entry.isDirectory && !entry.isLink) return;
+      _remembered.markNotReady(installation);
+    }
     reporter.step('steamcmd_bootstrap');
     try {
       ConfinedFs.create(steamcmdRoot);
       // Whatever an earlier attempt left is not trusted.
+      _remembered.markNotReady(installation);
       _fs.deleteTree(installation);
       await _bootstrap.install(_fs, installation, cancel: cancel);
       cancel.throwIfCancelled();
@@ -263,6 +270,7 @@ class SteamCmdService implements SteamService {
       }
       _remembered.markReady(installation);
     } on Object {
+      _remembered.markNotReady(installation);
       try {
         _fs.deleteTree(installation);
       } on Object {
@@ -378,12 +386,20 @@ class SteamCmdService implements SteamService {
     cancel.throwIfCancelled();
     final directory = p.join(steamcmdRoot, installation);
     final command = _command(directory);
-    final process = await _launcher.start(
-      command.executable,
-      [...command.leadingArguments, ...arguments],
-      workingDirectory: directory,
-      environment: environment,
-    );
+    final SteamProcess process;
+    try {
+      process = await _launcher.start(
+        command.executable,
+        [...command.leadingArguments, ...arguments],
+        workingDirectory: directory,
+        environment: environment,
+      );
+    } on Object {
+      // SteamCMD cannot be started: the installation is broken, so the next
+      // run builds it again (ADR 0014).
+      _remembered.markNotReady(installation);
+      rethrow;
+    }
 
     final tail = Queue<String>();
     final started = DateTime.now();

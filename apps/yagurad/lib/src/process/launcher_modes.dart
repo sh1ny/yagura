@@ -11,6 +11,7 @@ import '../logs/log_models.dart';
 import '../platform/job_restrictions.dart';
 import '../platform/win32.dart';
 import '../platform/win32_process.dart';
+import 'relay_run_files.dart';
 import 'run_files.dart';
 
 /// Exit codes of the helper modes.

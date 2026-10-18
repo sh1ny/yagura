@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../errors.dart';
+import '../files/instance_fs.dart';
 import '../platform/win32.dart';
 import '../platform/win32_process.dart';
 import 'process_host.dart';
@@ -60,7 +61,10 @@ class WindowsProcessHost implements ProcessHost {
         details: {'instanceId': request.instanceId},
       );
     }
-    final files = RunFiles(request.runDirectory);
+    final files = RunFiles(
+      request.runDirectory,
+      fs: InstanceFs(request.instanceDirectory),
+    );
     files.writeLaunch(request);
 
     final helper = await Process.start(helperExecutable, [

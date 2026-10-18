@@ -15,7 +15,8 @@ final _fileCall = RegExp(
   r'\bFileSystemEntity\.(type|is|identical)|'
   r'\.(openSync|readAsBytesSync|readAsStringSync|readAsLinesSync|'
   r'writeAsStringSync|writeAsBytesSync|listSync|existsSync|deleteSync|'
-  r'createSync|renameSync|statSync|lengthSync|createTempSync|copySync)\b',
+  r'createSync|renameSync|statSync|lengthSync|createTempSync|copySync|'
+  r'readAsString|readAsBytes|readAsLines|writeAsString|writeAsBytes)\b',
 );
 
 /// Files under `lib/src` allowed to make those calls, and why.
@@ -35,10 +36,17 @@ const _allowed = <String, String>{
   'instances/instance_manager.dart':
       'lists the instances root (not an instance) in the marked-directory '
       'sweep; everything below an instance goes through InstanceFs',
-  // The relay and the supervisor's run files. The relay is a separate
-  // process that owns the server's pipes; how the daemon trusts relay.json
-  // is decided in design D9.
-  'process/run_files.dart': 'the run files of the relay (design D9)',
+  // The run files. The daemon writes launch.json and cancel.json through
+  // InstanceFs; what stays here is the daemon's by-path read of what the relay
+  // wrote, whose trust is design D9 (group 9).
+  'process/run_files.dart':
+      'reads of relay.json, exit.json and cancel.json '
+      '(design D9)',
+  // The relay is a separate process that owns the server's pipes; it writes
+  // its own files by path and runs as the server's account after group 9.
+  'process/relay_run_files.dart':
+      'relay.json and exit.json, written by the '
+      'relay process',
   'logs/capture_writer.dart': 'the stdout capture written by the relay',
 };
 
@@ -91,6 +99,22 @@ void main() {
       if (!file.existsSync() || !_callsFiles(file)) stale.add(key);
     }
     expect(stale, isEmpty, reason: 'remove these from _allowed');
+  });
+
+  test('the daemon-side run files only read through dart:io', () {
+    // Writes are in process/relay_run_files.dart (the relay) or go through
+    // the instance's ConfinedFs.
+    final source = File(p.join('lib', 'src', 'process', 'run_files.dart'))
+        .readAsStringSync();
+    for (final write in [
+      'writeAs',
+      'renameSync',
+      'createSync',
+      'deleteSync',
+      'openWrite',
+    ]) {
+      expect(source, isNot(contains(write)), reason: write);
+    }
   });
 
   test('the unconfined InstanceRoot is gone', () {

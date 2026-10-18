@@ -15,6 +15,8 @@ import '../support/process_support.dart';
 /// [root].
 LaunchRequest fakeLaunch(ProcessRig rig, String root, String name) {
   final dir = p.join(root, name);
+  // The instance directory exists before a launch (the daemon created it).
+  Directory(dir).createSync(recursive: true);
   return LaunchRequest(
     instanceId: name,
     runId: 'run-$name',

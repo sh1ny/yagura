@@ -6,6 +6,7 @@ import 'package:ffi/ffi.dart';
 
 import '../platform/win32_files.dart';
 import 'confined_fs.dart';
+import 'reparse_tags.dart';
 
 /// [ConfinedFs] on NTFS: the root is opened with `FILE_OPEN_REPARSE_POINT`,
 /// refused if it is a reparse point and compared with the stored directory by
@@ -270,8 +271,7 @@ class WindowsConfinedBackend implements ConfinedBackend {
     if (_isNotFound(opened.status)) return null;
     if (opened.status < 0) throw _fail(opened.status, path, 'open directory');
     try {
-      if (_attributes(opened.handle, path) & Win32Files.attributeReparsePoint !=
-          0) {
+      if (_isLink(opened.handle, path)) {
         throw confinedViolation(
           path.requested,
           'the directory "$root" is a link or junction',
@@ -397,12 +397,13 @@ class WindowsConfinedBackend implements ConfinedBackend {
   /// Fails `sandbox_violation` naming the first [count] components of [path]
   /// when [handle] is a reparse point. The caller closes [handle].
   void _refuseLink(int handle, ConfinedPath path, int count) {
-    final attributes = _attributes(handle, path);
-    if (attributes & Win32Files.attributeReparsePoint == 0) return;
+    final (attributes, tag) = _attributeTag(handle, path);
+    if (!_linkLike(attributes, tag)) return;
     final isDirectory = attributes & Win32Files.attributeDirectory != 0;
     throw confinedViolation(
       path.requested,
-      '"${path.prefix(count)}${isDirectory ? '/' : ''}" is a link or junction',
+      '"${path.prefix(count)}${isDirectory ? '/' : ''}" is a link or junction'
+      ' (${describeReparseTag(tag)})',
     );
   }
 
@@ -507,7 +508,22 @@ class WindowsConfinedBackend implements ConfinedBackend {
     );
   });
 
-  int _attributes(int handle, ConfinedPath path) => using((arena) {
+  /// Whether a name with these [attributes] and reparse [tag] redirects
+  /// (design D8); a data-only reparse point (WOF, dedup) is a plain file.
+  static bool _linkLike(int attributes, int tag) =>
+      attributes & Win32Files.attributeReparsePoint != 0 &&
+      isLinkReparseTag(tag);
+
+  bool _isLink(int handle, ConfinedPath path) {
+    final (attributes, tag) = _attributeTag(handle, path);
+    return _linkLike(attributes, tag);
+  }
+
+  int _attributes(int handle, ConfinedPath path) =>
+      _attributeTag(handle, path).$1;
+
+  /// The file attributes of [handle] and, for a reparse point, its tag.
+  (int, int) _attributeTag(int handle, ConfinedPath path) => using((arena) {
     final block = arena<Uint8>(16);
     final info = arena<Uint8>(8);
     final status = _nt.ntQueryInformationFile(
@@ -518,12 +534,12 @@ class WindowsConfinedBackend implements ConfinedBackend {
       Win32Files.fileAttributeTagInformation,
     );
     if (status < 0) throw _fail(status, path, 'query attributes');
-    return info.cast<Uint32>().value;
+    return (info.cast<Uint32>().value, (info + 4).cast<Uint32>().value);
   });
 
   ConfinedEntry _entryOf(int handle, String name, ConfinedPath path) =>
       using((arena) {
-        final attributes = _attributes(handle, path);
+        final (attributes, tag) = _attributeTag(handle, path);
         final block = arena<Uint8>(16);
         final basic = arena<Uint8>(40);
         var status = _nt.ntQueryInformationFile(
@@ -547,7 +563,7 @@ class WindowsConfinedBackend implements ConfinedBackend {
         return ConfinedEntry(
           name: name,
           isDirectory: isDirectory,
-          isLink: attributes & Win32Files.attributeReparsePoint != 0,
+          isLink: _linkLike(attributes, tag),
           size: isDirectory ? 0 : (standard + 8).cast<Int64>().value,
           modified: _time((basic + 16).cast<Int64>().value),
           created: _time(basic.cast<Int64>().value),
@@ -577,7 +593,7 @@ class WindowsConfinedBackend implements ConfinedBackend {
         block.cast(),
         buffer.cast(),
         capacity,
-        Win32Files.fileDirectoryInformation,
+        Win32Files.fileFullDirectoryInformation,
         0,
         nullptr,
         restart,
@@ -591,12 +607,14 @@ class WindowsConfinedBackend implements ConfinedBackend {
         final next = entry.cast<Uint32>().value;
         final attributes = (entry + 56).cast<Uint32>().value;
         final nameBytes = (entry + 60).cast<Uint32>().value;
-        final name = (entry + 64).cast<Utf16>().toDartString(
+        // For a reparse point, `EaSize` holds the reparse tag.
+        final tag = (entry + 64).cast<Uint32>().value;
+        final name = (entry + 68).cast<Utf16>().toDartString(
           length: nameBytes ~/ 2,
         );
         if (name != '.' && name != '..') {
           final isDirectory = attributes & Win32Files.attributeDirectory != 0;
-          final isLink = attributes & Win32Files.attributeReparsePoint != 0;
+          final isLink = _linkLike(attributes, tag);
           entries.add(
             ConfinedEntry(
               name: name,
@@ -715,9 +733,9 @@ class WindowsConfinedBackend implements ConfinedBackend {
     if (_isNotFound(opened.status)) return;
     if (opened.status < 0) throw _fail(opened.status, path, 'delete');
     try {
-      final attributes = _attributes(opened.handle, path);
+      final (attributes, tag) = _attributeTag(opened.handle, path);
       final isDirectory = attributes & Win32Files.attributeDirectory != 0;
-      final isLink = attributes & Win32Files.attributeReparsePoint != 0;
+      final isLink = _linkLike(attributes, tag);
       if (isDirectory && !isLink) {
         final listing = _create(
           parent,
@@ -730,9 +748,7 @@ class WindowsConfinedBackend implements ConfinedBackend {
         try {
           // The directory may have been swapped for a link since it was
           // opened for deletion: look again, on the handle used to list.
-          if (_attributes(listing.handle, path) &
-                  Win32Files.attributeReparsePoint ==
-              0) {
+          if (!_isLink(listing.handle, path)) {
             _deleteChildren(listing.handle, path);
           }
         } finally {

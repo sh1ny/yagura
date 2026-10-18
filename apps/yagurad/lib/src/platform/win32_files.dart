@@ -275,6 +275,7 @@ class Win32Files {
   // ---- information classes ---------------------------------------------------
 
   static const fileDirectoryInformation = 1;
+  static const fileFullDirectoryInformation = 2;
   static const fileBasicInformation = 4;
   static const fileStandardInformation = 5;
   static const fileRenameInformation = 10;
