@@ -1,0 +1,117 @@
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
+import 'package:test/test.dart';
+
+// Design D8: every file operation on an instance directory or on
+// `<data>/steamcmd` goes through ConfinedFs, so a link planted by a game
+// server cannot lead the daemon out of the directory. This test is the
+// enforcement: it scans `lib/src` for `dart:io` file calls and fails on any
+// file that is not listed here with the reason its calls are allowed.
+
+/// The calls that touch the file system through `dart:io`.
+final _fileCall = RegExp(
+  r'\b(File|Directory|Link|RandomAccessFile)\(|'
+  r'\bFileSystemEntity\.(type|is|identical)|'
+  r'\.(openSync|readAsBytesSync|readAsStringSync|readAsLinesSync|'
+  r'writeAsStringSync|writeAsBytesSync|listSync|existsSync|deleteSync|'
+  r'createSync|renameSync|statSync|lengthSync|createTempSync|copySync)\b',
+);
+
+/// Files under `lib/src` allowed to make those calls, and why.
+const _allowed = <String, String>{
+  // Daemon-owned locations, none of them inside an instance directory.
+  'host/data_dir_lock.dart': 'the lock file in the data directory',
+  'host/data_directory.dart': 'the data directory itself',
+  'host/database.dart': 'the database backup in the data directory',
+  'plugins/plugin_registry.dart': 'the plugin folders in the data directory',
+  'snapshots/directory_snapshotter.dart':
+      'the snapshot folders in the data directory; instance data is read and '
+      'written through InstanceFs',
+  'steam/stray_processes.dart': '/proc, to find stray SteamCMD processes',
+  'platform/disk_space.dart':
+      'looks for the nearest existing folder to ask its volume for free space; '
+      'reads no file',
+  'instances/instance_manager.dart':
+      'lists the instances root (not an instance) in the marked-directory '
+      'sweep; everything below an instance goes through InstanceFs',
+  // The relay and the supervisor's run files. The relay is a separate
+  // process that owns the server's pipes; how the daemon trusts relay.json
+  // is decided in design D9.
+  'process/run_files.dart': 'the run files of the relay (design D9)',
+  'logs/capture_writer.dart': 'the stdout capture written by the relay',
+};
+
+List<File> _sources() => [
+  for (final entity in Directory(
+    p.join('lib', 'src'),
+  ).listSync(recursive: true, followLinks: false))
+    if (entity is File && entity.path.endsWith('.dart')) entity,
+];
+
+String _key(File file) =>
+    p.posix.joinAll(p.split(p.relative(file.path, from: p.join('lib', 'src'))));
+
+bool _callsFiles(File file) {
+  for (final line in file.readAsLinesSync()) {
+    final code = line.trimLeft();
+    if (code.startsWith('//')) continue;
+    if (_fileCall.hasMatch(code)) return true;
+  }
+  return false;
+}
+
+void main() {
+  test('no dart:io file call outside the ConfinedFs files', () {
+    final offenders = <String>[];
+    for (final file in _sources()) {
+      final key = _key(file);
+      if (key.startsWith('files/confined_fs') ||
+          key == 'files/instance_fs.dart' ||
+          key == 'platform/win32_files.dart') {
+        continue;
+      }
+      if (_allowed.containsKey(key)) continue;
+      if (_callsFiles(file)) offenders.add(key);
+    }
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'these files call dart:io file APIs; route instance and steamcmd '
+          'paths through InstanceFs/ConfinedFs, or list the file in _allowed '
+          'with the reason it never takes such a path',
+    );
+  });
+
+  test('every exemption is still needed', () {
+    final stale = <String>[];
+    for (final MapEntry(key: key) in _allowed.entries) {
+      final file = File(p.join('lib', 'src', key));
+      if (!file.existsSync() || !_callsFiles(file)) stale.add(key);
+    }
+    expect(stale, isEmpty, reason: 'remove these from _allowed');
+  });
+
+  test('the unconfined InstanceRoot is gone', () {
+    expect(
+      File(p.join('lib', 'src', 'files', 'instance_root.dart')).existsSync(),
+      isFalse,
+    );
+    for (final file in _sources()) {
+      expect(file.readAsStringSync(), isNot(contains('InstanceRoot')));
+    }
+  });
+
+  test('the confined files are used by the callers D8 names', () {
+    String source(String path) =>
+        File(p.join('lib', 'src', path)).readAsStringSync();
+    expect(source('steam/steamcmd_service.dart'), contains('ConfinedFs'));
+    expect(source('steam/steamcmd_bootstrap.dart'), contains('ConfinedFs'));
+    expect(source('logs/source_tailer.dart'), contains('ConfinedFs'));
+    expect(source('instances/instance_file.dart'), contains('InstanceFs'));
+    expect(source('instances/lifecycle.dart'), contains('InstanceFs'));
+    expect(source('hooks/host_api.dart'), contains('ConfinedFs'));
+    expect(source('files/file_edit_writer.dart'), contains('ConfinedFs'));
+  });
+}

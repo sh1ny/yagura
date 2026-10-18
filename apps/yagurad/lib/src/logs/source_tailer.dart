@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import '../errors.dart';
+import '../files/files.dart';
 import 'capture_writer.dart';
 import 'line_assembler.dart';
 import 'log_limits.dart';
@@ -35,6 +37,7 @@ typedef LineSink = void Function(
 class SourceTailer {
   SourceTailer({
     required this.spec,
+    required this.fs,
     required this.sink,
     required this.onEvent,
     required this.clock,
@@ -43,6 +46,11 @@ class SourceTailer {
   }) : _assembler = LineAssembler(spec.encoding);
 
   final LogSourceSpec spec;
+
+  /// The instance's files; every path the tailer reads goes through it, so a
+  /// source cannot be pointed outside the instance directory or through a
+  /// link (design D8).
+  final ConfinedFs fs;
   final LineSink sink;
   final void Function(LogSourceEvent event) onEvent;
   final DateTime Function() clock;
@@ -94,8 +102,7 @@ class SourceTailer {
       var file = target;
       int? end;
       if (saved != null &&
-          File(saved.file).existsSync() &&
-          File(saved.file).lengthSync() >= saved.offset &&
+          (_stat(saved.file)?.size ?? -1) >= saved.offset &&
           (spec.rotation == LogRotation.newest
               ? _declares(saved.file)
               : saved.file == target)) {
@@ -115,8 +122,10 @@ class SourceTailer {
         return;
       }
       _current = file;
-      await _readHistory(file, end ?? File(file).lengthSync());
+      await _readHistory(file, end ?? _sizeOf(file));
     } on FileSystemException catch (e) {
+      _fail(e);
+    } on YaguraException catch (e) {
       _fail(e);
     }
   }
@@ -124,7 +133,7 @@ class SourceTailer {
   /// [path] is one the source's declaration follows, so a position saved under
   /// an earlier declaration (a changed pattern) is not resumed.
   bool _declares(String path) => spec.kind == LogSourceKind.stdout
-      ? CaptureWriter.filesIn(spec.pattern).any((f) => p.equals(f, path))
+      ? _captureFiles().any((f) => p.equals(f, path))
       : _matches().any((m) => p.equals(m, path));
 
   Future<void> _readHistory(String path, int end) async {
@@ -178,7 +187,7 @@ class SourceTailer {
       final current = _current;
       if (spec.kind == LogSourceKind.file &&
           current != null &&
-          !File(current).existsSync()) {
+          _stat(current) == null) {
         // Gone (or being recreated): a file that comes back is a new one.
         _current = null;
         _offset = 0;
@@ -206,6 +215,8 @@ class SourceTailer {
       _clearError();
     } on FileSystemException catch (e) {
       _fail(e);
+    } on YaguraException catch (e) {
+      _fail(e);
     }
   }
 
@@ -222,8 +233,8 @@ class SourceTailer {
 
   Future<void> _readCurrent() async {
     final path = _current!;
-    final stat = File(path).statSync();
-    if (stat.type == FileSystemEntityType.notFound) return;
+    final stat = _stat(path);
+    if (stat == null) return;
     final size = stat.size;
     final mark = _mark;
     if (mark != null && await _rewritten(path, size, mark)) {
@@ -233,18 +244,19 @@ class SourceTailer {
       _restart();
     }
     if (size == _offset) return;
-    final raf = await File(path).open();
+    final reader = fs.openRead(fs.relative(path));
     try {
-      await raf.setPosition(_offset);
       var left = size - _offset;
+      var at = _offset;
       while (left > 0) {
-        final chunk = await raf.read(min(left, _chunkBytes));
+        final chunk = reader.readAt(at, min(left, _chunkBytes));
         if (chunk.isEmpty) break;
         left -= chunk.length;
+        at += chunk.length;
         if (!_consume(chunk)) break;
       }
     } finally {
-      await raf.close();
+      reader.close();
     }
   }
 
@@ -290,12 +302,11 @@ class SourceTailer {
   }
 
   Future<Uint8List> _readRange(String path, int from, int count) async {
-    final raf = await File(path).open();
+    final reader = fs.openRead(fs.relative(path));
     try {
-      await raf.setPosition(from);
-      return await raf.read(count);
+      return reader.readAt(from, count);
     } finally {
-      await raf.close();
+      reader.close();
     }
   }
 
@@ -308,7 +319,7 @@ class SourceTailer {
         return _nextCapture();
       case LogSourceKind.file:
         if (spec.rotation == LogRotation.fixed) {
-          return File(spec.pattern).existsSync() ? spec.pattern : null;
+          return _stat(spec.pattern) != null ? spec.pattern : null;
         }
         return _newest();
     }
@@ -317,7 +328,7 @@ class SourceTailer {
   /// Capture files are read in order, one after the other, so a rotation that
   /// happened while the daemon was down loses no line.
   String? _nextCapture() {
-    final files = CaptureWriter.filesIn(spec.pattern);
+    final files = _captureFiles();
     if (files.isEmpty) return null;
     final current = _current;
     if (current == null) return files.last;
@@ -354,28 +365,66 @@ class SourceTailer {
     final directory = p.dirname(pattern);
     final name = p.basename(pattern);
     if (!name.contains('*') && !name.contains('?')) {
-      return File(pattern).existsSync() ? [pattern] : const [];
+      return _stat(pattern) != null ? [pattern] : const [];
     }
-    final dir = Directory(directory);
-    if (!dir.existsSync()) return const [];
     final expression = RegExp(
       '^${name.splitMapJoin(RegExp(r'[*?]'), onMatch: (m) => m[0] == '*' ? '.*' : '.', onNonMatch: RegExp.escape)}\$',
       caseSensitive: !Platform.isWindows,
     );
     return [
-      for (final entry in dir.listSync(followLinks: false))
-        if (entry is File && expression.hasMatch(p.basename(entry.path)))
-          entry.path,
+      for (final name in _filesIn(directory))
+        if (expression.hasMatch(name)) p.join(directory, name),
     ];
   }
 
+  /// The capture files of the source, oldest first.
+  List<String> _captureFiles() {
+    final named = <(int, String)>[
+      for (final name in _filesIn(spec.pattern))
+        if (CaptureWriter.sequenceOf(name) case final sequence?)
+          (sequence, p.join(spec.pattern, name)),
+    ]..sort((a, b) => a.$1.compareTo(b.$1));
+    return [for (final (_, path) in named) path];
+  }
+
+  /// The names of the plain files in the directory [directory]; none when it
+  /// is missing. Links are not followed and not listed.
+  List<String> _filesIn(String directory) {
+    final relative = fs.relative(directory);
+    final entry = fs.stat(relative);
+    if (entry == null || !entry.isDirectory) return const [];
+    return [
+      for (final e in fs.list(relative))
+        if (!e.isDirectory && !e.isLink) e.name,
+    ];
+  }
+
+  /// The plain file at [path], or null when there is none (a directory
+  /// counts as none). A link on the way fails with `sandbox_violation`.
+  ConfinedEntry? _stat(String path) {
+    final entry = fs.stat(fs.relative(path));
+    return entry == null || entry.isDirectory ? null : entry;
+  }
+
+  int _sizeOf(String path) =>
+      _stat(path)?.size ??
+      (throw FileSystemException('no such file or directory', path));
+
   String _mostRecent(List<String> files) {
-    FileStat stat(String path) => File(path).statSync();
+    final never = DateTime.fromMillisecondsSinceEpoch(0);
+    ({DateTime created, DateTime modified}) stat(String path) {
+      final entry = _stat(path);
+      return (
+        created: entry?.created ?? never,
+        modified: entry?.modified ?? never,
+      );
+    }
+
     var best = files.first;
     var bestStat = stat(best);
     for (final path in files.skip(1)) {
       final s = stat(path);
-      final newer = switch (s.changed.compareTo(bestStat.changed)) {
+      final newer = switch (s.created.compareTo(bestStat.created)) {
         0 => switch (s.modified.compareTo(bestStat.modified)) {
           0 => path.compareTo(best) > 0,
           final byModified => byModified > 0,
@@ -412,10 +461,15 @@ class SourceTailer {
     _lastError = '';
   }
 
-  void _fail(FileSystemException e) {
-    final message = e.osError?.message.trim().isNotEmpty ?? false
-        ? e.osError!.message.trim()
-        : e.message;
+  void _fail(Object e) {
+    final message = switch (e) {
+      FileSystemException(:final osError?)
+          when osError.message.trim().isNotEmpty =>
+        osError.message.trim(),
+      FileSystemException(:final message) => message,
+      YaguraException(:final message) => message,
+      _ => '$e',
+    };
     final changed = _lastError != message;
     _status = 'error';
     _lastError = message;
@@ -438,15 +492,15 @@ class SourceTailer {
   }
 
   Future<FixedFileMark> _fingerprint(String path) async {
-    final file = File(path);
-    if (!file.existsSync()) {
+    final entry = _stat(path);
+    if (entry == null) {
       return FixedFileMark(
         size: 0,
         hashedBytes: 0,
         sha256: sha256.convert(const []).toString(),
       );
     }
-    final size = file.lengthSync();
+    final size = entry.size;
     final head = await _readRange(path, 0, min(size, markHashBytes));
     return FixedFileMark(
       size: size,

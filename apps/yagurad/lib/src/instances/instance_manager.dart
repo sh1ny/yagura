@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:yagura_plugin/yagura_plugin.dart';
 
 import '../errors.dart';
+import '../files/files.dart';
 import '../hooks/hooks.dart';
 import '../host/data_directory.dart';
 import '../host/secret_store.dart';
@@ -117,10 +118,8 @@ class InstanceManager {
 
   static final _random = Random.secure();
 
-  static Future<void> _removeTree(String directory) async {
-    final tree = Directory(directory);
-    if (tree.existsSync()) tree.deleteSync(recursive: true);
-  }
+  static Future<void> _removeTree(String directory) async =>
+      InstanceFs(directory).deleteTree('');
 
   // ---- reading ------------------------------------------------------------
 
@@ -243,8 +242,7 @@ class InstanceManager {
     _checkPorts(name, ports, excluding: null);
     final directory = _checkDirectory(request.directory, id);
 
-    final created = Directory(directory).existsSync() ? false : true;
-    Directory(directory).createSync(recursive: true);
+    final created = ConfinedFs.create(directory);
     final now = clock();
     final record = InstanceRecord(
       id: id,
@@ -262,7 +260,7 @@ class InstanceManager {
     try {
       store.save(record);
     } on Object {
-      if (created) Directory(directory).deleteSync(recursive: true);
+      if (created) InstanceFs(directory).deleteTree('');
       rethrow;
     }
     _records[id] = record;
@@ -985,6 +983,14 @@ class InstanceManager {
         'instance_file_stale',
         'instance.json could not be written: ${e.osError?.message ?? e.message}',
       );
+    } on YaguraException catch (e) {
+      // A link in the way (design D8): the file is not written.
+      if (e.reason != 'sandbox_violation') rethrow;
+      notice(
+        record.id,
+        'instance_file_stale',
+        'instance.json could not be written: ${e.message}',
+      );
     }
   }
 
@@ -1444,9 +1450,17 @@ class InstanceManager {
   /// stale only when the daemon died between commit and write).
   void rewriteInstanceFiles() {
     for (final record in _records.values) {
-      if (Directory(record.directory).existsSync()) {
-        writeInstanceFile(record);
-      }
+      if (_directoryMayExist(record.directory)) writeInstanceFile(record);
+    }
+  }
+
+  /// Whether the instance directory is there; a link in its place counts as
+  /// there, so the write that follows reports it.
+  bool _directoryMayExist(String directory) {
+    try {
+      return InstanceFs(directory).stat('') != null;
+    } on YaguraException {
+      return true;
     }
   }
 
@@ -1465,15 +1479,23 @@ class InstanceManager {
   void _sweepMarked(Directory directory) {
     for (final entry
         in directory.listSync(followLinks: false).whereType<Directory>()) {
-      final marker = File(p.join(entry.path, '.yagura', 'deleting'));
+      final fs = InstanceFs(entry.path);
       final owner = _records.values.any(
         (r) => p.equals(p.normalize(p.absolute(r.directory)), entry.path),
       );
-      if (marker.existsSync()) {
+      final bool marked;
+      try {
+        marked = fs.exists(InstanceFs.deletingMarker);
+      } on YaguraException {
+        // A link under the directory: its marker cannot be read, and nothing
+        // below it is entered.
+        continue;
+      }
+      if (marked) {
         if (owner) {
-          marker.deleteSync();
+          fs.delete(InstanceFs.deletingMarker);
         } else {
-          entry.deleteSync(recursive: true);
+          fs.deleteTree('');
         }
       } else if (!owner) {
         _sweepMarked(entry);

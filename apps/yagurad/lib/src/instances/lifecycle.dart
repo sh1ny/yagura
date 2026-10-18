@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:path/path.dart' as p;
 import 'package:yagura_plugin/yagura_plugin.dart';
 
 import '../errors.dart';
-import '../files/instance_root.dart';
+import '../files/files.dart';
 import '../hooks/hooks.dart';
 import '../operations/operations.dart';
 import '../plugins/plugin_registry.dart';
@@ -72,7 +71,7 @@ class Lifecycle {
             ),
             ports: {for (final port in record.ports) port.name: port.number},
           ),
-          root: InstanceRoot(record.directory),
+          root: InstanceFs(record.directory),
           deadline: Duration(seconds: manifest.hooksTimeoutSeconds),
         ),
         cancel: ctx.cancel.whenCancelled,
@@ -113,12 +112,13 @@ class Lifecycle {
     final account = spec.anonymous || record.steamAccountId.isEmpty
         ? null
         : record.steamAccountId;
-    Directory(_serverDirectory(record)).createSync(recursive: true);
+    InstanceFs(record.directory).createDirectory('server');
     await ctx.heavy(
       () => _manager.steam.installApp(
         SteamAppRequest(
           appId: spec.appId,
           installDirectory: _serverDirectory(record),
+          instanceDirectory: record.directory,
           validate: validate,
           account: account,
           accountRequired: !spec.anonymous,
@@ -314,7 +314,8 @@ class Lifecycle {
           for (var i = 0; i < 12; i++) _random.nextInt(16).toRadixString(16),
         ].join();
         final runDirectory = RunFiles.directoryFor(record.directory, runId);
-        Directory(runDirectory).createSync(recursive: true);
+        InstanceFs(record.directory)
+            .createDirectory(p.relative(runDirectory, from: record.directory));
         // The run is recorded `pending` before anything is spawned, so a
         // daemon killed from here on can find what it started.
         _manager.runs.insertPending(
@@ -583,7 +584,7 @@ class Lifecycle {
   }) async {
     final record = _manager.recordForOperation(id);
     _manager.checkAllowed(record, OperationKind.delete, execution: true);
-    final marker = File(p.join(record.directory, '.yagura', 'deleting'));
+    final fs = InstanceFs(record.directory);
 
     if (deleteFiles) {
       final plugin = _manager.requirePlugin(record);
@@ -600,8 +601,8 @@ class Lifecycle {
             'were removed',
       );
       await ctx.step('mark_deleting', () async {
-        marker.parent.createSync(recursive: true);
-        marker.writeAsStringSync('');
+        fs.createDirectory(InstanceFs.yaguraDirectory);
+        fs.writeBytes(InstanceFs.deletingMarker, const []);
       });
     }
 
@@ -610,7 +611,9 @@ class Lifecycle {
         _manager.removeRows(record);
       });
     } on OperationCancelled {
-      if (marker.existsSync()) marker.deleteSync();
+      if (fs.exists(InstanceFs.deletingMarker)) {
+        fs.delete(InstanceFs.deletingMarker);
+      }
       rethrow;
     }
 

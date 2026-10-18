@@ -36,7 +36,7 @@ HookInvocation invocationFor(
   point: point,
   source: source,
   context: testContext(),
-  root: InstanceRoot(instance.path),
+  root: InstanceFs(instance.path),
   deadline: deadline,
 );
 

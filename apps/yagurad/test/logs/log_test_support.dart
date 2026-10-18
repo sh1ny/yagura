@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/files/files.dart';
 import 'package:yagurad/src/logs/logs.dart';
 
 /// The instance id the hub-level tests use.
@@ -61,7 +62,7 @@ class LogRig {
   );
 
   Future<void> attach(List<LogSourceSpec> sources) =>
-      hub.attach(rigInstance, sources);
+      hub.attach(rigInstance, sources, fs: InstanceFs(dir.path));
 
   Future<void> poll() => hub.pollNow(rigInstance);
 }

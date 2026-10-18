@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagura_proto/yagura_proto.dart' as pb;
 import 'package:yagurad/src/errors.dart';
+import 'package:yagurad/src/files/files.dart';
 import 'package:yagura_js/yagura_js.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
 import 'package:yagurad/src/hooks/host_api.dart';
@@ -190,12 +191,12 @@ exports.onPreStart = function () {
   test('read_cap_applies_to_bytes_read', () {
     final dir = Directory.systemTemp.createTempSync('yagura_cap_');
     addTearDown(() => dir.deleteSync(recursive: true));
-    final file = File(p.join(dir.path, 'grown.log'))
-      ..writeAsBytesSync(List.filled(200 * 1024, 0x61));
+    File(p.join(dir.path, 'grown.log'))
+        .writeAsBytesSync(List.filled(200 * 1024, 0x61));
 
     // The size seen before the read is irrelevant: what is read is counted.
     expect(
-      () => readCapped(file.path, 'grown.log', limit: 100 * 1024),
+      () => readCapped(InstanceFs(dir.path), 'grown.log', limit: 100 * 1024),
       throwsA(
         isA<HostException>().having(
           (e) => e.code,
@@ -205,7 +206,7 @@ exports.onPreStart = function () {
       ),
     );
     expect(
-      readCapped(file.path, 'grown.log', limit: 200 * 1024),
+      readCapped(InstanceFs(dir.path), 'grown.log', limit: 200 * 1024),
       hasLength(200 * 1024),
     );
   });

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/files/files.dart';
 import 'package:yagurad/src/logs/logs.dart';
 import 'package:yagurad/src/logs/source_tailer.dart';
 
@@ -164,11 +165,13 @@ void main() {
 
   group('tailer', () {
     SourceTailer tailer(
+      LogRig rig,
       LogSourceSpec spec,
       List<String> lines, {
       int historyBytes = historyWindowBytes,
     }) => SourceTailer(
       spec: spec,
+      fs: InstanceFs(rig.dir.path),
       sink: (source, line, {required history}) =>
           lines.add(spec.encoding.decode(line.bytes)),
       onEvent: (_) {},
@@ -183,7 +186,7 @@ void main() {
       rig.write('server.log', [...head, ...List.filled(300000, 0x78)]);
       final spec = rig.fileSource('server', 'server.log');
       final lines = <String>[];
-      final t = tailer(spec, lines, historyBytes: 100000);
+      final t = tailer(rig, spec, lines, historyBytes: 100000);
       // Saved while the line was already cut: 200,000 bytes in.
       await t.start(LogPosition(rig.path('server.log'), 200000));
       rig.append('server.log', utf8.encode('tail\nnext\n'));
@@ -204,6 +207,7 @@ void main() {
         rig.write('server.log', bom.sublist(0, 1));
         final lines = <String>[];
         final t = tailer(
+          rig,
           rig.fileSource('server', 'server.log', encoding: encoding),
           lines,
         );
@@ -221,6 +225,7 @@ void main() {
       rig.appendLines('new-1.log', ['from the new declaration']);
       final lines = <String>[];
       final t = tailer(
+        rig,
         rig.fileSource('app', 'new-*.log', rotation: LogRotation.newest),
         lines,
       );

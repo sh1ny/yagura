@@ -210,6 +210,12 @@ class Daemon {
       }
     }
 
+    // The Steam service keeps its ready marker and app sizes in the database
+    // (design D8), out of reach of the game servers.
+    if (config.steam case final SteamCmdService steam) {
+      steam.useDatabase(database, config.clock);
+    }
+
     final hooks = config.hookHost ?? HookHost();
     final runner = OperationRunner(
       database: database,

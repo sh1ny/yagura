@@ -150,7 +150,7 @@ void main() {
           isA<YaguraException>().having(
             (e) => e.reason,
             'reason',
-            'unsupported_in_this_version',
+            'sandbox_violation',
           ),
         ),
       );

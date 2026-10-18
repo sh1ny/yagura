@@ -1,2 +1,3 @@
+export 'confined_fs.dart';
 export 'file_edit_writer.dart';
-export 'instance_root.dart';
+export 'instance_fs.dart';

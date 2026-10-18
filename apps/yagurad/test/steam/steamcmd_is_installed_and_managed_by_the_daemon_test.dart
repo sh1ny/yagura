@@ -42,11 +42,7 @@ void main() {
       isTrue,
       reason: 'the archive was unpacked into <data>/steamcmd/anonymous',
     );
-    expect(
-      File(p.join(steam.installation, SteamCmdService.readyMarker))
-          .existsSync(),
-      isTrue,
-    );
+    expect(steam.state.isReady('anonymous'), isTrue);
     // The self-update run and its check run (+quit alone) came before the
     // app run.
     final runs = steam.runs();
@@ -81,8 +77,7 @@ void main() {
     expect(done.resultReason, 'steamcmd_unavailable');
     expect(done.resultMessage, contains('503'));
     expect(
-      File(p.join(steam.installation, SteamCmdService.readyMarker))
-          .existsSync(),
+      steam.state.isReady('anonymous'),
       isFalse,
       reason: 'no partial directory is marked ready',
     );
@@ -117,11 +112,7 @@ void main() {
         messageHas: ['could not be downloaded'],
       ),
     );
-    expect(
-      File(p.join(steam.installation, SteamCmdService.readyMarker))
-          .existsSync(),
-      isFalse,
-    );
+    expect(steam.state.isReady('anonymous'), isFalse);
   });
 
   group('a stalled download', () {
@@ -199,11 +190,7 @@ void main() {
         );
         second.cancel();
         await secondOutcome.timeout(const Duration(seconds: 10));
-        expect(
-          File(p.join(steam.installation, SteamCmdService.readyMarker))
-              .existsSync(),
-          isFalse,
-        );
+        expect(steam.state.isReady('anonymous'), isFalse);
         expect(Directory(steam.installation).existsSync(), isFalse);
         expect(steam.launcher.started, isEmpty);
       });
@@ -241,14 +228,14 @@ void main() {
     final env = TestEnv();
     var fetches = 0;
     final launcher = _ScriptedLauncher(exitCode: 8, lines: ['ERROR! boom']);
+    final state = MemorySteamState();
     final service = SteamCmdService(
+      state: state,
       steamcmdRoot: p.join(env.data, 'steamcmd'),
       bootstrap: SteamCmdBootstrap(
         fetch: (uri, destination, cancel) async {
           fetches++;
-          destination.writeAsBytesSync(
-            tarArchive({'steamcmd.exe': utf8.encode('MZ')}),
-          );
+          destination.add(tarArchive({'steamcmd.exe': utf8.encode('MZ')}));
         },
       ),
       launcher: launcher,
@@ -274,10 +261,7 @@ void main() {
       hasLength(2),
       reason: 'the self-update run and the check run; no app_update was run',
     );
-    expect(
-      File(p.join(installation, SteamCmdService.readyMarker)).existsSync(),
-      isFalse,
-    );
+    expect(state.isReady('anonymous'), isFalse);
     expect(Directory(installation).existsSync(), isFalse);
 
     await expectLater(
@@ -293,13 +277,13 @@ void main() {
   test('the_self_update_run_exit_code_is_not_judged', () async {
     final env = TestEnv();
     final launcher = _ScriptedLauncher(exitCodes: [7, 0, 8], lines: []);
+    final state = MemorySteamState();
     final service = SteamCmdService(
+      state: state,
       steamcmdRoot: p.join(env.data, 'steamcmd'),
       bootstrap: SteamCmdBootstrap(
         fetch: (uri, destination, cancel) async {
-          destination.writeAsBytesSync(
-            tarArchive({'steamcmd.exe': utf8.encode('MZ')}),
-          );
+          destination.add(tarArchive({'steamcmd.exe': utf8.encode('MZ')}));
         },
       ),
       launcher: launcher,
@@ -307,7 +291,6 @@ void main() {
       log: (_) {},
     );
     addTearDown(service.close);
-    final installation = p.join(env.data, 'steamcmd', 'anonymous');
 
     // The scripted app_update (third run) fails; the bootstrap must not.
     await expectLater(
@@ -329,10 +312,7 @@ void main() {
     );
     expect(launcher.started[0].last, '+quit');
     expect(launcher.started[1].last, '+quit');
-    expect(
-      File(p.join(installation, SteamCmdService.readyMarker)).existsSync(),
-      isTrue,
-    );
+    expect(state.isReady('anonymous'), isTrue);
   });
 }
 

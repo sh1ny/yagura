@@ -4,7 +4,7 @@ import 'dart:isolate';
 
 import 'package:yagura_js/yagura_js.dart';
 
-import '../files/instance_root.dart';
+import '../files/instance_fs.dart';
 import 'hook_limits.dart';
 import 'host_api.dart';
 
@@ -170,7 +170,7 @@ Map<String, Object?> runHookInWorker(HookWorkerRequest request) {
   var loaded = false;
   try {
     js.setDeadline(request.deadline);
-    registerHostApi(js, InstanceRoot(request.rootPath), logs);
+    registerHostApi(js, InstanceFs(request.rootPath), logs);
     js.hideHostBridge();
     js.eval(hookPrelude, filename: '<yagura>');
     js.eval(request.source, filename: 'hooks.js');

@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
 import 'package:yagura_plugin/yagura_plugin.dart';
 
+import '../files/instance_fs.dart';
 import 'instance_store.dart';
 
 /// The portable `instance.json` (ADR 0008): written after every committed
@@ -44,20 +44,15 @@ class InstanceFile {
   };
 
   /// Writes the file into the instance directory by atomic replace. Throws
-  /// [FileSystemException] when that fails.
+  /// [FileSystemException] when that fails and a `sandbox_violation`
+  /// `YaguraException` when a link is in the way.
   static void write(InstanceRecord record, PluginManifest? manifest) {
-    final target = p.join(record.directory, fileName);
-    final temporary = File('$target.tmp');
-    try {
-      temporary.writeAsStringSync(
+    InstanceFs(record.directory).writeAtomic(
+      fileName,
+      utf8.encode(
         '${const JsonEncoder.withIndent('  ').convert(content(record, manifest))}\n',
-        flush: true,
-      );
-      temporary.renameSync(target);
-    } on FileSystemException {
-      if (temporary.existsSync()) temporary.deleteSync();
-      rethrow;
-    }
+      ),
+    );
   }
 }
 

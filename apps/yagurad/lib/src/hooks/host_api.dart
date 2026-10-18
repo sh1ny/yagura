@@ -1,12 +1,11 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:yagura_formats/yagura_formats.dart';
 import 'package:yagura_js/yagura_js.dart';
 
 import '../errors.dart';
-import '../files/instance_root.dart';
+import '../files/confined_fs.dart';
 import 'hook_limits.dart';
 
 /// JavaScript run in every hook runtime after the host functions are
@@ -66,7 +65,7 @@ const hookPrelude = r'''
 /// (`parse`, `serialize`). Log entries are appended to [logs].
 void registerHostApi(
   QuickJsRuntime js,
-  InstanceRoot root,
+  ConfinedFs fs,
   List<Map<String, Object?>> logs,
 ) {
   js.registerHostFunction('yagura.log', (args) {
@@ -94,45 +93,41 @@ void registerHostApi(
 
   js.registerHostFunction('yagura.fs.readText', (args) {
     final path = _pathArgument('yagura.fs.readText', args);
-    final resolved = _resolve(root, path);
-    switch (FileSystemEntity.typeSync(resolved)) {
-      case FileSystemEntityType.notFound:
-        throw HostException('ENOENT', 'no such file: $path');
-      case FileSystemEntityType.directory:
-        throw HostException('EISDIR', 'is a directory: $path');
-      default:
+    final entry = _confined(() => fs.stat(path));
+    if (entry == null) throw HostException('ENOENT', 'no such file: $path');
+    if (entry.isDirectory) {
+      throw HostException('EISDIR', 'is a directory: $path');
     }
-    return utf8.decode(readCapped(resolved, path), allowMalformed: true);
+    return utf8.decode(
+      _confined(() => readCapped(fs, path)),
+      allowMalformed: true,
+    );
   });
 
   js.registerHostFunction('yagura.fs.list', (args) {
     final path = _pathArgument('yagura.fs.list', args);
-    final resolved = _resolve(root, path);
-    switch (FileSystemEntity.typeSync(resolved)) {
-      case FileSystemEntityType.notFound:
-        throw HostException('ENOENT', 'no such directory: $path');
-      case FileSystemEntityType.directory:
-        break;
-      default:
-        throw HostException('ENOTDIR', 'not a directory: $path');
+    final directory = _confined(() => fs.stat(path));
+    if (directory == null) {
+      throw HostException('ENOENT', 'no such directory: $path');
+    }
+    if (!directory.isDirectory) {
+      throw HostException('ENOTDIR', 'not a directory: $path');
     }
     final entries = <Map<String, Object?>>[];
-    // listSync builds the whole listing before the loop runs; Dart has no
-    // synchronous incremental directory walk, so the cap bounds the result.
-    for (final entity in Directory(resolved).listSync(followLinks: false)) {
+    // The listing is built whole before the loop runs; the cap bounds the
+    // result.
+    for (final entry in _confined(() => fs.list(path))) {
       if (entries.length >= HookLimits.listEntries) {
         throw HostException(
           'host_limit_exceeded',
           'yagura.fs.list: "$path" has more than 10,000 entries',
         );
       }
-      // A link to outside the instance is listed without looking at its target.
-      final stat = _insideRoot(root, entity) ? entity.statSync() : null;
-      final isDirectory = stat?.type == FileSystemEntityType.directory;
+      // A link is listed by name only: it is never opened.
       entries.add({
-        'name': entity.uri.pathSegments.lastWhere((s) => s.isNotEmpty),
-        'size': isDirectory || stat == null ? 0 : stat.size,
-        'isDirectory': isDirectory,
+        'name': entry.name,
+        'size': entry.isDirectory || entry.isLink ? 0 : entry.size,
+        'isDirectory': entry.isDirectory && !entry.isLink,
       });
     }
     return entries;
@@ -172,20 +167,22 @@ void registerHostApi(
   });
 }
 
-/// Reads [resolved] ([path] as the hook named it) in chunks, refusing as soon as
-/// more than [limit] bytes have been read, so a file that grows during the read
-/// cannot pass the cap.
+/// Reads the file [path] of [fs] in chunks, refusing as soon as more than
+/// [limit] bytes have been read, so a file that grows during the read cannot
+/// pass the cap.
 List<int> readCapped(
-  String resolved,
+  ConfinedFs fs,
   String path, {
   int limit = HookLimits.hostCallBytes,
 }) {
-  final file = File(resolved).openSync();
+  final file = fs.openRead(path);
   try {
     final bytes = BytesBuilder(copy: false);
+    var offset = 0;
     while (true) {
-      final chunk = file.readSync(64 * 1024);
+      final chunk = file.readAt(offset, 64 * 1024);
       if (chunk.isEmpty) return bytes.takeBytes();
+      offset += chunk.length;
       bytes.add(chunk);
       if (bytes.length > limit) {
         throw HostException(
@@ -195,16 +192,7 @@ List<int> readCapped(
       }
     }
   } finally {
-    file.closeSync();
-  }
-}
-
-bool _insideRoot(InstanceRoot root, FileSystemEntity entity) {
-  try {
-    root.resolve(entity.path);
-    return true;
-  } on YaguraException {
-    return false;
+    file.close();
   }
 }
 
@@ -222,11 +210,11 @@ void _checkSize(String function, int bytes) {
   }
 }
 
-/// Resolves [path] inside [root]; the sandbox check surfaces in the hook as an
-/// error with the same `code`.
-String _resolve(InstanceRoot root, String path) {
+/// Runs [action], which touches the instance's files; the sandbox check
+/// surfaces in the hook as an error with the same `code`.
+T _confined<T>(T Function() action) {
   try {
-    return root.resolve(path);
+    return action();
   } on YaguraException catch (e) {
     throw HostException(e.reason, e.message);
   }

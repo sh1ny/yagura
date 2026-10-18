@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../errors.dart';
+import '../files/files.dart';
 import '../host/database.dart';
 import 'line_assembler.dart';
 import 'log_limits.dart';
@@ -70,9 +71,13 @@ class LogHub {
   // ---- sources -------------------------------------------------------------
 
   /// Starts tailing [sources] of [instanceId], refilling each ring from the
-  /// file tail. Attaching an instance again keeps the sources that did not
+  /// file tail, reading every file through [fs]. Attaching an instance again keeps the sources that did not
   /// change and replaces or drops the others.
-  Future<void> attach(String instanceId, List<LogSourceSpec> sources) {
+  Future<void> attach(
+    String instanceId,
+    List<LogSourceSpec> sources, {
+    required ConfinedFs fs,
+  }) {
     if (_closed) return Future<void>.value();
     final instance = _instances.putIfAbsent(
       instanceId,
@@ -94,6 +99,7 @@ class LogHub {
       final ring = instance.rings[spec.name] = LogRing();
       final tailer = SourceTailer(
         spec: spec,
+        fs: fs,
         sink: (source, line, {required history}) =>
             _line(instance, ring, spec, line, history: history),
         onEvent: (event) => _event(instance, event),
