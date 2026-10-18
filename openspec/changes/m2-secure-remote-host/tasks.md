@@ -176,7 +176,7 @@ Covers: plugin-manifest → Secret settings are write-only, Required secrets are
 
 - [x] 3.1 Write the failing tests for this group's rows; delete `apps/yagurad/test/instances/secret_settings_stay_unset_test.dart` together with the REMOVED requirement it covered. Verify: the new tests fail for the stated reason, and `dart test` has no reference to the deleted test.
 - [x] 3.2 Implement `SetSecret` and `DeleteSecret` through the secret store, `secret_via_set_secret` for values in CreateInstance and UpdateSettings (`settings.dart:163-180`), `{"secret": true, "set": <bool>}` in reads, the hook context and `instance.json`, the `secret_required` check at Start, and deletion of secret rows with the instance. Verify: this group's rows pass; flip them; `invalid_result_shape` still passes.
-- [ ] 3.3 Update `docs/protocol.md` (reasons `secret_via_set_secret`, `secret_required`, the SetSecret flow) and `docs/plugins/manifest.md` (secret settings). Verify: the M1 reason-code and doc-snippet tests pass.
+- [x] 3.3 Update `docs/protocol.md` (reasons `secret_via_set_secret`, `secret_required`, the SetSecret flow) and `docs/plugins/manifest.md` (secret settings). Verify: the M1 reason-code and doc-snippet tests pass.
 - [ ] 3.4 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
 
 ## 4. [M2] Instance revisions
