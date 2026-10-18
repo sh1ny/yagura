@@ -206,7 +206,7 @@ Covers: daemon-security → Daemon identity, Pairing with a one-time code, Mutua
 - [x] 6.2 Implement the CA, the server certificate and its rotation (D1, D4: close and re-serve, fallback to the old certificate with `server_cert_rotation_failed`, exit when both binds fail), with identity created only in service mode, and the `service_mode_required` exit for console starts without `--dev` (`run_command.dart:133-142`). Verify: the identity and development-mode rows pass; flip them.
 - [x] 6.3 Implement the `AuthGate` in `GuardedService` and around both reflection services (D2), pairing (`Pairing.Info`, `Pairing.Enroll` with code format, throttles and the 50-guess invalidation), renewal, device listing and revocation with the 5 s stream cancellation, and the audit and auth-failure tables with in-memory aggregation (D4). Add the descriptor-walk test and a v1alpha reflection test. Verify: the remaining group rows pass, including `snapshot_skipped_on_request`; flip them.
 - [x] 6.4 Add `admin_channel_ok`, `service_accounts_ok` and `server_cert_not_after` to `DaemonHealth` in `proto/yagura/v1/system.proto`, regenerate `packages/yagura_proto`, and update `docs/protocol.md` (pairing flow, mTLS, reasons including `certificate_expired` and `csr_invalid` in the Auth reasons, the M2 row of "Methods by daemon version"; drop the conditional spike sentence and the port + 1 fallback from "Per-call authorization"). Verify: the M1 methods-by-version and reason-code tests pass.
-- [ ] 6.5 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
+- [x] 6.5 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
 
 ## 7. [M2] Local admin channel and instance roots
 
