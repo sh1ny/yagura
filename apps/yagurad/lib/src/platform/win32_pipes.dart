@@ -15,17 +15,7 @@ import 'win32_security.dart';
 class Win32Pipes {
   Win32Pipes._() : this._open(DynamicLibrary.open('kernel32.dll'));
 
-  // Bound at once: binding it after a failed call (lazily) would reset the
-  // error it is about to read.
-  Win32Pipes._open(this._kernel)
-    : lastError = _kernel.lookupFunction<Uint32 Function(), int Function()>(
-        'GetLastError',
-        isLeaf: true,
-      ) {
-    // The first call of a binding compiles its stub, which would reset the
-    // error a failed call left: do that now.
-    lastError();
-  }
+  Win32Pipes._open(this._kernel);
 
   final DynamicLibrary _kernel;
 
@@ -68,7 +58,6 @@ class Win32Pipes {
   // The calls whose error code matters are leaf calls: no safepoint runs
   // between them and `GetLastError`, which could reset the thread's error
   // while other isolates run.
-  final int Function() lastError;
 
   late final int Function(
     Pointer<Utf16>,
@@ -186,14 +175,11 @@ const errorPipeBusy = 231;
 const errorPipeConnected = 535;
 const errorOperationAborted = 995;
 
-/// How often a call that failed with error 0 is repeated to read its error.
-const _errorReadAttempts = 5;
-
 /// How a blocking read of a frame ended.
 enum FrameStatus { ok, timeout, closed, tooLarge }
 
 Win32Error _failed(String call) =>
-    Win32Error(call, Win32Pipes.instance.lastError());
+    Win32Error(call, Win32.instance.getLastError());
 
 /// Creates one instance of the pipe [name] with the descriptor [sddl]. With
 /// [first], creation fails (access denied) when the name is taken, which is
@@ -209,15 +195,9 @@ int createPipeInstance(
   final text = name.toNativeUtf16();
   try {
     return withSecurityAttributes(sddl, (attributes) {
-      // `GetLastError` sometimes reads 0 after the first failure of a call in
-      // a process, whatever is done in between (seen under load, with leaf
-      // calls and the read in the same function); a repeat of the failed
-      // call reads the true code. The calls repeated here have no effect
-      // when they fail.
-      var handle = Win32.invalidHandle;
-      var error = 0;
-      for (var attempt = 0; attempt < _errorReadAttempts; attempt++) {
-        handle = pipes.createNamedPipe(
+      // A failed CreateNamedPipe has no effect: see [callReadingError].
+      final call = callReadingError(
+        () => pipes.createNamedPipe(
           text,
           Win32Pipes.pipeAccessDuplex |
               (first ? Win32Pipes.fileFlagFirstPipeInstance : 0),
@@ -228,12 +208,12 @@ int createPipeInstance(
           bufferBytes,
           0,
           attributes,
-        );
-        error = pipes.lastError();
-        if (handle != Win32.invalidHandle || error != 0) break;
-      }
+        ),
+        (h) => h == Win32.invalidHandle,
+      );
+      final handle = call.value;
       if (handle == Win32.invalidHandle) {
-        throw Win32Error('CreateNamedPipeW', error);
+        throw Win32Error('CreateNamedPipeW', call.error);
       }
       return handle;
     });
@@ -288,11 +268,8 @@ void disconnectAndClose(int handle) {
 int openClientPipe(String name) {
   final text = name.toNativeUtf16();
   try {
-    // See createPipeInstance: a failure that reads as error 0 is repeated.
-    var handle = Win32.invalidHandle;
-    var error = 0;
-    for (var attempt = 0; attempt < _errorReadAttempts; attempt++) {
-      handle = Win32Pipes.instance.createFile(
+    final call = callReadingError(
+      () => Win32Pipes.instance.createFile(
         text,
         Win32Pipes.genericReadWrite,
         0,
@@ -300,11 +277,13 @@ int openClientPipe(String name) {
         Win32.openExisting,
         Win32Pipes.securityAnonymous,
         0,
-      );
-      error = Win32Pipes.instance.lastError();
-      if (handle != Win32.invalidHandle || error != 0) break;
+      ),
+      (h) => h == Win32.invalidHandle,
+    );
+    final handle = call.value;
+    if (handle == Win32.invalidHandle) {
+      throw Win32Error('CreateFileW', call.error);
     }
-    if (handle == Win32.invalidHandle) throw Win32Error('CreateFileW', error);
     return handle;
   } finally {
     calloc.free(text);
@@ -315,8 +294,12 @@ int openClientPipe(String name) {
 int serverProcessId(int handle) {
   final out = calloc<Uint32>();
   try {
-    if (Win32Pipes.instance.getNamedPipeServerProcessId(handle, out) == 0) {
-      throw _failed('GetNamedPipeServerProcessId');
+    final call = callReadingError(
+      () => Win32Pipes.instance.getNamedPipeServerProcessId(handle, out),
+      (r) => r == 0,
+    );
+    if (call.value == 0) {
+      throw Win32Error('GetNamedPipeServerProcessId', call.error);
     }
     return out.value;
   } finally {

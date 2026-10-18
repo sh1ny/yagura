@@ -59,8 +59,12 @@ String _sidString(Pointer<Void> sid) {
   final win32 = Win32.instance;
   final out = calloc<Pointer<Utf16>>();
   try {
-    if (win32.convertSidToStringSid(sid, out) == 0) {
-      throw _failed('ConvertSidToStringSidW');
+    final call = callReadingError(
+      () => win32.convertSidToStringSid(sid, out),
+      (r) => r == 0,
+    );
+    if (call.value == 0) {
+      throw Win32Error('ConvertSidToStringSidW', call.error);
     }
     final text = out.value.toDartString();
     win32.localFree(out.value.cast());
@@ -76,14 +80,15 @@ String currentUserSid() {
   final token = calloc<IntPtr>();
   final length = calloc<Uint32>();
   try {
-    if (win32.openProcessToken(
-          win32.getCurrentProcess(),
-          Win32.tokenQuery,
-          token,
-        ) ==
-        0) {
-      throw _failed('OpenProcessToken');
-    }
+    final call = callReadingError(
+      () => win32.openProcessToken(
+        win32.getCurrentProcess(),
+        Win32.tokenQuery,
+        token,
+      ),
+      (r) => r == 0,
+    );
+    if (call.value == 0) throw Win32Error('OpenProcessToken', call.error);
     try {
       // The first call only reports the size the `TOKEN_USER` needs.
       win32.getTokenInformation(
@@ -137,8 +142,12 @@ Uint8List stringToSid(String sid) {
   final text = sid.toNativeUtf16();
   final out = calloc<Pointer<Void>>();
   try {
-    if (win32.convertStringSidToSid(text, out) == 0) {
-      throw _failed('ConvertStringSidToSidW');
+    final call = callReadingError(
+      () => win32.convertStringSidToSid(text, out),
+      (r) => r == 0,
+    );
+    if (call.value == 0) {
+      throw Win32Error('ConvertStringSidToSidW', call.error);
     }
     final length = win32.getLengthSid(out.value);
     final bytes = Uint8List.fromList(
@@ -183,18 +192,19 @@ Uint8List dpapiProtect(Uint8List plain) {
   final output = calloc<Uint8>(16);
   final bytes = _blobOf(plain, input);
   try {
-    if (win32.cryptProtectData(
-          input.cast(),
-          nullptr,
-          nullptr,
-          nullptr,
-          nullptr,
-          _cryptProtectUiForbidden,
-          output.cast(),
-        ) ==
-        0) {
-      throw _failed('CryptProtectData');
-    }
+    final call = callReadingError(
+      () => win32.cryptProtectData(
+        input.cast(),
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        _cryptProtectUiForbidden,
+        output.cast(),
+      ),
+      (r) => r == 0,
+    );
+    if (call.value == 0) throw Win32Error('CryptProtectData', call.error);
     return _takeBlob(output);
   } finally {
     calloc
@@ -213,18 +223,22 @@ Uint8List dpapiUnprotect(Uint8List blob) {
   final output = calloc<Uint8>(16);
   final bytes = _blobOf(blob, input);
   try {
-    if (win32.cryptUnprotectData(
-          input.cast(),
-          nullptr,
-          nullptr,
-          nullptr,
-          nullptr,
-          _cryptProtectUiForbidden,
-          output.cast(),
-        ) ==
-        0) {
-      throw DpapiError('CryptUnprotectData', win32.getLastError());
-    }
+    // A failure has no effect, so one that reads as error 0 is repeated to
+    // read the true code (see [callReadingError]); a wrong-key failure must
+    // not be mistaken for a transient one.
+    final call = callReadingError(
+      () => win32.cryptUnprotectData(
+        input.cast(),
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        _cryptProtectUiForbidden,
+        output.cast(),
+      ),
+      (r) => r == 0,
+    );
+    if (call.value == 0) throw DpapiError('CryptUnprotectData', call.error);
     return _takeBlob(output);
   } finally {
     calloc
@@ -242,14 +256,20 @@ Win32Error? _withDescriptor(String sddl, void Function(Pointer<Void> sd) use) {
   final text = sddl.toNativeUtf16();
   final out = calloc<Pointer<Void>>();
   try {
-    if (win32.convertStringSecurityDescriptorToSecurityDescriptor(
-          text,
-          Win32.sddlRevision1,
-          out,
-          nullptr,
-        ) ==
-        0) {
-      return _failed('ConvertStringSecurityDescriptorToSecurityDescriptorW');
+    final call = callReadingError(
+      () => win32.convertStringSecurityDescriptorToSecurityDescriptor(
+        text,
+        Win32.sddlRevision1,
+        out,
+        nullptr,
+      ),
+      (r) => r == 0,
+    );
+    if (call.value == 0) {
+      return Win32Error(
+        'ConvertStringSecurityDescriptorToSecurityDescriptorW',
+        call.error,
+      );
     }
     try {
       use(out.value);
@@ -267,53 +287,129 @@ Win32Error? _withDescriptor(String sddl, void Function(Pointer<Void> sd) use) {
 /// Whether SDDL [sddl] converts to a security descriptor.
 bool sddlParses(String sddl) => _withDescriptor(sddl, (_) {}) == null;
 
+/// The SID of the Administrators group.
+const administratorsGroupSid = 'S-1-5-32-544';
+
+/// The string SID of the owner of the kernel object [handle] (a pipe end,
+/// opened for reading its security: any handle may do).
+String pipeOwnerSid(int handle) {
+  final win32 = Win32.instance;
+  final needed = calloc<Uint32>();
+  final owner = calloc<Pointer<Void>>();
+  final defaulted = calloc<Int32>();
+  try {
+    // The first call only reports the size the descriptor needs.
+    win32.getKernelObjectSecurity(
+      handle,
+      Win32.ownerSecurityInformation,
+      nullptr,
+      0,
+      needed,
+    );
+    final size = needed.value;
+    if (size == 0) throw _failed('GetKernelObjectSecurity');
+    final descriptor = calloc<Uint8>(size);
+    try {
+      final read = callReadingError(
+        () => win32.getKernelObjectSecurity(
+          handle,
+          Win32.ownerSecurityInformation,
+          descriptor.cast(),
+          size,
+          needed,
+        ),
+        (r) => r == 0,
+      );
+      if (read.value == 0) {
+        throw Win32Error('GetKernelObjectSecurity', read.error);
+      }
+      final found = callReadingError(
+        () => win32.getSecurityDescriptorOwner(
+          descriptor.cast(),
+          owner,
+          defaulted,
+        ),
+        (r) => r == 0,
+      );
+      if (found.value == 0 || owner.value == nullptr) {
+        throw Win32Error('GetSecurityDescriptorOwner', found.error);
+      }
+      return _sidString(owner.value);
+    } finally {
+      calloc.free(descriptor);
+    }
+  } finally {
+    calloc
+      ..free(needed)
+      ..free(owner)
+      ..free(defaulted);
+  }
+}
+
 /// `WRITE_OWNER`.
 const writeOwner = 0x00080000;
 
-/// Replaces the DACL of the file at [path] with the one from [sddl], through
-/// `SetKernelObjectSecurity` on a handle opened for `WRITE_DAC` without
-/// following a link at [path]. The new DACL is protected: nothing inherits.
+/// Replaces the DACL of the object behind [handle] (opened with `WRITE_DAC`,
+/// and `WRITE_OWNER` for [ownerSid]) with the one from [sddl], through
+/// `SetKernelObjectSecurity`. The new DACL is protected: nothing inherits.
+/// Setting the descriptor through the handle that was checked leaves no gap
+/// for a path to be swapped for another.
+void setHandleDacl(int handle, String sddl, {String? ownerSid}) {
+  final win32 = Win32.instance;
+  Win32Error? failure;
+  final parseError = _withDescriptor(
+    ownerSid == null ? sddl : 'O:$ownerSid$sddl',
+    (sd) {
+      // A failed call has no effect, so a failure that reads as error 0 is
+      // repeated (see [callReadingError]).
+      final call = callReadingError(
+        () => win32.setKernelObjectSecurity(
+          handle,
+          Win32.daclSecurityInformation |
+              Win32.protectedDaclSecurityInformation |
+              (ownerSid == null ? 0 : Win32.ownerSecurityInformation),
+          sd,
+        ),
+        (r) => r == 0,
+      );
+      if (call.value == 0) {
+        failure = Win32Error('SetKernelObjectSecurity', call.error);
+      }
+    },
+  );
+  if (parseError != null) throw parseError;
+  if (failure case final error?) throw error;
+}
+
+/// Replaces the DACL of the file at [path] with the one from [sddl] (see
+/// [setHandleDacl]), on a handle opened for `WRITE_DAC` without following a
+/// link at [path].
 void setFileDacl(String path, String sddl, {String? ownerSid}) {
   final win32 = Win32.instance;
   final name = path.toNativeUtf16();
-  final int handle;
-  final int openError;
   try {
-    handle = win32.createFile(
-      name,
-      Win32.writeDac | (ownerSid == null ? 0 : writeOwner),
-      Win32.fileShareReadWrite,
-      nullptr,
-      Win32.openExisting,
-      Win32.fileFlagBackupSemantics | Win32.fileFlagOpenReparsePoint,
-      0,
+    final open = callReadingError(
+      () => win32.createFile(
+        name,
+        Win32.writeDac | (ownerSid == null ? 0 : writeOwner),
+        Win32.fileShareReadWrite,
+        nullptr,
+        Win32.openExisting,
+        Win32.fileFlagBackupSemantics | Win32.fileFlagOpenReparsePoint,
+        0,
+      ),
+      (h) => h == Win32.invalidHandle,
     );
-    openError = handle == Win32.invalidHandle ? win32.getLastError() : 0;
+    if (open.value == Win32.invalidHandle) {
+      throw Win32Error('CreateFileW', open.error);
+    }
+    try {
+      setHandleDacl(open.value, sddl, ownerSid: ownerSid);
+    } finally {
+      win32.closeHandle(open.value);
+    }
   } finally {
     calloc.free(name);
-  }
-  if (handle == Win32.invalidHandle) throw Win32Error('CreateFileW', openError);
-  try {
-    Win32Error? failure;
-    final parseError = _withDescriptor(
-      ownerSid == null ? sddl : 'O:$ownerSid$sddl',
-      (sd) {
-        if (win32.setKernelObjectSecurity(
-              handle,
-              Win32.daclSecurityInformation |
-                  Win32.protectedDaclSecurityInformation |
-                  (ownerSid == null ? 0 : Win32.ownerSecurityInformation),
-              sd,
-            ) ==
-            0) {
-          failure = _failed('SetKernelObjectSecurity');
-        }
-      },
-    );
-    if (parseError != null) throw parseError;
-    if (failure case final error?) throw error;
-  } finally {
-    win32.closeHandle(handle);
   }
 }
 

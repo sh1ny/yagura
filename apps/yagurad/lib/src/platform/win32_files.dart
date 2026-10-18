@@ -224,6 +224,14 @@ class Win32Files {
         int Function(int, Pointer<Utf16>, int, int)
       >('GetFinalPathNameByHandleW');
 
+  /// `GetFileInformationByHandle(handle, &info)` with a 52-byte
+  /// `BY_HANDLE_FILE_INFORMATION`, whose first word is the attributes.
+  late final int Function(int, Pointer<Uint8>) getFileInformationByHandle =
+      _kernel.lookupFunction<
+        Int32 Function(IntPtr, Pointer<Uint8>),
+        int Function(int, Pointer<Uint8>)
+      >('GetFileInformationByHandle');
+
   late final int Function(Pointer<Utf16>, Pointer<Utf16>, int) getLongPathName =
       _kernel.lookupFunction<
         Uint32 Function(Pointer<Utf16>, Pointer<Utf16>, Uint32),

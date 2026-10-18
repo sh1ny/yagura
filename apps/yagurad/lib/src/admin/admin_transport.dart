@@ -18,6 +18,10 @@ abstract interface class AdminListener {
 
   Stream<AdminConnection> get connections;
 
+  /// Whether a client can connect now or, when every slot is taken, as soon
+  /// as one is free. False once the listener cannot make the next endpoint.
+  bool get healthy;
+
   Future<void> close();
 }
 

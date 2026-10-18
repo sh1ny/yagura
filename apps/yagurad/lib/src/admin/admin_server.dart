@@ -24,7 +24,8 @@ class AdminServer {
   final _inFlight = <Future<void>>{};
   var _serving = false;
 
-  bool get serving => _serving;
+  /// Whether the server is open and its endpoint can take a client.
+  bool get serving => _serving && _listener.healthy;
 
   /// Opens the endpoint; `admin_channel_squatted` when another process
   /// serves it.

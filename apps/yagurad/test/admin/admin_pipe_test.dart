@@ -11,6 +11,8 @@ import 'package:yagurad/src/admin/admin_server.dart';
 import 'package:yagurad/src/admin/admin_wire.dart';
 import 'package:yagurad/src/admin/named_pipe.dart';
 import 'package:yagurad/src/errors.dart';
+import 'package:yagurad/src/platform/win32_pipes.dart';
+import 'package:yagurad/src/platform/win32_security.dart';
 
 import '../support/admin_support.dart';
 
@@ -74,6 +76,19 @@ Future<void> expectReason(Future<Object?> call, String reason) => expectLater(
   call,
   throwsA(isA<YaguraException>().having((e) => e.reason, 'reason', reason)),
 );
+
+/// A raw client handle, waiting while every instance is busy.
+Future<int> _openRaw(String name) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 10));
+  while (true) {
+    try {
+      return openClientPipe(name);
+    } on Win32Error catch (e) {
+      if (e.code != errorPipeBusy || DateTime.now().isAfter(deadline)) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+  }
+}
 
 void main() {
   test('a_request_and_its_reply_cross_a_real_pipe', () async {
@@ -240,5 +255,114 @@ void main() {
     release.complete();
     expect(await Future.wait(inFlight), hasLength(4));
     expect(await fifth, {'echo': 'fifth'});
+  });
+
+  test(
+    'a_client_that_hangs_up_before_the_server_connects_leaves_it_listening',
+    () async {
+      // The first two instances get a client that connects and goes before
+      // the server's connect call runs (ERROR_NO_DATA): the race, made
+      // deterministic. It must not cost the server its listening instance.
+      final name = testPipeName();
+      var created = 0;
+      final server = AdminServer(
+        NamedPipeListener(
+          name: name,
+          sddl: currentUserPipeSddl(),
+          createInstance:
+              (
+                pipe,
+                sddl, {
+                required first,
+                required maxInstances,
+                required bufferBytes,
+              }) {
+                final handle = createPipeInstance(
+                  pipe,
+                  sddl,
+                  first: first,
+                  maxInstances: maxInstances,
+                  bufferBytes: bufferBytes,
+                );
+                if (++created <= 2) closePipeHandle(openClientPipe(pipe));
+                return handle;
+              },
+        ),
+        (request) async => {'echo': request.command},
+      );
+      await server.start();
+      addTearDown(server.close);
+
+      final client = AdminClient(
+        NamedPipeConnector(name: name, verifier: (_) => true),
+      );
+      expect(await client.call('status'), {'echo': 'status'});
+      expect(server.serving, isTrue);
+      expect(created, greaterThanOrEqualTo(3));
+    },
+  );
+
+  test('raw_clients_that_hang_up_do_not_stop_the_server', () async {
+    final echo = await Echo.start();
+
+    for (var i = 0; i < 5; i++) {
+      closePipeHandle(await _openRaw(echo.name));
+    }
+
+    expect(await echo.client().call('status'), {'echo': 'status'});
+    expect(echo.server.serving, isTrue);
+  });
+
+  test('the_server_is_not_serving_while_no_instance_can_listen', () async {
+    final name = testPipeName();
+    var failing = false;
+    var created = 0;
+    final server = AdminServer(
+      NamedPipeListener(
+        name: name,
+        sddl: currentUserPipeSddl(),
+        retryEvery: const Duration(milliseconds: 20),
+        createInstance:
+            (
+              pipe,
+              sddl, {
+              required first,
+              required maxInstances,
+              required bufferBytes,
+            }) {
+              created++;
+              if (failing && !first) throw Win32Error('CreateNamedPipeW', 8);
+              return createPipeInstance(
+                pipe,
+                sddl,
+                first: first,
+                maxInstances: maxInstances,
+                bufferBytes: bufferBytes,
+              );
+            },
+      ),
+      (request) async => {'echo': request.command},
+    );
+    await server.start();
+    addTearDown(server.close);
+    expect(server.serving, isTrue);
+
+    // The next instance cannot be made when the first is taken.
+    failing = true;
+    final first = AdminClient(
+      NamedPipeConnector(name: name, verifier: (_) => true),
+    );
+    expect(await first.call('status'), {'echo': 'status'});
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(server.serving, isFalse, reason: 'nothing listens, nothing serves');
+
+    // It recovers by itself when instances can be made again.
+    failing = false;
+    for (var i = 0; i < 100 && !server.serving; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(server.serving, isTrue);
+    expect(await first.call('again'), {'echo': 'again'});
+    expect(created, greaterThan(2));
   });
 }

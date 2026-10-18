@@ -2,6 +2,35 @@ import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
 
+/// How often [callReadingError] repeats a failed call whose error reads 0.
+const errorReadAttempts = 5;
+
+/// Calls [call], a Win32 call that has no effect when it fails, and reads
+/// `GetLastError` right after a failure ([failed] tells one).
+///
+/// `GetLastError` through `dart:ffi` sometimes reads 0 after the first
+/// failure of a call in a process, whatever is done in between (seen under
+/// load); a repeat of the failed call reads the true code. So a failure that
+/// reads 0 is repeated, up to [errorReadAttempts] times. Do not use this for a
+/// call that has an effect when it fails or that may succeed the second time
+/// for another reason. [readError] is for tests.
+({T value, int error}) callReadingError<T>(
+  T Function() call,
+  bool Function(T value) failed, {
+  int Function()? readError,
+}) {
+  final read = readError ?? Win32.instance.getLastError;
+  late T value;
+  var error = 0;
+  for (var attempt = 0; attempt < errorReadAttempts; attempt++) {
+    value = call();
+    if (!failed(value)) return (value: value, error: 0);
+    error = read();
+    if (error != 0) break;
+  }
+  return (value: value, error: error);
+}
+
 /// The few kernel32 calls the daemon needs (job objects, suspended spawn,
 /// process enumeration, disk space), bound by hand with `dart:ffi`: a handful
 /// of functions does not justify a Win32 binding package. All structure
@@ -16,7 +45,12 @@ class Win32 {
     // error it is about to read.
     : getLastError = _kernel.lookupFunction<Uint32 Function(), int Function()>(
         'GetLastError',
-      );
+        isLeaf: true,
+      ) {
+    // The first call of a binding compiles its stub, which would reset the
+    // error a failed call left: do that now.
+    getLastError();
+  }
 
   final DynamicLibrary _kernel;
 
@@ -387,6 +421,20 @@ class Win32 {
         Int32 Function(IntPtr, Uint32, Pointer<Void>),
         int Function(int, int, Pointer<Void>)
       >('SetKernelObjectSecurity');
+
+  late final int Function(int, int, Pointer<Void>, int, Pointer<Uint32>)
+  getKernelObjectSecurity = _advapi
+      .lookupFunction<
+        Int32 Function(IntPtr, Uint32, Pointer<Void>, Uint32, Pointer<Uint32>),
+        int Function(int, int, Pointer<Void>, int, Pointer<Uint32>)
+      >('GetKernelObjectSecurity');
+
+  late final int Function(Pointer<Void>, Pointer<Pointer<Void>>, Pointer<Int32>)
+  getSecurityDescriptorOwner = _advapi
+      .lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Pointer<Void>>, Pointer<Int32>),
+        int Function(Pointer<Void>, Pointer<Pointer<Void>>, Pointer<Int32>)
+      >('GetSecurityDescriptorOwner');
 
   // crypt32: DPAPI. A `DATA_BLOB` is 16 bytes: `cbData` (Uint32) at 0 and
   // `pbData` (pointer) at 8.

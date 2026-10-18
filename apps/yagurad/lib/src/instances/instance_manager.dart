@@ -560,26 +560,46 @@ class InstanceManager {
   String _checkDirectory(String? requested, String id) {
     final root = p.normalize(p.absolute(dataDirectory.instancesPath));
     if (requested == null || requested.isEmpty) return p.join(root, id);
-    final directory = p.normalize(p.absolute(requested));
     Never refuse(String why) => throw YaguraException(
       'directory_not_allowed',
       'directory $requested is not allowed: $why',
       details: {'path': requested},
     );
+    // The real name of the folder, with Windows' reading of the path applied:
+    // `<root>\...` is the root, a short name or another case is the same
+    // folder, and a link on the way leads elsewhere. A path Windows would
+    // rewrite is refused.
+    final String directory;
+    try {
+      directory = roots.canonical(requested);
+    } on FormatException catch (e) {
+      refuse(e.message);
+    }
     if (!roots.allows(directory)) {
       refuse(
         'instances live under ${[for (final r in roots.list()) r.path].join(', ')}',
       );
     }
     for (final other in _records.values) {
-      final theirs = p.normalize(p.absolute(other.directory));
-      if (p.equals(directory, theirs) ||
-          p.isWithin(theirs, directory) ||
-          p.isWithin(directory, theirs)) {
+      final theirs = _canonicalOf(other.directory);
+      bool same(String a, String b) => a.toLowerCase() == b.toLowerCase();
+      bool within(String parent, String child) =>
+          p.isWithin(parent.toLowerCase(), child.toLowerCase());
+      if (same(directory, theirs) ||
+          within(theirs, directory) ||
+          within(directory, theirs)) {
         refuse('it overlaps instance "${other.name}" at ${other.directory}');
       }
     }
     return directory;
+  }
+
+  String _canonicalOf(String directory) {
+    try {
+      return roots.canonical(directory);
+    } on FormatException {
+      return p.normalize(p.absolute(directory));
+    }
   }
 
   String _newId() {

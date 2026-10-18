@@ -11,6 +11,16 @@ import 'admin_wire.dart';
 /// Whether the process [serverProcessId] runs as LocalSystem.
 typedef ServerVerifier = bool Function(int serverProcessId);
 
+/// Makes one instance of a pipe; [createPipeInstance] unless a test says
+/// otherwise.
+typedef PipeInstanceFactory = int Function(
+  String name,
+  String sddl, {
+  required bool first,
+  required int maxInstances,
+  required int bufferBytes,
+});
+
 /// Whether this process is an administrator that has not elevated.
 typedef ElevationProbe = bool Function();
 
@@ -140,12 +150,18 @@ class NamedPipeListener implements AdminListener {
     this.sddl = adminPipeSddl,
     this.maxClients = maxAdminClients,
     this.maxMessageBytes = maxAdminMessage,
-  });
+    this.retryEvery = const Duration(seconds: 1),
+    PipeInstanceFactory? createInstance,
+  }) : _create = createInstance ?? createPipeInstance;
 
   final String name;
   final String sddl;
   final int maxClients;
   final int maxMessageBytes;
+
+  /// How often a failed attempt to make the next instance is repeated.
+  final Duration retryEvery;
+  final PipeInstanceFactory _create;
 
   final _controller = StreamController<AdminConnection>();
   final _listening = <int>{};
@@ -153,15 +169,22 @@ class NamedPipeListener implements AdminListener {
   var _instances = 0;
   var _opened = false;
   var _closing = false;
+  Timer? _retry;
 
   @override
   Stream<AdminConnection> get connections => _controller.stream;
 
   @override
+  bool get healthy =>
+      _opened &&
+      !_closing &&
+      (_listening.isNotEmpty || _instances >= maxClients);
+
+  @override
   Future<void> open() async {
     final int handle;
     try {
-      handle = createPipeInstance(
+      handle = _create(
         name,
         sddl,
         first: true,
@@ -195,8 +218,12 @@ class NamedPipeListener implements AdminListener {
         .then((connected) {
           _listening.remove(handle);
           if (_closing || !connected) {
+            // A client that hung up before the connect call ran
+            // (`ERROR_NO_DATA`) is gone: the instance is dropped and another
+            // takes its place, so the server keeps listening.
             closePipeHandle(handle);
             _instances--;
+            _topUp();
             return;
           }
           _controller.add(
@@ -216,6 +243,7 @@ class NamedPipeListener implements AdminListener {
           _listening.remove(handle);
           closePipeHandle(handle);
           _instances--;
+          _topUp();
         })
         .whenComplete(() => _waiting.remove(done));
     _waiting.add(done);
@@ -226,7 +254,7 @@ class NamedPipeListener implements AdminListener {
     if (_closing || !_opened || _listening.isNotEmpty) return;
     if (_instances >= maxClients) return;
     try {
-      final handle = createPipeInstance(
+      final handle = _create(
         name,
         sddl,
         first: false,
@@ -236,7 +264,12 @@ class NamedPipeListener implements AdminListener {
       _instances++;
       _listen(handle);
     } on Win32Error {
-      // Retried when the next connection closes.
+      // Not listening now ([healthy] says so); retried when the next
+      // connection closes and, if none is open, on a timer.
+      _retry ??= Timer(retryEvery, () {
+        _retry = null;
+        _topUp();
+      });
     }
   }
 
@@ -244,6 +277,8 @@ class NamedPipeListener implements AdminListener {
   Future<void> close() async {
     if (_closing) return;
     _closing = true;
+    _retry?.cancel();
+    _retry = null;
     // A cancel that lands before the blocked call started finds nothing to
     // cancel, so it repeats until every waiting call has returned.
     while (_waiting.isNotEmpty) {
@@ -258,6 +293,27 @@ class NamedPipeListener implements AdminListener {
     // Without a listener the done event is never delivered: do not wait.
     unawaited(_controller.close());
   }
+}
+
+/// Whether the server of the pipe behind the client [handle] is the yagura
+/// service: its process runs as LocalSystem, the pipe object is owned by
+/// SYSTEM or Administrators, and the server process id read again is the same
+/// one. The owner is what a PID cannot fake: a process id can be reused by
+/// another process once the server is gone, but nobody who is not an
+/// administrator can make a pipe that Administrators or SYSTEM own. The
+/// parameters are for tests.
+bool isTrustedPipeServer(
+  int handle, {
+  int Function(int handle)? serverPid,
+  String? Function(int pid)? userOf,
+  String Function(int handle)? ownerOf,
+}) {
+  final pidOf = serverPid ?? serverProcessId;
+  final pid = pidOf(handle);
+  if ((userOf ?? processUserSid)(pid) != _localSystemSid) return false;
+  final owner = (ownerOf ?? pipeOwnerSid)(handle);
+  if (owner != _localSystemSid && owner != administratorsGroupSid) return false;
+  return pidOf(handle) == pid;
 }
 
 /// The client end over a Windows named pipe.
@@ -287,8 +343,6 @@ class NamedPipeConnector implements AdminConnector {
   /// Called each time every instance was busy and the connector is about to
   /// try again; lets a test wait for the retry instead of for a duration.
   final void Function()? onBusy;
-
-  static bool _isLocalSystem(int pid) => processUserSid(pid) == _localSystemSid;
 
   @override
   Future<AdminConnection> connect() async {
@@ -347,7 +401,8 @@ class NamedPipeConnector implements AdminConnector {
 
   bool _trusted(int handle) {
     try {
-      return (verifier ?? _isLocalSystem)(serverProcessId(handle));
+      if (verifier case final custom?) return custom(serverProcessId(handle));
+      return isTrustedPipeServer(handle);
     } on Win32Error {
       return false;
     }
