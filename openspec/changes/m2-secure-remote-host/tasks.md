@@ -143,7 +143,7 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | plugin-manifest → Secret settings are write-only | Secret value in a create | apps/yagurad/test/instances/secret_settings_are_write_only_test.dart | secret_value_in_a_create | 3 | green |
 | plugin-manifest → Secret settings are write-only | Secret cleared | apps/yagurad/test/instances/secret_settings_are_write_only_test.dart | secret_cleared | 3 | green |
 | plugin-manifest → Secret settings are write-only | Default on a secret rejected | packages/yagura_plugin/test/secret_settings_are_write_only_test.dart | default_on_a_secret_rejected | 3 | green |
-| plugin-manifest → Secret settings are write-only | Nested secret rejected | packages/yagura_plugin/test/secret_settings_are_write_only_test.dart | nested_secret_rejected | 3 | red |
+| plugin-manifest → Secret settings are write-only | Nested secret rejected | packages/yagura_plugin/test/secret_settings_are_write_only_test.dart | nested_secret_rejected | 3 | green |
 | plugin-manifest → Required secrets are checked at start | Required secret unset at start | apps/yagurad/test/instances/required_secrets_are_checked_at_start_test.dart | required_secret_unset_at_start | 3 | green |
 | plugin-manifest → Required secrets are checked at start | Required secret set | apps/yagurad/test/instances/required_secrets_are_checked_at_start_test.dart | required_secret_set | 3 | green |
 | steam-content → Install, update and validate apps | Update reports progress | apps/yagurad/test/steam/install_update_and_validate_apps_test.dart | update_reports_progress | 9 (M1) | green |

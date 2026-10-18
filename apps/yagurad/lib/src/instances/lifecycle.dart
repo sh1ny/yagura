@@ -165,6 +165,8 @@ class Lifecycle {
     final plugin = _manager.requirePlugin(record);
     final manifest = plugin.manifest;
     final wasRunning = record.state == InstanceState.running;
+    // A running server is started again at the end: refuse before stopping it.
+    if (wasRunning) _manager.requireSecrets(record);
     ctx.cancel.throwIfCancelled();
 
     // The space check comes before anything is stopped or changed, so a full
@@ -503,6 +505,8 @@ class Lifecycle {
     final record = _manager.recordForOperation(id);
     _manager.checkAllowed(record, OperationKind.restart, execution: true);
     final plugin = _manager.requirePlugin(record);
+    // Before the stop, so a refused restart leaves the server running.
+    _manager.requireSecrets(record);
     await _stopRunning(
       ctx,
       record,

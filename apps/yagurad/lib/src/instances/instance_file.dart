@@ -62,8 +62,9 @@ class InstanceFile {
 }
 
 /// Copies [values] with every secret setting of [defs] replaced by
-/// [placeholder], at any depth. Top-level secrets are always present. A
-/// placeholder with a `set` entry gets `set: true` for the top-level keys in
+/// [placeholder]. Secrets are top-level settings only (the manifest loader
+/// rejects one inside an `object` or `list`), and are always present. A
+/// placeholder with a `set` entry gets `set: true` for the keys in
 /// [setSecrets].
 Map<String, Object?> withSecretPlaceholders(
   Map<String, SettingDef> defs,
@@ -73,29 +74,11 @@ Map<String, Object?> withSecretPlaceholders(
 }) {
   final out = Map<String, Object?>.of(values);
   for (final MapEntry(key: name, value: def) in defs.entries) {
-    switch (def.type) {
-      case SettingType.secret:
-        out[name] = {
-          ...placeholder,
-          if (placeholder.containsKey('set')) 'set': setSecrets.contains(name),
-        };
-      case SettingType.object:
-        if (out[name] case final Map<String, Object?> nested) {
-          out[name] = withSecretPlaceholders(def.fields, nested, placeholder);
-        }
-      case SettingType.list:
-        if (out[name] case final List<Object?> rows) {
-          out[name] = [
-            for (final row in rows)
-              if (row is Map<String, Object?>)
-                withSecretPlaceholders(def.fields, row, placeholder)
-              else
-                row,
-          ];
-        }
-      default:
-        break;
-    }
+    if (def.type != SettingType.secret) continue;
+    out[name] = {
+      ...placeholder,
+      if (placeholder.containsKey('set')) 'set': setSecrets.contains(name),
+    };
   }
   return out;
 }

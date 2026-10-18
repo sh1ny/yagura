@@ -126,4 +126,34 @@ void main() {
     expect(daemon.instances.list(), isEmpty);
     expect(stored(daemon, instance), isNull);
   });
+
+  test('restart_required_only_when_the_stored_secret_changed', () async {
+    final env = TestEnv();
+    final (daemon, instance) = await daemonWithInstance(env);
+    await daemon.operations.whenDone(daemon.instances.install(instance.id).id);
+    await runStart(daemon, instance.id);
+    expect(daemon.instances.get(instance.id).restartRequired, isFalse);
+
+    daemon.instances.deleteSecret(instance.id, 'password');
+    expect(
+      daemon.instances.get(instance.id).restartRequired,
+      isFalse,
+      reason: 'nothing was stored',
+    );
+
+    daemon.instances.setSecret(instance.id, 'password', 'hunter2');
+    expect(daemon.instances.get(instance.id).restartRequired, isTrue);
+    await runStop(daemon, instance.id);
+    await runStart(daemon, instance.id);
+    expect(daemon.instances.get(instance.id).restartRequired, isFalse);
+
+    daemon.instances.setSecret(instance.id, 'password', 'hunter2');
+    expect(
+      daemon.instances.get(instance.id).restartRequired,
+      isFalse,
+      reason: 'the same value',
+    );
+    daemon.instances.setSecret(instance.id, 'password', 'other');
+    expect(daemon.instances.get(instance.id).restartRequired, isTrue);
+  });
 }

@@ -4,6 +4,7 @@ import 'package:yagura_plugin/yagura_plugin.dart';
 import 'support.dart';
 
 void main() {
+  nestedTests();
   test('default_on_a_secret_rejected', () {
     final result = loadPlugin(
       writePlugin(
@@ -33,5 +34,42 @@ void main() {
       expect(accepted.errors, isEmpty);
       expect(accepted.values, isNot(contains('password')));
     }
+  });
+}
+
+String _nested(String field) => valheimWith(
+  '  password:\n',
+  '  servers:\n    type: list\n    label: Servers\n    fields:\n$field'
+      '  password:\n',
+);
+
+void nestedTests() {
+  test('nested_secret_rejected', () {
+    final result = loadPlugin(
+      writePlugin(_nested('      password: { type: secret }\n')),
+    );
+
+    expect(result.status, PluginStatus.rejected);
+    expect(
+      result.reasons.map((r) => r.message),
+      contains(contains('servers.password')),
+    );
+  });
+
+  test('nested_secret_in_an_object_at_depth_rejected', () {
+    final result = loadPlugin(
+      writePlugin(
+        _nested(
+          '      limits:\n        type: object\n        fields:\n'
+          '          token: { type: secret }\n',
+        ),
+      ),
+    );
+
+    expect(result.status, PluginStatus.rejected);
+    expect(
+      result.reasons.map((r) => r.message),
+      contains(contains('servers.limits.token')),
+    );
   });
 }

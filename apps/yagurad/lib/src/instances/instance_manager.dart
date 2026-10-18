@@ -342,27 +342,46 @@ class InstanceManager {
   Instance setSecret(String id, String key, String value) {
     final record = _require(id);
     _requireSecretSetting(record, key);
-    secrets.put(
-      secretIdFor(id, key),
-      Uint8List.fromList(utf8.encode(value)),
-      instanceId: id,
-      setting: key,
-    );
-    return _secretChanged(record);
+    final secretId = secretIdFor(id, key);
+    final bytes = Uint8List.fromList(utf8.encode(value));
+    Uint8List? previous;
+    try {
+      previous = secrets.get(secretId);
+    } on YaguraException {
+      // A value that cannot be opened is replaced, and counts as changed.
+    }
+    final changed =
+        previous == null ||
+        previous.length != bytes.length ||
+        !_sameBytes(previous, bytes);
+    secrets.put(secretId, bytes, instanceId: id, setting: key);
+    return _secretChanged(record, changed: changed);
+  }
+
+  static bool _sameBytes(Uint8List a, Uint8List b) {
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   /// Clears the secret setting [key] of instance [id].
   Instance deleteSecret(String id, String key) {
     final record = _require(id);
     _requireSecretSetting(record, key);
-    secrets.delete(secretIdFor(id, key));
-    return _secretChanged(record);
+    final secretId = secretIdFor(id, key);
+    final changed = secrets.contains(secretId);
+    secrets.delete(secretId);
+    return _secretChanged(record, changed: changed);
   }
 
-  /// A running server keeps the old value until it restarts.
-  Instance _secretChanged(InstanceRecord record) {
-    if (record.state == InstanceState.running ||
-        record.state == InstanceState.starting) {
+  /// A running server keeps the old value until it restarts, so a change of
+  /// the stored value marks the instance restart-required; a write of the
+  /// value already stored does not.
+  Instance _secretChanged(InstanceRecord record, {required bool changed}) {
+    if (changed &&
+        (record.state == InstanceState.running ||
+            record.state == InstanceState.starting)) {
       record.restartRequired = true;
     }
     _commit(record);
@@ -559,6 +578,7 @@ class InstanceManager {
     bool validateFiles = false,
   }) {
     final record = _guarded(id, OperationKind.update);
+    if (record.state == InstanceState.running) requireSecrets(record);
     return runner.enqueue(
       instanceId: id,
       kind: OperationKind.update,
@@ -574,6 +594,7 @@ class InstanceManager {
 
   Operation validate(String id) {
     final record = _guarded(id, OperationKind.validate);
+    if (record.state == InstanceState.running) requireSecrets(record);
     return runner.enqueue(
       instanceId: id,
       kind: OperationKind.validate,
@@ -609,6 +630,7 @@ class InstanceManager {
 
   Operation restart(String id) {
     final record = _guarded(id, OperationKind.restart);
+    requireSecrets(record);
     return runner.enqueue(
       instanceId: id,
       kind: OperationKind.restart,

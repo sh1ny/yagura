@@ -475,7 +475,7 @@ void _checkSemantics(PluginManifest manifest, _Report report) {
   }
 
   for (final MapEntry(key: name, value: def) in manifest.settings.entries) {
-    _checkSetting(def, ['settings', name], report);
+    _checkSetting(def, ['settings', name], name, report);
   }
 
   final scope = TemplateScope(settings: manifest.settings, ports: portNames);
@@ -525,7 +525,15 @@ void _checkSemantics(PluginManifest manifest, _Report report) {
 
 /// Whether every pattern in [def] and its fields compiles. A default is only
 /// validated when they all do, since validating it compiles the patterns.
-bool _checkSetting(SettingDef def, List<Object> path, _Report report) {
+///
+/// [dotted] is the setting's name from the top, such as `servers.password`: a
+/// `secret` below a top-level setting has no way to be set, so it is rejected.
+bool _checkSetting(
+  SettingDef def,
+  List<Object> path,
+  String dotted,
+  _Report report,
+) {
   var patternsOk = true;
   if (def.pattern case final pattern?) {
     try {
@@ -539,7 +547,17 @@ bool _checkSetting(SettingDef def, List<Object> path, _Report report) {
     }
   }
   for (final MapEntry(key: name, value: field) in def.fields.entries) {
-    if (!_checkSetting(field, [...path, 'fields', name], report)) {
+    final fieldPath = [...path, 'fields', name];
+    final fieldName = '$dotted.$name';
+    if (field.type == SettingType.secret) {
+      report.add(
+        invalidManifestCode,
+        fieldPath,
+        'the secret setting $fieldName is inside an ${def.type.name} setting; '
+        'a secret must be a top-level setting',
+      );
+    }
+    if (!_checkSetting(field, fieldPath, fieldName, report)) {
       patternsOk = false;
     }
   }
