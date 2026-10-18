@@ -196,7 +196,7 @@ Covers: instance-lifecycle → Daemon file operations do not follow links plante
 - [x] 5.1 Write the failing `windows` tests for this group's rows against real NTFS junctions and symbolic links; verify each fails for the stated reason.
 - [x] 5.2 Add the `NtCreateFile`, `GetFinalPathNameByHandleW` and related bindings, and implement `ConfinedFs` (D8): root open with reparse refusal and final-path check, handle-relative walk, read, list, atomic write, no-descend delete, and copy-for-snapshot. Verify: this group's rows pass; flip them.
 - [x] 5.3 Move every caller listed in D8 (including the SteamCMD install-directory creation and `_recordSize`) to InstanceFs, give `<data>/steamcmd` its own ConfinedFs root for the bootstrap download, cleanup and installation delete, move the ready marker and app sizes to the database, delete `InstanceRoot`, and add the enforcement test that no `dart:io` file call under `lib/src/` takes an instance or steamcmd path outside the ConfinedFs files. Verify: the enforcement test passes, and the M1 rows of groups 5 and 9 still pass.
-- [ ] 5.4 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
+- [x] 5.4 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
 
 ## 6. [M2] Identity, pairing, mutual TLS and audit
 
