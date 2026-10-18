@@ -338,6 +338,7 @@ sequenceDiagram
 | Auth-failure aggregates | 10,000 rows, one per address per 10 min | Oldest pruned | — | A 100k-call scan from 3 addresses is 3 rows per window |
 | Pairing attempts | 5 per address / 10 min; 50 total / 10 min | Address blocked / code invalidated | Code 10 min | — |
 | Devices | 100 enrolled (non-revoked) | Enroll fails `RESOURCE_EXHAUSTED` reason `too_many_devices` | — | Single-admin host: a handful |
+| API listener connections | 256 open connections | Further connections are closed at accept | TLS handshake 10 s from accept; 30 s idle for a connection without a client certificate (devices rely on HTTP/2 keepalive) | A scan holds at most 256 sockets, each for at most 40 s |
 | Revocation stream close | All of a device's open calls | — | 5 s | — |
 | Admin pipe | 4 concurrent clients, 64 KiB per message | Extra clients wait for a free instance | 5 s read | — |
 | Firewall reconcile | 1 running + 1 coalesced pending; one script per reconcile | Further requests join the pending one | 30 s per run; an operation waits at most 60 s | 100 instances × 3 ports = 300 rules in one script |
