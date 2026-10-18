@@ -68,6 +68,7 @@ class Lifecycle {
               manifest.settings,
               record.settings,
               const {'secret': true, 'set': false},
+              setSecrets: _manager.setSecretsOf(record),
             ),
             ports: {for (final port in record.ports) port.name: port.number},
           ),
@@ -269,6 +270,7 @@ class Lifecycle {
     _manager.checkAllowed(record, OperationKind.start, execution: true);
     final plugin = _manager.requirePlugin(record);
     final manifest = plugin.manifest;
+    _manager.requireSecrets(record);
     _manager.cancelRestart(record.id);
     // Start leaves a crash loop and resets the restart counter.
     if (record.state == InstanceState.error) {

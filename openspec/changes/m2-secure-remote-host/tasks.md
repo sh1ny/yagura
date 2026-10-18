@@ -28,9 +28,9 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | daemon-security → Audit log | Instance deletion audited | apps/yagurad/test/security/audit_log_test.dart | instance_deletion_audited | 6 | red |
 | daemon-security → Audit log | Scanner flood | apps/yagurad/test/security/audit_log_test.dart | scanner_flood | 6 | red |
 | daemon-security → Audit log | Secret set without value in audit | apps/yagurad/test/security/audit_log_test.dart | secret_set_without_value_in_audit | 6 | red |
-| daemon-security → Secrets never leave the daemon | No read path for secrets | apps/yagurad/test/security/secrets_never_leave_the_daemon_test.dart | no_read_path_for_secrets | 3 | red |
+| daemon-security → Secrets never leave the daemon | No read path for secrets | apps/yagurad/test/security/secrets_never_leave_the_daemon_test.dart | no_read_path_for_secrets | 3 | green |
 | daemon-security → Secrets never leave the daemon | Data directory scan | apps/yagurad/integration_test/secrets_data_directory_scan_test.dart (`windows`) | data_directory_scan | 12 | red |
-| daemon-security → Secrets never leave the daemon | Secret store fails on write | apps/yagurad/test/security/secrets_never_leave_the_daemon_test.dart | secret_store_fails_on_write | 3 | red |
+| daemon-security → Secrets never leave the daemon | Secret store fails on write | apps/yagurad/test/security/secrets_never_leave_the_daemon_test.dart | secret_store_fails_on_write | 3 | green |
 | daemon-security → Local admin channel is restricted to administrators | Administrator requests a pairing code | apps/yagurad/integration_test/admin/local_admin_channel_test.dart (`elevated`) | administrator_requests_a_pairing_code | 7 | red |
 | daemon-security → Local admin channel is restricted to administrators | Non-administrator | apps/yagurad/integration_test/admin/local_admin_channel_test.dart (`elevated`) | non_administrator | 7 | red |
 | daemon-security → Local admin channel is restricted to administrators | Channel served by another process | apps/yagurad/integration_test/admin/local_admin_channel_test.dart (`windows`) | channel_served_by_another_process | 7 | red |
@@ -128,23 +128,23 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | instance-lifecycle → Deleting an instance protects game data | Delete with wrong confirmation | apps/yagurad/test/instances/deleting_an_instance_protects_game_data_test.dart | delete_with_wrong_confirmation | 5 (M1) | green |
 | instance-lifecycle → Durable state with a portable instance file | Change persisted and mirrored | apps/yagurad/test/instances/durable_state_with_a_portable_instance_file_test.dart | change_persisted_and_mirrored | 5 (M1) | green |
 | instance-lifecycle → Durable state with a portable instance file | instance.json write fails | apps/yagurad/test/instances/durable_state_with_a_portable_instance_file_test.dart | instance_json_write_fails | 5 (M1) | green |
-| instance-lifecycle → Durable state with a portable instance file | Secrets excluded from instance.json | apps/yagurad/test/instances/durable_state_with_a_portable_instance_file_test.dart | secrets_excluded_from_instance_json | 3 | red |
+| instance-lifecycle → Durable state with a portable instance file | Secrets excluded from instance.json | apps/yagurad/test/instances/durable_state_with_a_portable_instance_file_test.dart | secrets_excluded_from_instance_json | 3 | green |
 | instance-lifecycle → Error reasons have defined exits | Acknowledge a crash loop | apps/yagurad/test/instances/error_reasons_have_defined_exits_test.dart | acknowledge_a_crash_loop | 9 (M1) | green |
 | instance-lifecycle → Error reasons have defined exits | Start refused with invalid settings | apps/yagurad/test/instances/error_reasons_have_defined_exits_test.dart | start_refused_with_invalid_settings | 9 (M1) | green |
 | instance-lifecycle → Error reasons have defined exits | Update clears an interrupted update | apps/yagurad/test/instances/error_reasons_have_defined_exits_test.dart | update_clears_an_interrupted_update | 9 (M1) | green |
 | instance-lifecycle → Error reasons have defined exits | Acknowledge a rejected run record | apps/yagurad/test/instances/error_reasons_have_defined_exits_test.dart | acknowledge_a_rejected_run_record | 9 | red |
 | instance-lifecycle → Error reasons have defined exits | Start refused after a rejected run record | apps/yagurad/test/instances/error_reasons_have_defined_exits_test.dart | start_refused_after_a_rejected_run_record | 9 | red |
-| plugin-hooks → Hook input and output contract | Context contents | apps/yagurad/test/hooks/hook_input_and_output_contract_test.dart | context_contents | 3 | red |
-| plugin-hooks → Hook input and output contract | Context with a secret set | apps/yagurad/test/hooks/hook_input_and_output_contract_test.dart | context_with_a_secret_set | 3 | red |
+| plugin-hooks → Hook input and output contract | Context contents | apps/yagurad/test/hooks/hook_input_and_output_contract_test.dart | context_contents | 3 | green |
+| plugin-hooks → Hook input and output contract | Context with a secret set | apps/yagurad/test/hooks/hook_input_and_output_contract_test.dart | context_with_a_secret_set | 3 | green |
 | plugin-hooks → Hook input and output contract | Invalid result shape | apps/yagurad/test/hooks/hook_input_and_output_contract_test.dart | invalid_result_shape | 3 (M1) | green |
-| plugin-manifest → Secret settings are write-only | Secret values are write-only | apps/yagurad/test/instances/secret_settings_are_write_only_test.dart | secret_values_are_write_only | 3 | red |
-| plugin-manifest → Secret settings are write-only | Settings saved with the secret placeholder | apps/yagurad/test/instances/secret_settings_are_write_only_test.dart | settings_saved_with_the_secret_placeholder | 3 | red |
-| plugin-manifest → Secret settings are write-only | Secret value in a settings save | apps/yagurad/test/instances/secret_settings_are_write_only_test.dart | secret_value_in_a_settings_save | 3 | red |
-| plugin-manifest → Secret settings are write-only | Secret value in a create | apps/yagurad/test/instances/secret_settings_are_write_only_test.dart | secret_value_in_a_create | 3 | red |
-| plugin-manifest → Secret settings are write-only | Secret cleared | apps/yagurad/test/instances/secret_settings_are_write_only_test.dart | secret_cleared | 3 | red |
-| plugin-manifest → Secret settings are write-only | Default on a secret rejected | packages/yagura_plugin/test/secret_settings_are_write_only_test.dart | default_on_a_secret_rejected | 3 | red |
-| plugin-manifest → Required secrets are checked at start | Required secret unset at start | apps/yagurad/test/instances/required_secrets_are_checked_at_start_test.dart | required_secret_unset_at_start | 3 | red |
-| plugin-manifest → Required secrets are checked at start | Required secret set | apps/yagurad/test/instances/required_secrets_are_checked_at_start_test.dart | required_secret_set | 3 | red |
+| plugin-manifest → Secret settings are write-only | Secret values are write-only | apps/yagurad/test/instances/secret_settings_are_write_only_test.dart | secret_values_are_write_only | 3 | green |
+| plugin-manifest → Secret settings are write-only | Settings saved with the secret placeholder | apps/yagurad/test/instances/secret_settings_are_write_only_test.dart | settings_saved_with_the_secret_placeholder | 3 | green |
+| plugin-manifest → Secret settings are write-only | Secret value in a settings save | apps/yagurad/test/instances/secret_settings_are_write_only_test.dart | secret_value_in_a_settings_save | 3 | green |
+| plugin-manifest → Secret settings are write-only | Secret value in a create | apps/yagurad/test/instances/secret_settings_are_write_only_test.dart | secret_value_in_a_create | 3 | green |
+| plugin-manifest → Secret settings are write-only | Secret cleared | apps/yagurad/test/instances/secret_settings_are_write_only_test.dart | secret_cleared | 3 | green |
+| plugin-manifest → Secret settings are write-only | Default on a secret rejected | packages/yagura_plugin/test/secret_settings_are_write_only_test.dart | default_on_a_secret_rejected | 3 | green |
+| plugin-manifest → Required secrets are checked at start | Required secret unset at start | apps/yagurad/test/instances/required_secrets_are_checked_at_start_test.dart | required_secret_unset_at_start | 3 | green |
+| plugin-manifest → Required secrets are checked at start | Required secret set | apps/yagurad/test/instances/required_secrets_are_checked_at_start_test.dart | required_secret_set | 3 | green |
 | steam-content → Install, update and validate apps | Update reports progress | apps/yagurad/test/steam/install_update_and_validate_apps_test.dart | update_reports_progress | 9 (M1) | green |
 | steam-content → Install, update and validate apps | SteamCMD runs without SYSTEM rights | apps/yagurad/integration_test/service/steamcmd_account_test.dart (`elevated`) | steamcmd_runs_without_system_rights | 9 | red |
 | steam-content → Install, update and validate apps | SteamCMD separated from game servers | apps/yagurad/integration_test/service/steamcmd_account_test.dart (`elevated`) | steamcmd_separated_from_game_servers | 9 | red |
@@ -175,7 +175,7 @@ Covers: host-service → Startup sequence (secret store step, scope recovery; M1
 Covers: plugin-manifest → Secret settings are write-only, Required secrets are checked at start; plugin-hooks → Hook input and output contract; daemon-security → Secrets never leave the daemon (read path, write failure); instance-lifecycle → Durable state (secrets excluded).
 
 - [x] 3.1 Write the failing tests for this group's rows; delete `apps/yagurad/test/instances/secret_settings_stay_unset_test.dart` together with the REMOVED requirement it covered. Verify: the new tests fail for the stated reason, and `dart test` has no reference to the deleted test.
-- [ ] 3.2 Implement `SetSecret` and `DeleteSecret` through the secret store, `secret_via_set_secret` for values in CreateInstance and UpdateSettings (`settings.dart:163-180`), `{"secret": true, "set": <bool>}` in reads, the hook context and `instance.json`, the `secret_required` check at Start, and deletion of secret rows with the instance. Verify: this group's rows pass; flip them; `invalid_result_shape` still passes.
+- [x] 3.2 Implement `SetSecret` and `DeleteSecret` through the secret store, `secret_via_set_secret` for values in CreateInstance and UpdateSettings (`settings.dart:163-180`), `{"secret": true, "set": <bool>}` in reads, the hook context and `instance.json`, the `secret_required` check at Start, and deletion of secret rows with the instance. Verify: this group's rows pass; flip them; `invalid_result_shape` still passes.
 - [ ] 3.3 Update `docs/protocol.md` (reasons `secret_via_set_secret`, `secret_required`, the SetSecret flow) and `docs/plugins/manifest.md` (secret settings). Verify: the M1 reason-code and doc-snippet tests pass.
 - [ ] 3.4 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
 

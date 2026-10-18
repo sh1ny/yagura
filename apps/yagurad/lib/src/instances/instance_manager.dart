@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:yagura_plugin/yagura_plugin.dart';
@@ -9,6 +10,7 @@ import 'package:yagura_plugin/yagura_plugin.dart';
 import '../errors.dart';
 import '../hooks/hooks.dart';
 import '../host/data_directory.dart';
+import '../host/secret_store.dart';
 import '../operations/operations.dart';
 import '../plugins/plugin_registry.dart';
 import '../process/process.dart';
@@ -28,6 +30,7 @@ import 'restart_policy.dart';
 class InstanceManager {
   InstanceManager({
     required this.store,
+    required this.secrets,
     required this.runner,
     required this.registry,
     required this.dataDirectory,
@@ -54,6 +57,9 @@ class InstanceManager {
   }
 
   final InstanceStore store;
+
+  /// Secret setting values, one secret per (instance, setting).
+  final SecretStore secrets;
   final OperationRunner runner;
   final PluginRegistry registry;
   final DataDirectory dataDirectory;
@@ -168,6 +174,7 @@ class InstanceManager {
         plugin?.manifest.settings ?? const {},
         record.settings,
         const {'secret': true, 'set': false},
+        setSecrets: setSecretsOf(record),
       ),
       schemaVersion: plugin?.schemaVersion,
       steamAccountId: record.steamAccountId,
@@ -182,6 +189,18 @@ class InstanceManager {
       pid: record.server?.pid ?? 0,
       health: record.health,
     );
+  }
+
+  /// The top-level secret settings of [record] that hold a value.
+  Set<String> setSecretsOf(InstanceRecord record) {
+    final defs = registry.find(record.pluginId)?.manifest.settings;
+    if (defs == null) return const {};
+    return {
+      for (final MapEntry(key: name, value: def) in defs.entries)
+        if (def.type == SettingType.secret &&
+            secrets.contains(secretIdFor(record.id, name)))
+          name,
+    };
   }
 
   // ---- create -------------------------------------------------------------
@@ -265,8 +284,9 @@ class InstanceManager {
     );
   }
 
-  /// Saves settings and ports. Secret values are refused; an omitted secret
-  /// or its placeholder leaves it unset.
+  /// Saves settings and ports. Secret values are refused
+  /// (`secret_via_set_secret`); an omitted secret or its placeholder leaves
+  /// the stored value unchanged.
   Instance updateSettings(UpdateSettingsRequest request) {
     final record = _require(request.instanceId);
     final plugin = _requirePlugin(record);
@@ -315,22 +335,68 @@ class InstanceManager {
     return view(record);
   }
 
-  /// This version has no secret store (design D24).
+  /// Stores [value] as the secret setting [key] of instance [id] (design
+  /// D3). The value is never returned: the view reports `set: true`. A store
+  /// that refuses the write fails `secret_store_unavailable` and leaves the
+  /// previous value.
   Instance setSecret(String id, String key, String value) {
-    _require(id);
-    throw _noSecretStore(key);
+    final record = _require(id);
+    _requireSecretSetting(record, key);
+    secrets.put(
+      secretIdFor(id, key),
+      Uint8List.fromList(utf8.encode(value)),
+      instanceId: id,
+      setting: key,
+    );
+    return _secretChanged(record);
   }
 
+  /// Clears the secret setting [key] of instance [id].
   Instance deleteSecret(String id, String key) {
-    _require(id);
-    throw _noSecretStore(key);
+    final record = _require(id);
+    _requireSecretSetting(record, key);
+    secrets.delete(secretIdFor(id, key));
+    return _secretChanged(record);
   }
 
-  YaguraException _noSecretStore(String key) => YaguraException(
-    'secret_store_unavailable',
-    'this version has no secret store, so the secret "$key" cannot be changed',
-    details: {'key': key},
-  );
+  /// A running server keeps the old value until it restarts.
+  Instance _secretChanged(InstanceRecord record) {
+    if (record.state == InstanceState.running ||
+        record.state == InstanceState.starting) {
+      record.restartRequired = true;
+    }
+    _commit(record);
+    return view(record);
+  }
+
+  void _requireSecretSetting(InstanceRecord record, String key) {
+    final def = _requirePlugin(record).manifest.settings[key];
+    if (def == null || def.type != SettingType.secret) {
+      throw _settingsInvalid([SettingError(key, 'is not a secret setting')]);
+    }
+  }
+
+  /// Fails `secret_required` naming the `required` secret settings of
+  /// [record] that are unset.
+  void requireSecrets(InstanceRecord record) {
+    final defs = registry.find(record.pluginId)?.manifest.settings;
+    if (defs == null) return;
+    final set = setSecretsOf(record);
+    final missing = [
+      for (final MapEntry(key: name, value: def) in defs.entries)
+        if (def.type == SettingType.secret &&
+            def.required &&
+            !set.contains(name))
+          name,
+    ];
+    if (missing.isEmpty) return;
+    throw YaguraException(
+      'secret_required',
+      'the required secret ${missing.join(', ')} is not set; set it with '
+          'SetSecret before starting',
+      details: {'instanceId': record.id, 'settings': missing.join(', ')},
+    );
+  }
 
   Map<String, Object?> _validated(
     PluginManifest manifest,
@@ -339,13 +405,13 @@ class InstanceManager {
     final validation = validateSettings(manifest, input);
     if (validation.isValid) return validation.values;
     final secret = validation.errors.where(
-      (e) => e.code == 'secret_store_unavailable',
+      (e) => e.code == 'secret_via_set_secret',
     );
     if (secret.isNotEmpty) {
       throw YaguraException(
-        'secret_store_unavailable',
-        'this version has no secret store: ${secret.map((e) => e.path).join(', ')} '
-            'cannot be set',
+        'secret_via_set_secret',
+        'a secret value is set with SetSecret, not in the settings: '
+            '${secret.map((e) => e.path).join(', ')}',
         details: {
           'fields': [for (final e in secret) e.path],
         },
@@ -523,6 +589,7 @@ class InstanceManager {
 
   Operation start(String id) {
     final record = _guarded(id, OperationKind.start);
+    requireSecrets(record);
     return runner.enqueue(
       instanceId: id,
       kind: OperationKind.start,

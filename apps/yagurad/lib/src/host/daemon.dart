@@ -224,6 +224,7 @@ class Daemon {
     try {
       manager = InstanceManager(
         store: InstanceStore(database),
+        secrets: secrets,
         runner: runner,
         registry: registry,
         dataDirectory: dataDirectory,

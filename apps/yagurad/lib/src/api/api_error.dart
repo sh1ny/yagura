@@ -20,6 +20,7 @@ int statusCodeFor(String reason) => switch (reason) {
   'snapshot_not_found' ||
   'plugin_missing' => StatusCode.notFound,
   'settings_invalid' ||
+  'secret_via_set_secret' ||
   'invalid_json' ||
   'confirmation_mismatch' ||
   'directory_not_allowed' => StatusCode.invalidArgument,

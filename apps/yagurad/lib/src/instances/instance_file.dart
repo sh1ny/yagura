@@ -62,17 +62,23 @@ class InstanceFile {
 }
 
 /// Copies [values] with every secret setting of [defs] replaced by
-/// [placeholder], at any depth. Top-level secrets are always present.
+/// [placeholder], at any depth. Top-level secrets are always present. A
+/// placeholder with a `set` entry gets `set: true` for the top-level keys in
+/// [setSecrets].
 Map<String, Object?> withSecretPlaceholders(
   Map<String, SettingDef> defs,
   Map<String, Object?> values,
-  Map<String, Object?> placeholder,
-) {
+  Map<String, Object?> placeholder, {
+  Set<String> setSecrets = const {},
+}) {
   final out = Map<String, Object?>.of(values);
   for (final MapEntry(key: name, value: def) in defs.entries) {
     switch (def.type) {
       case SettingType.secret:
-        out[name] = Map<String, Object?>.of(placeholder);
+        out[name] = {
+          ...placeholder,
+          if (placeholder.containsKey('set')) 'set': setSecrets.contains(name),
+        };
       case SettingType.object:
         if (out[name] case final Map<String, Object?> nested) {
           out[name] = withSecretPlaceholders(def.fields, nested, placeholder);

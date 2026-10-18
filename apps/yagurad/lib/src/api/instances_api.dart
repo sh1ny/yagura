@@ -239,7 +239,7 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
     return instanceToPb(instance);
   }
 
-  /// This version has no secret store (design D24).
+  /// Stores a secret setting value (design D3); the value is never returned.
   @override
   Future<pb.Instance> setSecret(
     ServiceCall call,

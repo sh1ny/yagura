@@ -115,6 +115,11 @@ class SecretRecovery {
   }
 }
 
+/// The id of the secret behind setting [setting] of instance [instanceId]:
+/// one secret per (instance, setting).
+String secretIdFor(String instanceId, String setting) =>
+    'instance:$instanceId:$setting';
+
 /// Secrets by id (design D3).
 abstract interface class SecretStore {
   /// Stores or replaces the secret [id]. A secret setting passes its
@@ -128,6 +133,9 @@ abstract interface class SecretStore {
 
   /// The value of [id], or `null` when there is none.
   Uint8List? get(String id);
+
+  /// Whether this scope holds a value for [id], without opening it.
+  bool contains(String id);
 
   void delete(String id);
 }
@@ -256,6 +264,12 @@ class DatabaseSecretStore implements SecretStore {
       Uint8List.fromList(rows.single['blob'] as List<int>),
     );
   }
+
+  @override
+  bool contains(String id) => _database.sqlite.select(
+    'SELECT 1 FROM secrets WHERE id = ? AND scope_sid = ?',
+    [id, _protector.scopeSid],
+  ).isNotEmpty;
 
   @override
   void delete(String id) {
