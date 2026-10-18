@@ -179,4 +179,18 @@ CREATE TABLE steam_app_sizes (
   recorded_at INTEGER NOT NULL
 );
 '''),
+  // M2: the daemon identity (design D1, D4). The CA key and the server key
+  // are in the secret store; this row holds the public parts. The audit log
+  // records the address of the caller.
+  Migration(5, '''
+CREATE TABLE daemon_identity (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  daemon_id TEXT NOT NULL,
+  ca_certificate BLOB NOT NULL,
+  server_certificate BLOB NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+ALTER TABLE audit ADD COLUMN remote_address TEXT NOT NULL DEFAULT '';
+'''),
 ];

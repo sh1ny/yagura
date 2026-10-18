@@ -56,6 +56,52 @@ Future<BindAddress> parseDevBind(
   return BindAddress(chosen, port);
 }
 
+/// The default bind of service mode (design D6): every interface.
+const defaultServiceBind = '0.0.0.0:7443';
+
+/// Parses `host:port` for the mutual-TLS listener: any address the host
+/// has. Fails `bind_invalid` for a bind that cannot be read or resolved.
+Future<BindAddress> parseServiceBind(
+  String bind, {
+  Future<List<InternetAddress>> Function(String host) lookup =
+      InternetAddress.lookup,
+}) async {
+  final String host;
+  final int port;
+  try {
+    (host, port) = _split(bind.trim());
+  } on YaguraException {
+    throw _badBind(bind, 'cannot read the bind "$bind"');
+  }
+  if (port < 0 || port > 65535) {
+    throw _badBind(bind, 'the port of "$bind" is not between 0 and 65535');
+  }
+  final literal = InternetAddress.tryParse(host);
+  if (literal != null) return BindAddress(literal, port);
+  final List<InternetAddress> resolved;
+  try {
+    resolved = await lookup(host);
+  } on SocketException {
+    throw _badBind(bind, 'the bind host "$host" cannot be resolved');
+  }
+  if (resolved.isEmpty) {
+    throw _badBind(bind, 'the bind host "$host" resolves to nothing');
+  }
+  return BindAddress(
+    resolved.firstWhere(
+      (a) => a.type == InternetAddressType.IPv4,
+      orElse: () => resolved.first,
+    ),
+    port,
+  );
+}
+
+YaguraException _badBind(String bind, String message) => YaguraException(
+  'bind_invalid',
+  '$message; use host:port, for example $defaultServiceBind',
+  details: {'bind': bind},
+);
+
 (String, int) _split(String bind) {
   if (bind.startsWith('[')) {
     final end = bind.indexOf(']');

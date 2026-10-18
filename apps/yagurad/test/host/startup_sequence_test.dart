@@ -143,7 +143,11 @@ void main() {
     // Recovery deleted the row, not just hid it.
     final db = YaguraDatabase.open(p.join(env.data, 'yagura.db'));
     addTearDown(db.close);
-    expect(db.sqlite.select('SELECT id FROM secrets'), isEmpty);
+    // The service daemon has since stored its own identity keys.
+    expect(
+      db.sqlite.select("SELECT id FROM secrets WHERE id NOT LIKE 'daemon:%'"),
+      isEmpty,
+    );
 
     final kept = daemon.instances.get(a.id);
     expect(kept.name, 'A');
@@ -177,7 +181,10 @@ void main() {
 
     final db = YaguraDatabase.open(p.join(env.data, 'yagura.db'));
     addTearDown(db.close);
-    expect(db.sqlite.select('SELECT id FROM secrets'), hasLength(1));
+    expect(
+      db.sqlite.select("SELECT id FROM secrets WHERE id NOT LIKE 'daemon:%'"),
+      hasLength(1),
+    );
     // Restarted with a working DPAPI, the CA key is still there.
     final again = await env.start(
       serviceMode: true,

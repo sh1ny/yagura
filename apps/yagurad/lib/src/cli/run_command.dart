@@ -8,12 +8,17 @@ import '../api/api_server.dart';
 import '../api/bind_address.dart';
 import '../errors.dart';
 import '../host/daemon.dart';
+import '../host/secret_store.dart';
+import '../platform/win32_security.dart';
 import '../process/launcher_modes.dart';
 import '../process/process.dart';
 import '../steam/steamcmd_service.dart';
 
 /// The warning dev mode prints (`daemon-security` spec).
 const devModeWarning = 'DEV MODE: unauthenticated, localhost only';
+
+/// The SID of the LocalSystem account, whose token service mode requires.
+const localSystemSid = 'S-1-5-18';
 
 /// Exit code of a failed start.
 const exitFailure = 1;
@@ -31,6 +36,8 @@ class CliEnvironment {
     this.onListening,
     this.processHost,
     this.lookup = InternetAddress.lookup,
+    this.isLocalSystem,
+    this.secretProtector,
   });
 
   final StringSink out;
@@ -47,13 +54,19 @@ class CliEnvironment {
   final ProcessHost? processHost;
 
   final Future<List<InternetAddress>> Function(String host) lookup;
+
+  /// Whether the process runs as LocalSystem; a seam for tests.
+  final bool Function()? isLocalSystem;
+
+  /// Defaults to DPAPI on Windows; a seam for tests.
+  final SecretProtector? secretProtector;
 }
 
 /// Runs the `yagurad` command line. Returns the process exit code.
 Future<int> runCli(List<String> arguments, CliEnvironment env) async {
   if (arguments.isEmpty || arguments.first.startsWith('-')) {
     env.err.writeln(
-      'usage: yagurad run [--console] --dev [--bind host:port] '
+      'usage: yagurad run [--console] [--dev | --service] [--bind host:port] '
       '[--data-dir path]',
     );
     return exitUsage;
@@ -116,11 +129,17 @@ Future<int> _helper(
 
 Future<int> _run(List<String> arguments, CliEnvironment env) async {
   final parser = ArgParser()
-    // Runs in this console as the current user (design D2): the only mode
-    // until the Windows service arrives in M2, so the flag changes nothing.
+    // Runs in this console as the current user (design D2).
     ..addFlag('console', negatable: false)
     ..addFlag('dev', negatable: false, help: 'Serve plaintext on loopback.')
-    ..addOption('bind', defaultsTo: defaultDevBind)
+    // What the Windows service passes (design D6). The mode is decided by who
+    // runs the daemon: LocalSystem serves mutual TLS.
+    ..addFlag(
+      'service',
+      negatable: false,
+      help: 'Serve mutual TLS; needs the LocalSystem account.',
+    )
+    ..addOption('bind')
     ..addOption('data-dir');
   final ArgResults args;
   try {
@@ -129,13 +148,21 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
     env.err.writeln('yagurad: ${e.message}');
     return exitUsage;
   }
+  final dev = args['dev'] as bool;
+  if (dev && (args['service'] as bool)) {
+    env.err.writeln('yagurad: --dev and --service exclude each other');
+    return exitUsage;
+  }
 
-  if (!(args['dev'] as bool)) {
+  // Service mode is the LocalSystem token (design D5): the admin channel
+  // that the CLI trusts is served by that account only.
+  if (!dev && !(env.isLocalSystem ?? _runsAsLocalSystem)()) {
     return _fail(
       env,
       YaguraException(
-        'secure_mode_unavailable',
-        'this version has no authenticated listener; start with --dev for the '
+        'service_mode_required',
+        'without --dev the daemon runs as the Windows service (LocalSystem); '
+            'start it with `yagurad service install`, or use --dev for the '
             'unauthenticated loopback listener',
       ),
     );
@@ -143,7 +170,15 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
 
   final BindAddress bind;
   try {
-    bind = await parseDevBind(args['bind'] as String, lookup: env.lookup);
+    bind = dev
+        ? await parseDevBind(
+            (args['bind'] as String?) ?? defaultDevBind,
+            lookup: env.lookup,
+          )
+        : await parseServiceBind(
+            (args['bind'] as String?) ?? defaultServiceBind,
+            lookup: env.lookup,
+          );
   } on YaguraException catch (e) {
     return _fail(env, e);
   }
@@ -157,6 +192,8 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
         apiPort: bind.port,
         processHost: env.processHost,
         steam: SteamCmdService(steamcmdRoot: p.join(dataDirectory, 'steamcmd')),
+        serviceMode: !dev,
+        secretProtector: env.secretProtector,
       ),
     );
   } on YaguraException catch (e) {
@@ -165,28 +202,59 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
 
   final ApiServer server;
   try {
-    server = await ApiServer.serveDev(
-      daemon,
-      address: bind.address,
-      port: bind.port,
-      logSink: (line) => env.err.writeln('yagurad: $line'),
-    );
+    void log(String line) => env.err.writeln('yagurad: $line');
+    server = dev
+        ? await ApiServer.serveDev(
+            daemon,
+            address: bind.address,
+            port: bind.port,
+            logSink: log,
+          )
+        : await ApiServer.serveSecure(
+            daemon,
+            address: bind.address,
+            port: bind.port,
+            logSink: log,
+          );
   } on SocketException catch (e) {
     await daemon.close();
     env.err.writeln('yagurad: cannot listen on $bind: ${e.message}');
     return exitFailure;
   }
 
-  env.err.writeln(devModeWarning);
+  if (dev) {
+    env.err.writeln(devModeWarning);
+  } else {
+    // The administrator compares it with the pairing string.
+    env.err.writeln('yagurad: ${daemon.security!.identity.fingerprintLine}');
+  }
   env.out.writeln(
     'yagurad: listening on ${bind.address.address}:${server.port}',
   );
   env.onListening?.call(bind.address, server.port);
 
-  await (env.stop ?? _signal());
+  var code = 0;
+  await Future.any<void>([
+    env.stop ?? _signal(),
+    // The certificate rotation lost its listener: exit, so the service
+    // manager restarts the daemon (design D4).
+    server.failed.catchError((Object e) {
+      env.err.writeln('yagurad: $e');
+      code = exitFailure;
+    }),
+  ]);
   await server.close();
   await daemon.close();
-  return 0;
+  return code;
+}
+
+bool _runsAsLocalSystem() {
+  if (!Platform.isWindows) return false;
+  try {
+    return currentUserSid() == localSystemSid;
+  } on Object {
+    return false;
+  }
 }
 
 int _fail(CliEnvironment env, YaguraException error) {
