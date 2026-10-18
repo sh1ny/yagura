@@ -2,152 +2,100 @@
 
 ## Metadata
 
-- **Round:** 2
-- **Prior round:** Round 1: REVISE, 5 Critical / 10 Moderate / 10 Suggestions; all marked fixed by the author
-- **Reviewer:** fresh-context subagent (Claude Code)
+- **Round:** 3
+- **Prior round:** Round 2: APPROVE_WITH_CHANGES, all 11 Required Changes applied and re-checked (M1 baseline).
+- **Reviewer:** fresh-context subagent (Claude Code, specwright-reviewer). Project skills named: none.
 - **Reviewed:**
-  - Planning docs: openspec/strategy.md, openspec/architecture.md, docs/overview.md, docs/protocol.md.
-  - Proto definitions: proto/yagura/v1/{common,firewall,instances,logs,mods,operations,pairing,plugins,rcon,steam,system}.proto.
-  - ADRs: docs/adr/0001 to 0013, with 0011 renamed to 0011-secrets-are-dpapi-blobs.md and 0013 new.
-  - Spot checks of the init-core-platform specs (instance-lifecycle, plugin-manifest, host-service, mod-management) and design.md, to verify the round-1 fixes that cite them.
-  - Review rules: openspec/schemas/specwright/schema.yaml and templates/review.md.
-  - External checks: Microsoft "Process Creation Flags" (`CREATE_NEW_PROCESS_GROUP` / `CREATE_NEW_CONSOLE` / `CREATE_BREAKAWAY_FROM_JOB` semantics), grpc-dart `server_keepalive.dart` (defaults).
+  - Subject: `docs/adr/0014-steamcmd-runs-as-a-low-privilege-account.md` (proposed, supersedes 0010) and `docs/adr/0015-game-server-account-and-directory-acls.md` (proposed, supersedes 0013), compared with `docs/adr/0010-steamcmd-non-interactive.md` and `docs/adr/0013-game-servers-run-as-a-low-privilege-account.md`.
+  - The decisions they record: `openspec/changes/m2-secure-remote-host/design.md` (D5, D6, D7, D8, D10), its `review.md` (round 2), and the delta specs `specs/host-service/spec.md`, `specs/steam-content/spec.md`, `specs/instance-lifecycle/spec.md`.
+  - Baseline: `openspec/architecture.md`, `openspec/strategy.md`, in-force ADRs 0005, 0009, 0011, 0012 (others skimmed for references), the round 1-2 baseline review (`git show HEAD:openspec/architecture-review.md`).
+  - Source used as evidence: `apps/yagurad/lib/src/host/data_directory.dart` (`prepare`), `host/daemon.dart:147-165` (startup order), `process/launcher_modes.dart:20-60` (`yagurad launch`), `steam/steam_process.dart:280-330` (SteamCMD spawn), `steam/steamcmd_service.dart:355-370`.
+  - Host check: `icacls C:\ProgramData` (read-only) on this Windows 11 machine.
+  - Review rules: `openspec/schemas/specwright/schema.yaml` (`review` instruction) and `templates/review.md`.
 
 <!-- This verdict covers only the contents reviewed. Editing proposal, specs or design afterward (other than applying Required Changes) voids it. -->
 
 ## Findings
 
-The revision is substantial and resolves most of round 1. The process model is now buildable in principle. Pairing, the content store, recovery, revisions and secrets are specified. The protocol is concrete enough to implement. The new findings below come mostly from the revisions themselves: the new privilege boundary (ADR 0013) and the relay process model (ADR 0009).
+The two ADRs record the round-2 design-review outcome faithfully. SteamCMD now runs under its own account on its own desktop, the instance-directory DACL omits `DELETE`, ACLs are written without propagation, and the no-follow walk covers `<data>/steamcmd`. The tree-scan race that ADR 0010 left open is closed. The account model itself is sound. The findings below cover what the new text claims but does not deliver, and where it conflicts with in-force ADRs.
 
 ### Critical (blocking)
 
-**C1. The LocalSystem daemon trusts paths and files that the low-privilege `yagura-srv` account controls, so ADR 0013's isolation can be bypassed.** (docs/adr/0013, 0009, 0005, 0004, 0003; architecture.md "Failure and recovery", "Save snapshots"; docs/adr/0010)
+**C1. The data-directory DACL never reaches the directory's existing contents, which keep the `Users` entries inherited from `%ProgramData%`. Both accounts are members of `Users`.** (ADR 0015 "ACLs" and the `SetKernelObjectSecurity` paragraph; ADR 0014 "it has nothing on ... the rest of the data directory")
 
-ADR 0013 gives `yagura-srv` modify rights on the instance directory. The threat it addresses is a game server or mod being exploited. Several LocalSystem actors then operate inside that same directory:
-
-- the config binder (atomic replace of bound files and hook-returned edits);
-- the key copy into `keys/`;
-- mod staging, including `copy_fallback`;
-- snapshot and restore of `data_paths`;
-- `DeleteInstance` with `delete_files`;
-- SteamCMD `app_update` into the instance;
-- hook host functions that read instance files.
-
-A compromised server can replace `keys/`, `yagura/`, `{{profiles}}` or a file with a junction or symlink to `C:\Windows\System32` or to the daemon data directory. The next start, update, snapshot or delete then makes LocalSystem write, copy or delete through it. That is arbitrary file write or delete as SYSTEM, which is local privilege escalation and the outcome ADR 0013 exists to prevent.
-
-Separately, `relay.json` and `exit.json` sit in `<instance>/.yagura/run/`, which `yagura-srv` can write. The supervisor takes relay and server PIDs from `relay.json` and kills them on stop or force-stop. Executable path and start time can be read for any process, so a forged record makes the daemon terminate an arbitrary process as SYSTEM, for example `lsass.exe`, which forces a reboot.
-
-Fix:
-- **Reparse-point rule (ADR 0013):** every daemon file operation under an instance directory must refuse to traverse reparse points. Open with `FILE_FLAG_OPEN_REPARSE_POINT` and check each path component. The only allowed exceptions are the junctions the mod pipeline itself created, which are recorded in instance-mod rows and re-verified to point at the expected content-store version. Recursive delete and snapshot copy never descend into a reparse point; they delete or skip the link itself.
-- **SteamCMD into instances (ADR 0010):** SteamCMD installs app content into a daemon-owned staging location, or into an instance tree that `yagura-srv` cannot write while SteamCMD runs. Either way, the daemon refuses an instance tree that contains unexpected reparse points.
-- **Run records (ADR 0009):** they come from the launcher, which runs as LocalSystem. The launcher returns the relay PID and creation time on its stdout to the daemon. The daemon accepts a server PID from `relay.json` only if that process's parent is the recorded relay and its token user is `yagura-srv`. Before any terminate, the daemon re-checks that the target's token user is `yagura-srv`.
+- **What the ADR says.** Every DACL is written with `SetKernelObjectSecurity`, "which changes only that object", and "inherited entries on existing children are written only by the daemon's no-follow walk". That walk is defined only for instance directories ("set when an instance is created, or once at the first service start for an instance created earlier"). Nothing rewrites the inherited entries on the rest of the data directory.
+- **What exists when the DACL is applied.** `DataDirectory.prepare` (`host/data_directory.dart`) creates `steamcmd/`, `plugins/`, `instances/`, `snapshots/` and `logs/`, and `Daemon.start` (`host/daemon.dart:147-165`) creates the lock file and `yagura.db`. Both run before any ACL step, and the Startup-sequence spec puts "set up the service accounts and directory permissions" after recovery. This is true on a fresh install as well as on an M1 or `--dev` upgrade.
+- **What those children inherit.** `icacls C:\ProgramData` on this host shows `BUILTIN\Users:(OI)(CI)(RX)`, `BUILTIN\Users:(CI)(WD,AD,WEA,WA)` and `CREATOR OWNER:(OI)(CI)(IO)(F)`. Because the protected DACL on `<data>` is never propagated, these entries stay on every child.
+- **Consequences** for `yagura-srv` and `yagura-steam` (Users-only membership, ADR 0015):
+  - **Reads.** They can read `yagura.db`, every instance's snapshots, the daemon logs and the plugins. The host-service scenario "Server process identity ... cannot open `yagura.db`" fails on every host.
+  - **Planted links outside any confined walk.** They can create subdirectories in `snapshots/`, `logs/`, `plugins/` and each existing SteamCMD installation, and, as `CREATOR OWNER`, turn them into junctions. Example: a server pre-creates `snapshots/<its instance id>` as a junction to `C:\Windows\System32`. The next `pre_update` snapshot, written by SYSTEM, copies files the server controls to the junction's target. That is a SYSTEM file write with chosen content, the escalation ADR 0013 and 0015 exist to prevent. ConfinedFs covers only instance directories and `<data>/steamcmd`.
+  - **Code as `yagura-steam`.** A `yagura-srv` server can plant DLLs in an existing SteamCMD installation and get code running as `yagura-steam`.
+- **Owners keep control of the DACL.** An object's owner keeps implicit `WRITE_DAC`, and the ADR never sets the owner. `yagurad roots add D:\servers` on a folder a standard user created leaves that user as owner, and the user can restore their own write access afterwards. ADR 0015's "Only administrators can create or rename entries in a root" then does not hold.
 
 ### Moderate
 
-**M1. Ctrl+C delivery as specified will not reach the server, and the spec contradicts the ADR.** (docs/adr/0009 steps 1-3; openspec/changes/init-core-platform/specs/instance-lifecycle/spec.md, stop requirement)
-- **Spec contradiction.** The instance-lifecycle spec says `signal` sends "Windows CTRL_BREAK to the process group". ADR 0009 and the overview say Ctrl+C through the relay's console. Unity and Unreal servers handle these differently, and only Ctrl+C is the documented save-and-exit path for Valheim.
-- **Flag combination.** `CREATE_NEW_PROCESS_GROUP` is documented as ignored when combined with `CREATE_NEW_CONSOLE`. Where it does apply, it disables Ctrl+C for the whole group. Listing it is at best inert and at worst the reason Ctrl+C never arrives.
-- **Inherited ignore flag.** "The relay ignores console control events": if the relay does this with `SetConsoleCtrlHandler(NULL, TRUE)`, the ignore flag is inherited by the game server it spawns. Valheim then never sees Ctrl+C, and the M1 graceful-stop criterion fails.
-- **Dead relay.** `yagurad signal --console-of <relay pid>` cannot attach if the relay is gone. The failure table explicitly keeps the server running after the relay dies.
+**M1. ADR 0014 starts SteamCMD "through the launcher's logon path", but that launcher is built to escape the daemon's job, so SteamCMD would not die with the daemon. This also contradicts ADR 0009.**
+- **The launcher's design.** ADR 0009 step 1 and `process/launcher_modes.dart:36-40` start the launched process with `CREATE_BREAKAWAY_FROM_JOB`, and the launcher exits after printing the PID.
+- **What SteamCMD needs.** ADR 0014's own first paragraph keeps SteamCMD "inside a kill-on-close job object owned by the daemon". The daemon also needs SteamCMD's stdout and stderr on its own pipes, and its exit code, for progress, Guard detection and the stall timer. Today `steam/steam_process.dart:300-327` does this in-process: `CREATE_SUSPENDED`, assignment to the job, resume.
+- **ADR 0009 says otherwise.** It states that SteamCMD "runs as a child in a kill-on-close job object owned by the daemon".
+- **Consequence.** Taken literally, ADR 0014 puts SteamCMD outside the job, so it survives a daemon crash and leaves only the startup sweep to clean up. The daemon also loses the output stream it parses.
+- **Fix.** The daemon calls `LogonUserW` and `CreateProcessAsUserW` itself; LocalSystem holds the privileges this needs. Only the profile, environment and desktop setup is shared with the launcher.
 
-Fix:
-- Drop `CREATE_NEW_PROCESS_GROUP` from step 1.
-- State that the relay installs a handler function that returns TRUE, never `SetConsoleCtrlHandler(NULL, TRUE)`, and that it spawns the server without `CREATE_NEW_PROCESS_GROUP`.
-- `signal` attaches to the console of the server PID (falling back to the relay PID) and sends `CTRL_C_EVENT` to process group 0.
-- Change the spec's `signal` definition to "Windows: Ctrl+C to the server's console".
+**M2. ADR 0014 says a planted junction "gains nothing". That is true for system folders, but not for what `yagura-steam` itself can write.**
+- **What a server can redirect.** A `yagura-srv` server can plant a junction, or an object-manager symlink through a `\RPC Control` mount point, in any instance directory. It can point it at `<data>/steamcmd/<installation>` or at `yagura-steam`'s profile. Junction creation needs no access to the target.
+- **What SteamCMD then does.** SteamCMD's writes and deletes during that instance's update land there: SteamCMD binaries, `appcache`, `config/config.vdf`.
+- **Consequence.** A game server can corrupt every SteamCMD installation or destroy cached logins. The admin then has to log in again, Steam Guard included, for the DayZ-owning account. The steam-content spec already carves out "SteamCMD installations" from its guarantee, so the ADR's wording claims more than the spec does.
+- **Fix.** State the real bound and accept it explicitly.
 
-**M2. `CreateProcessAsUserW` from a service, as described, will fail or run the game with the wrong profile.** (docs/adr/0013, docs/adr/0009 step 1)
+**M3. Neither ADR says how workshop content moves from a `yagura-steam`-writable tree into the immutable content store (ADR 0005).**
+- **The gap.** ADR 0015 gives `yagura-steam` no entry on the content store. ADR 0005 acquires into `content/.staging/<op-id>/` and publishes by renaming. `workshop_download_item` writes under `steamapps/workshop` of its install directory.
+- **Consequence, either way it is built:**
+  - SteamCMD downloads straight into `content/.staging`, and every M3 workshop acquisition fails with access denied;
+  - or the daemon (SYSTEM) moves the tree out of `<data>/steamcmd`, which ADR 0014's list of no-follow work does not include. A junction left in that tree is then published into "immutable" content, pointing back at space `yagura-steam` writes. The DayZ key copy into `keys/` (SYSTEM) later reads through it.
+- **Why decide now.** ADR 0005's reversal cost is high, and this is the moment the account boundary is fixed.
 
-- **Console start failure.** A console process (the relay, with `CREATE_NEW_CONSOLE`) started under a different user's token inherits the service's window station and desktop (`Service-0x0-3e7$\Default`). `yagura-srv` has no access to them, so console initialisation typically fails with `STATUS_DLL_INIT_FAILED` (0xC0000142).
-- **Wrong profile.** `LogonUserW` does not load the user profile. Without `LoadUserProfileW` and `CreateEnvironmentBlock`, `HKCU`, `%APPDATA%` and `%USERPROFILE%` point at the default/SYSTEM context. That breaks Unity PlayerPrefs and any game state that falls back to the profile.
+**M4. ADR 0015 contradicts ADR 0012, which stays in force, and leaves stale references in ADR 0009.**
+- **ADR 0012.** It says "install also creates the game-server account (ADR 0013), sets directory ACLs". ADR 0015 moves both to the service-mode daemon "(not the installer)", for a concrete reason: an installer running as the admin user stores the password in the admin's DPAPI scope, which LocalSystem cannot read, so every launch would fail `launch_logon_failed`. An implementer who reads ADR 0012 rebuilds exactly that failure.
+- **ADR 0009.** It cites ADR 0013 for the account and ADR 0010 for SteamCMD. Once those are superseded, both citations point at superseded ADRs.
 
-Fix: in ADR 0013, specify that the launcher:
-- creates, or reuses, a dedicated window station and desktop for `yagura-srv` (e.g. `YaguraSrv\Default`), with ACLs granting the account's logon SID, and passes it in `STARTUPINFO.lpDesktop`;
-- calls `LoadUserProfileW` and builds the environment with `CreateEnvironmentBlock`.
-
-Add "relay console starts under `yagura-srv` from the service" to the M2 spike.
-
-**M3. The revision fix for round-1 M7 produces constant false conflicts.** (docs/adr/0008; proto/yagura/v1/instances.proto `Instance.revision`; docs/protocol.md "Calls and streams")
-
-`revision` is "incremented on every change", and the `Instance` message includes runtime fields: state, health, pid, `queued_operations`, `restart_required`, `state_changed_at`. A running instance changes these continuously (health checks, crash restarts, queue changes). A client editing settings for a minute then gets `revision_conflict` without anyone else having edited anything.
-
-Fix: make `revision` a configuration revision. It increments only on changes to settings, ports, secrets, mods, restart policy, Steam account, or a snapshot restore. Runtime fields do not bump it. State this in ADR 0008, the proto comment and protocol.md.
-
-**M4. Content-store GC can delete a version a running instance still uses.** (docs/adr/0005; architecture.md "State ownership" content-store and instance-mod rows)
-
-References are "derived from" each row's pinned version. `UpdateMods` on a running instance acquires the new version but defers re-linking until the instance is stopped. If the row's pin moves to the new version at that point, the old version has no reference while the running server's junctions still point at it. Long-running DayZ servers are common, so after 7 days GC deletes files under a live server. If instead the pin does not move, nothing records the pending update.
-
-Fix: give the instance-mod row two fields, `staged_version` (what the junction points at now) and `desired_version`. GC treats both as references. Re-staging at stop/start sets `staged_version` to `desired_version`.
-
-**M5. The client keepalive will be rejected by grpc-dart's server defaults.** (docs/protocol.md "Transport")
-
-The client pings every 30 s. grpc-dart's `ServerKeepAliveOptions` defaults to `minIntervalBetweenPingsWithoutData` = 5 minutes and `maxBadPings` = 2, and data resets the counter. On a connection that only holds a quiet stream, the third 30 s ping trips the `tooManyBadPings` handling. The result is reconnect loops on idle `WatchInstances` and `Logs.Follow` streams, the kind most clients keep open.
-
-Fix: state the server keepalive policy explicitly in protocol.md, e.g. `minIntervalBetweenPingsWithoutData: 20 s` to accept 30 s client pings. Add a test: an idle stream must survive 10 minutes.
-
-**M6. The Linux process model in ADR 0009 contradicts the host-service spec and would kill servers on unit stop.** (docs/adr/0009 Decision; specs/host-service/spec.md "Stopping the unit keeps servers")
-
-The ADR says `posix_spawn` with `setsid`. `setsid` does not leave the unit's cgroup, and systemd's default `KillMode=control-group` kills everything in it on stop or restart. The host-service spec instead says "transient scopes", and round 1's architecture said the same.
-
-Fix: change ADR 0009 to start the relay in its own transient scope on Linux (`systemd-run --scope`, or the D-Bus `StartTransientUnit` call), and keep `setsid` only for terminal detachment.
+**M5. ADR 0014 leaves SteamCMD's account on Linux unspecified, while ADR 0015 runs Linux servers as `yagura-srv` "with the same directory rules".**
+- **The gap.** ADR 0014 covers service mode (Windows) and console mode only.
+- **Consequence.** An M5 implementation that follows the ADRs as written runs SteamCMD as the root daemon into trees `yagura-srv` can write. On Linux any user can create symlinks, so the round-2 C1 hole comes back in its easiest form.
 
 ### Suggestions
 
-**S1. State-machine gaps** (architecture.md "Instance state machine"):
-- `DeleteInstance` is allowed only from `stopped`. Allow it from `not_installed` and `error` too, for example when the plugin is missing.
-- `error → starting` must be refused while the reason is `settings_invalid` or `plugin_missing`.
-- Add `stopping → error` for when kill fails.
-- State the preconditions for `RestoreSnapshot`, `ApplyMods` and `ApplyConfig`: stopped only, or which steps are deferred.
-- Decide whether `on_crash` applies to a server that exited while the daemon was down (`lost_while_daemon_down`).
+**S1. Window-station and desktop ACLs per logon SID.** ADR 0015 grants "the account's logon SID", but each `LogonUserW` call creates a new logon SID.
+- With several servers, or crash restarts, the launcher either replaces the DACL (an earlier server loses access to objects it opens later) or appends entries (an ACL is capped at 64 KiB, so after a few thousand launches `launch_failed` appears).
+- Fix: state that the launcher adds the new logon SID at launch and removes it when that process exits, or grant the account SID instead.
 
-**S2. Snapshots:**
-- `DeleteInstance` with `delete_files` is refused when there is no disk space for the pre-delete snapshot. That blocks the admin from freeing space; allow an explicit skip with `confirm_name`.
-- DayZ's `data_paths` includes `{{profiles}}`, which holds multi-GB RPT/ADM logs. Add `exclude` globs.
-- Write each snapshot to a temp directory, then rename it and insert its row, so a crash mid-snapshot never lists a partial snapshot as restorable.
+**S2. Name the logon rights.** "Interactive and remote logon denied" is ambiguous: "remote" can mean RDP or network logon. List the rights: `SeDenyInteractiveLogonRight`, `SeDenyRemoteInteractiveLogonRight`, `SeDenyNetworkLogonRight`, plus `SeBatchLogonRight`.
 
-**S3.** The server certificate is rotated only at startup. A daemon that runs for more than 2 years without a restart serves an expired certificate. Check daily, and rebind the listener with the new context, since `SecureServerSocket`'s context is fixed at bind.
-
-**S4.** protocol.md "Device renewal" and pairing.proto say the daemon "accepts the old serial until it expires", but device identity is now the certificate's SHA-256. The device row needs a current and a previous fingerprint; say so.
-
-**S5. Documentation drift:**
-- Overview Steam Guard flow: it uses `AddSteamAccount`/`SubmitSteamGuard`; the proto has `Steam.AddAccount` and `Operations.RespondToPrompt`.
-- Overview protocol surface: "Mods (add, remove, reorder)" vs `SetMods`, and "Steam (guard submit)".
-- Proto: `PairingInfo.api_version` and the system.proto comment "Clients compare api_version major" are stale next to `api_versions`.
-- ADR 0012 Context: still says "create symbolic links", but staging now uses junctions.
-
-**S6.** SteamCMD is assigned to a kill-on-close job after spawn. On first run and on self-update, SteamCMD relaunches itself, which can escape before the assignment. Spawn it suspended through the same native path as the launcher (`CREATE_SUSPENDED`, assign to the job, resume). The startup sweep remains as a backstop.
-
-**S7.** A heavy-operation slot (4 per host) is taken before the per-installation SteamCMD lock. Four updates on one Steam account then occupy every slot while running one at a time, and anonymous installs starve. Acquire the SteamCMD lock first, or do not count operations waiting on it against the slot limit.
-
-**S8.** `CreateInstance.directory` and `ImportInstance.directory` accept any path. The daemon then grants `yagura-srv` modify on it, and `delete_files` removes it recursively; a mistyped `D:\` is destructive. Restrict instance directories to configured roots, and require the directory to be empty or non-existent at create.
-
-**S9. Firewall rules for the daemon's own ports:**
-- The rule `Yagura/daemon/api/tcp` should follow the configured `--bind` port and be reconciled like the others.
-- The fallback pairing listener on port+1 (protocol.md) needs its own rule if adopted.
+**S3. Password repair without a failed logon.** "A stored password that no longer matches is reset" implies a test logon. On a mismatch that test is a failed logon (event 4625) and counts toward the lockout threshold. Setting the stored password unconditionally at every service start (`NetUserSetInfo` level 1003) needs no test and gives the same result.
 
 ## Verdict
+
+C1 is a defect in ADR 0015's ACL mechanism with a precise text fix, and M1-M5 are text corrections. All six are listed below as exact edits.
 
 VERDICT: APPROVE_WITH_CHANGES
 
 ## Required Changes
 
-1. **docs/adr/0013, Decision:** add the paragraph "Trust boundary: everything under an instance directory is writable by `yagura-srv` and untrusted to the daemon. Every daemon file operation there (binder, key copy, staging, snapshot, restore, delete, hook host reads, log tailing) opens paths without following reparse points (`FILE_FLAG_OPEN_REPARSE_POINT`, per-component check) and fails with `sandbox_violation` on any reparse point other than the mod junctions recorded in instance-mod rows, which are re-verified against their expected target. Recursive delete and snapshot copy never descend into a reparse point." Add "untrusted reparse point refused" to the M2 spike/exit criteria in docs/overview.md.
-2. **docs/adr/0010, Decision:** add "Before and after each `app_update` into an instance, the daemon checks the instance tree for reparse points not created by Yagura and fails with `sandbox_violation`; instances in `installing`/`updating` have no running server, so `yagura-srv` code is not running to race the check." Alternatively, install into daemon-owned staging and move the result in; state whichever is chosen.
-3. **docs/adr/0009, step 4 (Re-attach) and step 1:**
-   - The launcher reports the relay PID and creation time to the daemon on its stdout before exiting; this, not `relay.json`, is the source of the relay record.
-   - The server PID from `relay.json` is accepted only if its parent PID is the recorded relay and its token user is `yagura-srv`.
-   - Before any terminate, the daemon re-checks that the target's token user is `yagura-srv`.
-   - Update the architecture.md "Run records" row to say the authoritative copy is the launcher report plus the verified `relay.json`.
-4. **docs/adr/0009, step 1:** remove `CREATE_NEW_PROCESS_GROUP |`.
-5. **docs/adr/0009, step 2:** replace "The relay ignores console control events" with "The relay installs a console control handler that returns TRUE (never `SetConsoleCtrlHandler(NULL, TRUE)`, whose ignore flag the server would inherit) and starts the server without `CREATE_NEW_PROCESS_GROUP`."
-6. **docs/adr/0009, step 3:** change to "`yagurad signal --console-of <server pid>` (falling back to the relay pid) attaches to that console and calls `GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)`." In specs/instance-lifecycle/spec.md, stop requirement, replace "Windows CTRL_BREAK to the process group" with "Windows Ctrl+C to the server's console".
-7. **docs/adr/0013, Decision:** after the `CreateProcessAsUserW` sentence, add "The launcher loads the account profile (`LoadUserProfileW`), builds its environment with `CreateEnvironmentBlock`, and starts the relay on a dedicated window station and desktop `YaguraSrv\Default`, whose ACLs grant the account's logon SID, passed in `STARTUPINFO.lpDesktop`." In docs/overview.md M2 "Proves", add "relay console starts as `yagura-srv` from the service".
-8. **docs/adr/0008, proto/yagura/v1/instances.proto (`revision` comment) and docs/protocol.md:** define `revision` as incremented only on configuration changes (settings, ports, secrets, mods, restart policy, Steam account, snapshot restore), never on state, health, pid or queue changes.
-9. **docs/adr/0005 and the architecture.md State ownership row "Instance-mod rows":** the row carries `staged_version` (current junction target) and `desired_version`. GC treats both as references. Re-staging while stopped sets `staged_version := desired_version`. Add `staged_version` next to `pinned_version` in mods.proto (as `desired_version`'s counterpart), or rename `pinned_version` to `desired_version` and add `staged_version`.
-10. **docs/protocol.md, Transport table:** add a row "Server keepalive policy | `minIntervalBetweenPingsWithoutData` 20 s, `maxBadPings` 2 (accepts the 30 s client ping)", and a sentence that an idle stream must survive 10 minutes (test).
-11. **docs/adr/0009, Decision, first sentence:** replace "`posix_spawn` with `setsid` on Linux" with "on Linux, the relay starts in its own systemd transient scope (`StartTransientUnit`), so stopping `yagurad.service` does not kill it".
-
-Re-check (round 2, new reviewer run): I verified that all 11 Required Changes are present as specified, in ADR 0005, 0008, 0009, 0010 and 0013, architecture.md (Run records and Instance-mod rows), overview.md M2, protocol.md (revision definition and server keepalive row), instances.proto, mods.proto and the instance-lifecycle spec's stop requirement. Suggestions S3, S4, S6, S7 and S8 move to the init-core-platform design.
+1. **C1. ADR 0015, Decision.**
+   - **Add after the ACL list:** "In service mode, before the database is opened, the daemon sets the owner (Administrators) and the protected DACL on the data directory. While its recorded data-directory layout version is below the current one, it walks the data directory with the no-follow walk. The walk skips instance directories, which get their own DACL below. For every other child it sets the owner to Administrators and writes the inherited SYSTEM/Administrators entries plus the explicit `<data>/steamcmd` and content-store entries. A reparse point met there fails startup with `data_dir_not_protected` naming the path."
+   - **Owner, every DACL write.** Change "Every DACL is written with `SetKernelObjectSecurity` ..." to "Every DACL is written, together with owner Administrators (`OWNER_SECURITY_INFORMATION`), with `SetKernelObjectSecurity` ...". This covers roots added with `roots add`, `<data>/steamcmd` and instance directories.
+   - **ADR 0014, matching sentence.** Make "it has nothing on system folders or the rest of the data directory" rely on the walk above.
+   - **Author follow-up, outside this review's files:** move the data-directory protection before the database open in design D6, the host-service Startup-sequence requirement and task 9.2.
+2. **M1. ADR 0014, second Decision paragraph.**
+   - **Replace** "starts as a dedicated local account `yagura-steam` through the launcher's logon path (`LogonUserW(LOGON32_LOGON_BATCH)` + `CreateProcessAsUserW`, ADR 0015)" **with** "starts as a dedicated local account `yagura-steam`. The daemon itself calls `LogonUserW(LOGON32_LOGON_BATCH)` and `CreateProcessAsUserW`, with the profile, environment and desktop setup of ADR 0015, `CREATE_SUSPENDED`, and assignment to the operation's kill-on-close job before the process resumes; stdout and stderr go to pipes the daemon reads. It does not go through `yagurad launch`, whose job breakaway and early exit serve game servers (ADR 0009)."
+   - **Follow-up:** align design D10 and task 9.3.
+3. **M2. ADR 0014.**
+   - **Replace** "A junction planted by any `yagura-srv` server therefore gains nothing: a write through it into a system folder fails with access denied." **with** "A link planted by a `yagura-srv` process can redirect SteamCMD's writes and deletes only to places `yagura-steam` may write. Writes into system folders and the rest of the data directory fail with access denied. SteamCMD installations and `yagura-steam`'s profile can still be reached."
+   - **Add a Consequences bullet:** "A game server can corrupt a SteamCMD installation or delete a cached login through a planted link during an update. The installation is bootstrapped again and the admin logs in again (Steam Guard included). The token stays unreadable to `yagura-srv`."
+4. **M3. ADR 0014, third Decision paragraph.** Add: "Workshop items are downloaded by SteamCMD as `yagura-steam` into a tree it can write. The daemon publishes them into the content store (ADR 0005) by a no-follow copy into `content/.staging/<op-id>/` that refuses any reparse point, then renames the copy into place. It never renames a tree `yagura-steam` can still write. `yagura-steam` has no entry on the content store."
+5. **M4. ADR 0015, Context.**
+   - **Add:** "It also replaces ADR 0012's statement that `service install` creates the game-server account and sets directory ACLs. Both are done by the service-mode daemon at every start, because only LocalSystem can keep the passwords in its own DPAPI scope (ADR 0011)."
+   - **In `openspec/architecture.md`'s in-force ADR table** (task 1.1), annotate the 0012 row with "account and ACL setup: see 0015", and the 0009 row with "account: 0015; SteamCMD: 0014".
+6. **M5. ADR 0014, after the console-mode sentence.** Add: "On Linux, SteamCMD runs as the system user `yagura-steam` with the same directory rules as ADR 0015, never as the daemon's root user."
 
 <!-- yes (applied, and re-checked by the reviewer - only the reviewer sets it) | no (outstanding) | n/a (any other verdict) -->
 CHANGES_APPLIED: yes
@@ -155,21 +103,80 @@ CHANGES_APPLIED: yes
 ## Rebuttals
 
 <!-- Author: fixed (cite) or rebutted (reason) per finding. A Critical/Moderate rebuttal counts only once marked "accepted by reviewer". -->
-Round 1 author responses (all fixed; round 2 requested), with the round-2 reviewer's disposition:
 
-- **C1 fixed**: ADR 0009 rewritten: native `CreateProcessW` spawn through a short-lived `yagurad launch` and a `yagurad relay` per server (new process group and console, breakaway, parent chain broken), `yagurad signal` delivers Ctrl+C via `AttachConsole`/`GenerateConsoleCtrlEvent`, exit waiters + `exit.json`; games use file logs where they can, relay stdout capture is the fallback. Architecture components and Failure and recovery updated. Graceful Valheim stop is an M1 exit criterion; service stop/upgrade leaving servers running is an M2 exit criterion (roadmap). **Accepted by reviewer.** The relay structure resolves the round-1 issues. The remaining Ctrl+C and launch details are tracked as round-2 M1 and M2.
-- **C2 fixed**: ADR 0007: listener requests (not requires) client certificates; fail-closed interceptor tested per method; `docs/protocol.md` Per-call authorization, with a fallback of a separate pairing listener if the TLS spike shows request mode accepts untrusted certificates. **Accepted by reviewer.**
-- **C3 fixed**: ADR 0005 rewritten: versioned immutable store `content/<source>/<app>/<item>/<version>/`, atomic publish from `.staging`, single-flight per item version, references from pinned instance-mod rows, re-link only while stopped, read-only to hooks and servers. **Accepted by reviewer.** The GC/staged-version gap is tracked as round-2 M4.
-- **C4 fixed**: new ADR 0013: `yagura-srv` low-privilege account, `LogonUserW` + `CreateProcessAsUserW` in the launcher, directory ACLs; strategy boundary added. **Not accepted:** the account separation is right, but a compromised server can still get SYSTEM-level file writes, deletes and process kills through reparse points and `relay.json` in its writable instance directory. See round-2 C1, Required Changes 1-3.
-- **C5 fixed**: architecture "Failure and recovery" table; startup recovery (stray SteamCMD killed, operations `interrupted`, states re-derived, staging and firewall re-run); SteamCMD in a kill-on-close job (ADR 0010). **Accepted by reviewer.** S6 notes a job-assignment race that the startup sweep backstops.
-- **M1 fixed**: ADR 0007 + protocol.md: `Pairing.Info` returns the CA cert checked against the pin; fixed SAN `yagurad-<daemon-id>` used as TLS authority; server cert 2 years, rotated under 30 days; `Pairing.RenewCertificate`. **Accepted by reviewer** (see S3, S4).
-- **M2 fixed**: local admin channel (named pipe, SYSTEM + Administrators) in ADR 0012 and the component table; ADR 0008 "state component" replaced by one owning component per table; CLI never opens the database while the service runs. **Accepted by reviewer.**
-- **M3 fixed**: one SteamCMD run per installation (ADR 0010, bounds); M3 spike records Guard behaviour with stdin closed before timeouts are fixed. **Accepted by reviewer** (see S7).
-- **M4 fixed**: hooks never write files: they return edits applied by the binder (ADR 0003, 0004); external edits re-read, patched, `external_edit` event, never block; `game_writes: true`; Yagura-owned DayZ config copy; BattlEye active-file rename handled by `create: true` template in the DayZ plugin. **Accepted by reviewer.**
-- **M5 fixed**: update = stop → update → bindings → start if it was running (state machine); `validate` opt-in and config copies outside depot paths; explicit reload only with manifest snapshots per operation; plugin version change re-validates settings with optional `migrateSettings`, else `error: settings_invalid` / `plugin_missing` (ADR 0002). **Accepted by reviewer.**
-- **M6 fixed**: state machine in architecture.md with every transition including stop-during-start and crash loop; exit waiters for re-attached servers (ADR 0009). **Accepted by reviewer** (remaining gaps in S1).
-- **M7 fixed**: instance `revision` and `expected_revision` on every mutating call (ADR 0008, proto, protocol.md). **Not accepted:** the revision also increments on runtime state changes, which produces false `revision_conflict` errors. See round-2 M3, Required Change 8.
-- **M8 fixed**: `data_paths` in the manifest, must resolve inside the instance (Valheim `-savedir`); snapshots before update and before delete-with-files, last 3 kept (architecture Save snapshots, bounds). **Accepted by reviewer** (see S2).
-- **M9 fixed**: DPAPI user scope of LocalSystem (ADR 0011 renamed), ACLs (ADR 0013), password only in argv never a script file, scrubbed from output; SteamCMD token documented as an accepted exception (strategy, ADR 0010). **Accepted by reviewer.**
-- **M10 fixed**: port uniqueness incl. derived ports (instance-lifecycle and plugin-manifest specs); `service install` adds the daemon port rule (ADR 0012); DayZ example binds `RConPort`. **Accepted by reviewer** (see S9).
-- **S1** fixed (15 min no-progress + 12 h cap). **S2** fixed (junctions, name fixed at add). **S3** fixed (audit mutating + auth only). **S4** fixed (4 hook workers, host input caps). **S5** fixed (device id = cert SHA-256). **S6** fixed (CurseForge edge removed; xml stays in the format list but no milestone exit criterion depends on exact XML round-trip until a binding needs it). **S7** fixed (ADR 0011 title, 0007 wording, 0012 rejection reason). **S8** fixed (scheduler out of scope for v1, strategy + architecture). **S9** fixed (long-running executable required; `starting → stopped` when the process exits in the health window). **S10** fixed (`api_versions`). **All accepted by reviewer.** Residual wording drift is in round-2 S4 and S5. Note: the M3 milestone row in overview.md still lists "config bindings (dayz-cfg, json, xml)" under Delivers, which is acceptable since the exit criterion no longer depends on exact XML round-tripping.
+- **C1:** fixed. ADR 0015 adds a paragraph: before the database opens, the daemon sets the owner and protected DACL on the data directory, then runs a one-time no-follow walk skipping instance directories. A reparse point fails startup with `data_dir_not_protected`. Every DACL write now also sets owner Administrators. ADR 0014's "nothing on ... the rest of the data directory" sentence now cites that walk. The author follow-up is done in the change:
+  - design D6 has a "Data directory first" paragraph and a Failure-table row;
+  - host-service "Startup sequence" gains the step and the scenarios "Data directory created by an earlier daemon" and "Link in the data directory at first service start";
+  - task 9.2 is updated.
+- **M1:** fixed. ADR 0014's second paragraph has the replacement text. Design D10 and task 9.3 are aligned: the daemon starts SteamCMD itself, suspended, in the job, with pipes.
+- **M2:** fixed. The replacement sentence and the Consequences bullet are in ADR 0014. D10 states the same bound.
+- **M3:** fixed. The workshop publish paragraph is in ADR 0014, with a matching D10 bullet ("Workshop content (M3)").
+- **M4:** fixed. The ADR 0012 replacement paragraph is in ADR 0015's Context. The 0012 and 0009 row annotations go into `openspec/architecture.md` when task 1.1 accepts the ADRs.
+- **M5:** fixed. The Linux sentence follows the console-mode sentence in ADR 0014. D10 has a Linux (M5) bullet.
+- **S1:** taken. Window stations and desktops are ACL'd to the account SID, not the per-logon SID, in ADR 0014, ADR 0015 and D7. Spike S2 does the same.
+- **S2:** taken. ADR 0015 and D7 name `SeBatchLogonRight`, `SeDenyInteractiveLogonRight`, `SeDenyRemoteInteractiveLogonRight` and `SeDenyNetworkLogonRight`.
+- **S3:** taken. The password is set with `NetUserSetInfo` level 1003 at every start, without a test logon (ADR 0015, D7).
+
+### Re-check (reviewer)
+
+Verified as applied and consistent with ADRs 0005, 0009, 0011 and 0012 and with the change:
+
+- **M1.** ADR 0014 paragraph 2 has the replacement text. D10 "Account" and task 9.3 match it: the daemon starts SteamCMD itself, `CREATE_SUSPENDED`, in the job, with pipes. That agrees with ADR 0009's "child in a kill-on-close job object owned by the daemon".
+- **M2.** The replacement sentence and the Consequences bullet are in ADR 0014. D10 "What it can write" states the same accepted bound.
+- **M3.** ADR 0014 paragraph 4 and the D10 "Workshop content (M3)" bullet match ADR 0005's staging-and-rename.
+- **M5.** The Linux sentence and the D10 "Linux (M5)" bullet are present.
+- **C1, the parts that are applied.** The ADR 0015 paragraph, owner Administrators on every DACL write (ADR 0015 and D6), and the ADR 0014 sentence citing the walk are in place. The D6 "Data directory first" paragraph, the Failure-table row, the Startup-sequence step and its two scenarios, the test rows, and tasks 9.2 and 9.5 (`data_dir_not_protected`) are in place too. The order (lock, protect, then open the database) fits `daemon.dart:147-165`. A fresh install and an M1 upgrade both run the walk, which catches what `prepare`, the lock file and `yagura.db` inherited.
+- **S1-S3** are taken in ADR 0015 and D7.
+
+Still outstanding (CHANGES_APPLIED stays `no`):
+
+1. **C1, the walk is gated on a marker that any local user may have planted.** Before the first service start, `<data>` still carries `BUILTIN\Users:(CI)(WD,AD,WEA,WA)` from `%ProgramData%`, so any `Users` process can create `<data>/acl-layout`. That includes an M1 or `--dev` game server, which runs as the logged-in user. If the planted file holds the current version, the daemon protects `<data>` itself but skips the walk. `yagura.db`, `snapshots/`, `logs/`, `plugins/` and `steamcmd/` then keep their `Users` entries, and that user owns the marker. This is the original C1 again. D6's "the directory is SYSTEM/Administrators-only by then" covers only markers written later, not one that already exists.
+   - **Fix, ADR 0015 paragraph "In service mode, before the database is opened ...":** after "While its recorded data-directory layout version is below the current one", insert: "(the version is read from `<data>/acl-layout`, and is taken as 0 unless that file is opened without following reparse points, is a regular file with one link, and is owned by SYSTEM or Administrators)".
+   - **Fix, design D6 "Data directory first":** after "(a one-line file written atomically after a successful walk; ...)", add the same rule. Then add a host-service scenario: "**WHEN** the service first starts on a data directory where a standard user created `acl-layout` with the current version **THEN** the walk still runs and `yagura.db` grants nothing to `Users`". Add its test row to group 9.
+2. **C1, "skips instance directories" cannot be done before the database opens.** The walk runs before `yagura.db` is opened, so it cannot know which children of `<data>/instances` are instances. If it descends into them, it overwrites their protected per-instance DACL with inherited-only entries. It also turns a junction in an M1 instance, which should give the per-instance `acl_migration_failed`, into a fatal `data_dir_not_protected` for the whole service.
+   - **Fix, ADR 0015 and D6:** replace "The walk skips instance directories, which get their own DACL below." (D6: "skipping instance directories (their own DACL, above)") with "The walk sets the DACL on `<data>/instances` itself but does not descend into it; instance directories get their own DACL and migration (above), once the database is open."
+3. **C1, the walk's inherited entries under `<data>/steamcmd` and the content store.** "writes the inherited SYSTEM/Administrators entries plus the explicit `<data>/steamcmd` and content-store entries" puts only SYSTEM/Administrators on descendants. An existing M1 SteamCMD installation then gives `yagura-steam` no write access, and its first update after the upgrade fails with access denied. The same applies to `yagura-srv` reading existing content. The ambiguity is in this review's own prescribed text.
+   - **Fix, ADR 0015 and D6:** replace that clause with "writes the entries it inherits from its parent's new DACL (SYSTEM/Administrators; plus `yagura-steam` modify below `<data>/steamcmd` and `yagura-srv` read and execute below the content store), and sets the explicit DACLs of `<data>/steamcmd` and the content store on those directories themselves".
+4. **M4, the deferral to task 1.1 is acceptable only if task 1.1 records it.** The architecture table lists accepted ADRs, and 0014/0015 are only proposed until this review passes, so making the annotation at acceptance is right. Task 1.1 (tasks.md:156), however, only adds the 0014/0015 rows and removes 0010/0013. It does not mention the 0012 and 0009 annotations. `openspec/architecture.md:74`, `:168` and `:169` also still cite ADR 0010 and 0013.
+   - **Fix, task 1.1:** after "remove the rows for 0010 and 0013 (their files stay unchanged)", insert: "annotate the 0012 row with \"account and ACL setup: see 0015\" and the 0009 row with \"account: 0015; SteamCMD: 0014\", and repoint the ADR 0010 and 0013 citations in the component table and contracts list (`architecture.md` lines 74, 168, 169) to 0014 and 0015". Extend its Verify with "and no line outside the superseded rows cites 0010 or 0013".
+
+- **Re-check 1 (marker):** fixed.
+  - ADR 0015 inserts the given parenthesis: the version is 0 unless `acl-layout` is a no-follow regular file with one link, owned by SYSTEM or Administrators.
+  - D6 states the same rule.
+  - host-service has the new scenario "Layout marker planted by a standard user", with its row `layout_marker_planted_by_a_standard_user` in group 9 and in the Verify of task 9.2.
+- **Re-check 2 (instances):** fixed. ADR 0015 and D6 now say "The walk sets the DACL on `<data>/instances` itself but does not descend into it; instance directories get their own DACL and migration ..., once the database is open."
+- **Re-check 3 (inherited entries):** fixed. ADR 0015 and D6 use the given replacement clause: entries are inherited from the parent's new DACL, and explicit DACLs are set on `<data>/steamcmd` and on the content store.
+- **Re-check 4 (M4):** fixed. Task 1.1 now has the 0012 and 0009 annotations, the repointing of `architecture.md` lines 74, 168 and 169, and the extended Verify.
+- **From the change's design re-check:**
+  - ADR 0015 now refuses a data directory that is itself a reparse point, or whose final path differs, before anything is created in it (`data_dir_not_protected`).
+  - Its logon paragraph now says the launcher uses the shared logon module for game servers and the daemon uses it in-process for SteamCMD (ADR 0014). This removes the "launcher starts SteamCMD" contradiction.
+
+### Second re-check (reviewer)
+
+Verified against ADRs 0014 and 0015 as they stand, design D6, D7, D8, D10 and the Failure table, host-service "Startup sequence", and tasks 1.1, 9.2, 9.3 and the test map:
+
+- **Re-check 1 (marker).** ADR 0015 and D6 carry the prescribed rule (version 0 unless `acl-layout` is a no-follow regular file with one link, owned by SYSTEM or Administrators). The scenario "Layout marker planted by a standard user" is in host-service, its row `layout_marker_planted_by_a_standard_user` is in the test map (group 9), and task 9.2's Verify names it.
+- **Re-check 2 (instances).** ADR 0015 and D6 both say the walk sets the DACL on `<data>/instances` but does not descend into it, and that instance directories get their own DACL and migration once the database is open. A junction in an M1 instance therefore stays the per-instance `acl_migration_failed` path, not a fatal start.
+- **Re-check 3 (inherited entries).** ADR 0015 and D6 use the prescribed clause, so existing SteamCMD installations keep `yagura-steam` modify and existing content keeps `yagura-srv` read and execute after the walk.
+- **Re-check 4 (M4).** Task 1.1 adds the 0012 and 0009 annotations, the repointing of `architecture.md` lines 74, 168 and 169, and the Verify "no line outside the superseded rows cites 0010 or 0013". ADR 0009's remaining "ADR 0013" citation is covered by that annotation.
+- **Root reparse check (new).** ADR 0015, D6 and the Failure-table row agree: before anything is created in it, the data directory is opened with `FILE_OPEN_REPARSE_POINT` and refused with `data_dir_not_protected` if it is a reparse point or its final path differs. That runs before `DataDirectory.prepare` (`data_directory.dart:25-50`) and the lock, which is the only order that keeps `prepare`'s `createSync` calls and the lock file off a junction target. The scenario "Data directory is a link" and its test row back it. A child planted before the DACL is set (for example a `snapshots` junction, which `createSync` leaves as is) is caught by the walk and the scenario "Link in the data directory at first service start". The Startup-sequence requirement lists "protect" after "lock". It does not mention the root check, but that check's position is fixed by D6 and the junction scenario, so this is not a contradiction.
+- **Logon-module wording (new).** ADR 0015 now says the launcher uses the shared logon module for game servers and the daemon uses it in-process for SteamCMD. This agrees with ADR 0014 paragraph 2, with D7 "Accounts", with D10 "Account" (the daemon starts SteamCMD suspended, in the operation's kill-on-close job, with pipes, not through `yagurad launch`), with task 9.3 and with ADR 0009 (launcher breakaway for game servers only; SteamCMD a child in the daemon's job).
+- **Cross-ADR consistency.** I found no new contradiction among ADRs 0005 (staging-and-rename publish, with `yagura-steam` holding no entry on the content store), 0009, 0011 (passwords in LocalSystem's DPAPI scope), 0012 (install-time account/ACL statement replaced by ADR 0015's Context), 0014 and 0015, or between them and the change.
+
+Non-blocking implementation note for task 9.2: on a fresh install `%ProgramData%\Yagura` does not exist yet, so the root check has to create it (as SYSTEM, without following links) and then open it, not fail on "not found". The fresh-install scenario will expose this if it is missed.
+
+CHANGES_APPLIED is set to `yes`. The verdict is unchanged.
+
+- **Post-pass edits to ADR 0015 (from the change's design re-check and a user decision):**
+  - The root-check paragraph now creates the data directory if it is absent and opens it no-follow without `FILE_SHARE_DELETE`. It keeps that handle open until the owner and DACL are set through it, which closes the rename-and-replace race (change review R4).
+  - A new Consequences bullet records the user's choice (a): the first service start trusts an existing data directory's contents. Yagura targets a dedicated single-admin host.
+
+### Post-pass re-check (reviewer)
+
+Both post-pass edits to ADR 0015 are correct, and CHANGES_APPLIED stays `yes`:
+- **Root-handle wording (change review R4).** The paragraph now creates the data directory if absent, opens it with `FILE_OPEN_REPARSE_POINT` and without `FILE_SHARE_DELETE`, and keeps that handle open while it sets the owner and the protected DACL through it. The directory cannot be renamed while the handle is open, so the check-then-replace race is closed. The text matches design D6. D6 also says "then closes it", which the ADR need not repeat.
+- **Consequences bullet (single-admin host).** It matches D6 and the user's choice (a). It contradicts no other ADR:
+  - **ADR 0011.** Secret rows planted in a pre-created directory cannot be LocalSystem DPAPI blobs, so the scope rule deletes them.
+  - **ADR 0012.** "Before the first service install" fits the WinSW install flow. ADR 0015's Context already replaces ADR 0012's install-time account and ACL statement.
+  - **ADR 0005.** The bullet trusts existing content but does not change the staging-and-rename publish.
+  - **ADRs 0009 and 0014.** Process ownership and SteamCMD launch are not affected.

@@ -71,7 +71,7 @@ flowchart LR
 | Hook runner | Runs one hook in a fresh worker isolate with deadline and memory cap; returns file edits to the binder | none | Hook contract: JSON in/out, pure host API (ADR 0003) |
 | Config binder | Sole writer of bound files and hook-requested edits; detects external edits | last-applied hashes per file | Format parsers (ADR 0004) |
 | Mod pipeline | Resolve, acquire (single-flight), stage (junctions), keys, load order, update checks | instance-mod rows with pinned versions | Steam service, content store (ADR 0005) |
-| Steam service | SteamCMD installs per account (one run at a time each), app/workshop downloads, Guard relay | SteamCMD dirs, account rows | SteamCMD args and output patterns (ADR 0010) |
+| Steam service | SteamCMD installs per account (one run at a time each), app/workshop downloads, Guard relay | SteamCMD dirs, account rows | SteamCMD args and output patterns (ADR 0014) |
 | Process supervisor | Native spawn via launcher and relay, stop strategies, exit waiters, re-attach | run records (relay/server PID, exe, start time) | Relay files, Win32/POSIX process APIs (ADR 0009) |
 | Save snapshots | Copies of declared `data_paths` before update and before delete with files | snapshot rows, `snapshots/` | Filesystem |
 | Log hub | Tails declared sources, decodes, ring-buffers, fans out | ring buffers, file offsets | Log stream messages |
@@ -165,8 +165,8 @@ Start from `error: settings_invalid` or `plugin_missing` fails `invalid_state`. 
 - **Config formats** — `ini`, `ue-ini`, `json`, `xml`, `vdf`, `dayz-cfg`, `kv`, each with a byte-identical round-trip guarantee and a corpus of real files. (ADR 0004)
 - **`instance.json`** — `format_version: 1`, no secrets, read only by import. (ADR 0008)
 - **Relay files** — `relay.json` and `exit.json` in `<instance>/.yagura/run/`, `format_version: 1`, written by the relay, read by the supervisor. (ADR 0009)
-- **SteamCMD** — `+force_install_dir`, `+login`, `+app_update`/`+workshop_download_item`, `+quit` as arguments; output-pattern table in `steam/patterns.yaml`. (ADR 0010)
-- **OS** — CreateProcess/LogonUser, DPAPI, NetSecurity cmdlets, WinSW config, NTFS ACLs and junctions; Linux equivalents behind the same interfaces. (ADR 0009, 0011, 0012, 0013)
+- **SteamCMD** — `+force_install_dir`, `+login`, `+app_update`/`+workshop_download_item`, `+quit` as arguments; output-pattern table in `steam/patterns.yaml`. (ADR 0014)
+- **OS** — CreateProcess/LogonUser, DPAPI, NetSecurity cmdlets, WinSW config, NTFS ACLs and junctions; Linux equivalents behind the same interfaces. (ADR 0009, 0011, 0012, 0015)
 
 ## Failure and recovery
 
@@ -225,8 +225,8 @@ Startup separates fatal steps from degraded ones:
 | [0006](../docs/adr/0006-grpc-with-json-documents-for-plugin-structures.md) | gRPC over HTTP/2; plugin-declared structures travel as JSON documents | — |
 | [0007](../docs/adr/0007-mtls-with-daemon-ca-and-pairing.md) | mTLS with a daemon-local CA and one-time pairing codes | — |
 | [0008](../docs/adr/0008-sqlite-authoritative-instance-json-derived.md) | SQLite is authoritative; instance.json is a derived, portable copy | — |
-| [0009](../docs/adr/0009-game-processes-outlive-the-daemon.md) | Game servers run under a relay, spawned outside the daemon's process tree | — |
-| [0010](../docs/adr/0010-steamcmd-non-interactive.md) | SteamCMD runs non-interactively; Steam Guard is relayed to the client | — |
+| [0009](../docs/adr/0009-game-processes-outlive-the-daemon.md) | Game servers run under a relay, spawned outside the daemon's process tree (account: 0015; SteamCMD: 0014) | — |
 | [0011](../docs/adr/0011-secrets-are-dpapi-blobs.md) | Secrets are DPAPI-protected blobs in the daemon database | — |
-| [0012](../docs/adr/0012-windows-host-integration.md) | Windows host integration: WinSW service and group-owned firewall rules | — |
-| [0013](../docs/adr/0013-game-servers-run-as-a-low-privilege-account.md) | Game servers run under a dedicated low-privilege account | — |
+| [0012](../docs/adr/0012-windows-host-integration.md) | Windows host integration: WinSW service and group-owned firewall rules (account and ACL setup: see 0015) | — |
+| [0014](../docs/adr/0014-steamcmd-runs-as-a-low-privilege-account.md) | SteamCMD runs non-interactively as a low-privilege account; Steam Guard is relayed to the client | 0010 |
+| [0015](../docs/adr/0015-game-server-account-and-directory-acls.md) | Game servers run under a dedicated low-privilege account, with protected directory ACLs | 0013 |
