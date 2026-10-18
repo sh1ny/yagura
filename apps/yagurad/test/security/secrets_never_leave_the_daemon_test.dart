@@ -1,3 +1,4 @@
+import 'package:fixnum/fixnum.dart';
 import 'package:grpc/grpc.dart';
 import 'package:test/test.dart';
 import 'package:yagura_proto/yagura_proto.dart' as pb;
@@ -19,6 +20,7 @@ void main() {
     await api.instances.setSecret(
       pb.SetSecretRequest(
         instanceId: created.id,
+        expectedRevision: Int64(1),
         key: 'password',
         value: value,
       ),
@@ -51,6 +53,7 @@ void main() {
     await api.instances.setSecret(
       pb.SetSecretRequest(
         instanceId: created.id,
+        expectedRevision: Int64(1),
         key: 'password',
         value: 'old',
       ),
@@ -61,6 +64,7 @@ void main() {
       api.instances.setSecret(
         pb.SetSecretRequest(
           instanceId: created.id,
+          expectedRevision: Int64(2),
           key: 'password',
           value: 'new',
         ),

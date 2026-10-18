@@ -184,7 +184,7 @@ Covers: plugin-manifest → Secret settings are write-only, Required secrets are
 
 Covers: instance-lifecycle → Concurrent edits are detected by revision.
 
-- [ ] 4.1 Write the failing tests for this group's rows; verify each fails for the stated reason.
+- [x] 4.1 Write the failing tests for this group's rows; verify each fails for the stated reason.
 - [ ] 4.2 Implement D12: `expected_revision` checked and incremented in the write transaction for UpdateSettings, SetSecret, DeleteSecret, DeleteInstance and RestoreSnapshot (incremented when a restore is accepted), `revision_required` and `revision_conflict` with the current revision in the details, and `Instance.revision` read from the database instead of `0` (`instance.dart:124`). Verify: this group's rows pass; flip them.
 - [ ] 4.3 Update `docs/protocol.md` on revision semantics (which calls, when restore increments). Verify: the reason-code test passes.
 - [ ] 4.4 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.

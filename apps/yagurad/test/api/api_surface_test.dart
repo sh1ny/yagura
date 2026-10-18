@@ -80,6 +80,7 @@ void main() {
         api.instances.setSecret(
           pb.SetSecretRequest(
             instanceId: instance.id,
+            expectedRevision: Int64(1),
             key: 'password',
             value: 'hunter2',
           ),
@@ -91,21 +92,21 @@ void main() {
       );
     });
 
-    test('revision is always 0 and expected_revision is not checked', () async {
+    test('revision starts at 1 and an accepted save increments it', () async {
       final env = TestEnv()..installValheim();
       final api = await ApiHarness.start(env);
       final instance = await api.createValheim();
-      expect(instance.revision.toInt(), 0);
+      expect(instance.revision.toInt(), 1);
 
       final updated = await api.instances.updateSettings(
         pb.UpdateSettingsRequest(
           instanceId: instance.id,
-          expectedRevision: Int64(99),
+          expectedRevision: Int64(1),
           settings: pb.JsonDocument(json: '{"serverName":"Other"}'),
         ),
       );
 
-      expect(updated.revision.toInt(), 0);
+      expect(updated.revision.toInt(), 2);
       expect(updated.settings.json, contains('Other'));
     });
 

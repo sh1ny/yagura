@@ -4,6 +4,8 @@ import 'package:grpc/grpc.dart';
 import 'package:test/test.dart';
 import 'package:yagura_proto/yagura_proto.dart' as pb;
 import 'package:yagurad/src/api/instances_api.dart';
+import 'package:yagurad/src/host/daemon.dart';
+import 'package:yagurad/src/instances/instance.dart';
 
 import '../support/api_support.dart';
 import '../support/daemon_support.dart';
@@ -37,11 +39,18 @@ class Watcher {
 
 pb.WatchInstancesRequest watchRequest() => pb.WatchInstancesRequest();
 
-pb.UpdateSettingsRequest rename(String instanceId, String name) =>
-    pb.UpdateSettingsRequest(
+/// Renames the instance in the daemon. The stream tests generate many
+/// changes at once, so they skip the revision check that a client's
+/// concurrent saves would trip.
+Future<void> rename(Daemon daemon, String instanceId, String name) async {
+  final instance = daemon.instances.get(instanceId);
+  daemon.instances.updateSettings(
+    UpdateSettingsRequest(
       instanceId: instanceId,
-      settings: pb.JsonDocument(json: '{"serverName":"$name"}'),
-    );
+      settings: {...instance.settings, 'serverName': name},
+    ),
+  );
+}
 
 void main() {
   test('snapshot_then_deltas', () async {
@@ -115,7 +124,7 @@ void main() {
     }
 
     // A settings change carries the new document.
-    await api.instances.updateSettings(rename(a.id, 'Renamed'));
+    await rename(daemon, a.id, 'Renamed');
     await watcher.until(
       (e) => e.any((x) => x.hasChanged() && x.changed.hasSettings()),
       reason: 'a delta with settings',
@@ -144,11 +153,10 @@ void main() {
     slow.subscription.pause();
     for (var i = 0; i < 1800; i += 20) {
       await Future.wait([
-        for (var j = i; j < i + 20; j++)
-          api.instances.updateSettings(rename(a.id, 'Name$j')),
+        for (var j = i; j < i + 20; j++) rename(daemon, a.id, 'Name$j'),
       ]);
     }
-    await api.instances.updateSettings(rename(a.id, 'NameFinal'));
+    await rename(daemon, a.id, 'NameFinal');
     final beforeResume = slow.events.length;
     slow.subscription.resume();
     await slow.until(
@@ -179,7 +187,7 @@ void main() {
       reason: 'the backlog was dropped, not delivered',
     );
     // Live deltas continue after the snapshot.
-    await api.instances.updateSettings(rename(a.id, 'Last'));
+    await rename(daemon, a.id, 'Last');
     await slow.until(
       (e) =>
           e.last.hasChanged() && e.last.changed.settings.json.contains('Last'),
@@ -205,7 +213,7 @@ void main() {
 
     slow.subscription.pause();
     for (var i = 0; i < 600; i++) {
-      await api.instances.updateSettings(rename(a.id, 'Name$i'));
+      await rename(daemon, a.id, 'Name$i');
     }
     slow.subscription.resume();
 
