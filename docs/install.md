@@ -109,6 +109,8 @@ The two services share one install root unless `--install-dir` differs, and thei
 
 The admin channel, and so `yagurad pair`, `yagurad status` and the readiness wait, has a fixed name: two services running at the same time cannot both serve it.
 
+The service opens the API port in Windows Firewall at install and closes it at uninstall; a host without a running firewall gets a warning naming the rule (`firewall_unavailable`) and the install still succeeds. See [firewall.md](firewall.md).
+
 ## Reasons
 
 Failures print `yagurad: <reason>: <message>` and exit 1.

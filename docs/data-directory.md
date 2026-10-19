@@ -11,6 +11,7 @@ Operator notes for the directory `yagurad` keeps its state in (`--data-dir`; the
 | `snapshots/` | Snapshots taken before updates, restores and deletes |
 | `steamcmd/` | SteamCMD installations |
 | `logs/` | Daemon logs |
+| `tmp/` | Short-lived request files for PowerShell (see [firewall.md](firewall.md)); empty between runs |
 
 ## Secret store
 
