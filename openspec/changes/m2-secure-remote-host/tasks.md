@@ -45,15 +45,15 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | desktop-client → Multiple paired daemons | Daemon offline | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | daemon_offline | 11 | green |
 | desktop-client → Multiple paired daemons | Device revoked | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | device_revoked | 11 | green |
 | desktop-client → Multiple paired daemons | No shared API version | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | no_shared_api_version | 11 | green |
-| desktop-client → Pairing from the client | Pair a new daemon | apps/yagura_desktop/test/pairing_from_the_client_test.dart | pair_a_new_daemon | 11 | red |
-| desktop-client → Pairing from the client | Malformed pairing string | apps/yagura_desktop/test/pairing_from_the_client_test.dart | malformed_pairing_string | 11 | red |
-| desktop-client → Pairing from the client | Pairing code rejected | apps/yagura_desktop/test/pairing_from_the_client_test.dart | pairing_code_rejected | 11 | red |
-| desktop-client → Device certificate renewal by the client | Renewal on connect | apps/yagura_desktop/test/device_certificate_renewal_by_the_client_test.dart | renewal_on_connect | 11 | red |
-| desktop-client → Device certificate renewal by the client | Certificate already expired | apps/yagura_desktop/test/device_certificate_renewal_by_the_client_test.dart | certificate_already_expired | 11 | red |
+| desktop-client → Pairing from the client | Pair a new daemon | apps/yagura_desktop/test/pairing_from_the_client_test.dart | pair_a_new_daemon | 11 | green |
+| desktop-client → Pairing from the client | Malformed pairing string | apps/yagura_desktop/test/pairing_from_the_client_test.dart | malformed_pairing_string | 11 | green |
+| desktop-client → Pairing from the client | Pairing code rejected | apps/yagura_desktop/test/pairing_from_the_client_test.dart | pairing_code_rejected | 11 | green |
+| desktop-client → Device certificate renewal by the client | Renewal on connect | apps/yagura_desktop/test/device_certificate_renewal_by_the_client_test.dart | renewal_on_connect | 11 | green |
+| desktop-client → Device certificate renewal by the client | Certificate already expired | apps/yagura_desktop/test/device_certificate_renewal_by_the_client_test.dart | certificate_already_expired | 11 | green |
 | desktop-client → Forms rendered from plugin schemas | Daemon rejects a value | apps/yagura_desktop/test/forms_rendered_from_plugin_schemas_test.dart | daemon_rejects_a_value | 11 (M1) | green |
 | desktop-client → Forms rendered from plugin schemas | Unknown field type | apps/yagura_desktop/test/forms_rendered_from_plugin_schemas_test.dart | unknown_field_type | 11 (M1) | green |
-| desktop-client → Forms rendered from plugin schemas | Create an instance with a secret | apps/yagura_desktop/test/forms_rendered_from_plugin_schemas_test.dart | create_an_instance_with_a_secret | 11 | red |
-| desktop-client → Forms rendered from plugin schemas | Someone else saved first | apps/yagura_desktop/test/forms_rendered_from_plugin_schemas_test.dart | someone_else_saved_first | 11 | red |
+| desktop-client → Forms rendered from plugin schemas | Create an instance with a secret | apps/yagura_desktop/test/forms_rendered_from_plugin_schemas_test.dart | create_an_instance_with_a_secret | 11 | green |
+| desktop-client → Forms rendered from plugin schemas | Someone else saved first | apps/yagura_desktop/test/forms_rendered_from_plugin_schemas_test.dart | someone_else_saved_first | 11 | green |
 | firewall-rules → Owned rules derived from instance ports | Rules created after install | apps/yagurad/test/firewall/owned_rules_derived_from_instance_ports_test.dart | rules_created_after_install | 10 | green |
 | firewall-rules → Owned rules derived from instance ports | Not installed has no rules | apps/yagurad/test/firewall/owned_rules_derived_from_instance_ports_test.dart | not_installed_has_no_rules | 10 | green |
 | firewall-rules → Owned rules derived from instance ports | Firewall service unavailable | apps/yagurad/test/firewall/owned_rules_derived_from_instance_ports_test.dart | firewall_service_unavailable | 10 | green |
@@ -254,7 +254,7 @@ Covers: desktop-client (all requirements); daemon-security → Client pins the d
 
 - [x] 11.1 Write the failing widget tests for this group's rows against fake daemon connections and a fake keychain; verify each fails for the stated reason.
 - [x] 11.2 Implement the daemon registry and per-daemon secure connections (D13): keychain storage, pinned CA with authority `yagurad-<daemon-id>`, connection states with backoff 1 s to 30 s, `revoked` and `expired`, and the loopback dev daemon entry. Verify: the multiple-daemons and CA-pinning rows pass; flip them.
-- [ ] 11.3 Implement pairing from a pairing string (in-process key and CSR, `Pairing.Info`, fingerprint check, `Enroll`, key deleted on failure), renewal on connect and every 24 h, the create flow calling `SetSecret` after `CreateInstance`, and the revision-conflict reload that keeps edits. Verify: the remaining group rows pass; flip them; the M1 forms rows still pass.
+- [x] 11.3 Implement pairing from a pairing string (in-process key and CSR, `Pairing.Info`, fingerprint check, `Enroll`, key deleted on failure), renewal on connect and every 24 h, the create flow calling `SetSecret` after `CreateInstance`, and the revision-conflict reload that keeps edits. Verify: the remaining group rows pass; flip them; the M1 forms rows still pass.
 - [ ] 11.4 Update the desktop user docs (pairing, daemon list states, conflicts). Verify: each state shown in the UI is described.
 - [ ] 11.5 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
 
