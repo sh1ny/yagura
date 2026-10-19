@@ -236,7 +236,7 @@ Covers: host-service → Game servers run under a low-privilege account, Startup
 - [x] 9.3 Implement the shared logon module (`LogonUserW`, profile load balanced by `UnloadUserProfile`, environment, `CreateProcessAsUserW`) on `YaguraSrv\Default` and `YaguraSteam\Default` with account-SID ACLs, game servers as `yagura-srv` through the launcher, SteamCMD (and the bootstrap `tar` extraction) as `yagura-steam` started by the daemon itself (`CREATE_SUSPENDED`, the operation's kill-on-close job, stdout/stderr pipes, handle inheritance limited to those pipe ends; D10), and the signal path from spike 1.3. Verify: the server-identity, logon, SteamCMD and service graceful-stop rows pass in the `elevated` workflow; flip them; the M1 steam and graceful-stop rows still pass.
 - [x] 9.4 Implement process verification (D9): token user and parentage checks before any signal, kill or re-attach, the forged-`relay.json` fallback, and `error: run_record_rejected` with its exits. Verify: the verification and error-reason rows pass; flip them; the M1 error-reason rows still pass.
 - [x] 9.5 Update `docs/protocol.md` (`launch_logon_failed`, `run_record_rejected`, `acl_migration_failed`, `data_dir_not_protected`) and the operator docs (accounts, what they can access, and the shared-host note that the first service start trusts an existing data directory, D6). Verify: the reason-code test passes.
-- [ ] 9.6 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
+- [x] 9.6 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
 
 ## 10. [M2] Firewall reconciler
 
