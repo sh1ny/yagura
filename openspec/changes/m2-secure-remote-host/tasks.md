@@ -29,7 +29,7 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | daemon-security → Audit log | Scanner flood | apps/yagurad/test/security/audit_log_test.dart | scanner_flood | 6 | green |
 | daemon-security → Audit log | Secret set without value in audit | apps/yagurad/test/security/audit_log_test.dart | secret_set_without_value_in_audit | 6 | green |
 | daemon-security → Secrets never leave the daemon | No read path for secrets | apps/yagurad/test/security/secrets_never_leave_the_daemon_test.dart | no_read_path_for_secrets | 3 | green |
-| daemon-security → Secrets never leave the daemon | Data directory scan | apps/yagurad/integration_test/secrets_data_directory_scan_test.dart (`windows`) | data_directory_scan | 12 | red |
+| daemon-security → Secrets never leave the daemon | Data directory scan | apps/yagurad/integration_test/secrets_data_directory_scan_test.dart (`windows`) | data_directory_scan | 12 | green |
 | daemon-security → Secrets never leave the daemon | Secret store fails on write | apps/yagurad/test/security/secrets_never_leave_the_daemon_test.dart | secret_store_fails_on_write | 3 | green |
 | daemon-security → Local admin channel is restricted to administrators | Administrator requests a pairing code | apps/yagurad/integration_test/admin/local_admin_channel_test.dart (`elevated`) | administrator_requests_a_pairing_code | 7 | green |
 | daemon-security → Local admin channel is restricted to administrators | Non-administrator | apps/yagurad/integration_test/admin/local_admin_channel_test.dart (`elevated`) | non_administrator | 7 | green |
@@ -260,7 +260,7 @@ Covers: desktop-client (all requirements); daemon-security → Client pins the d
 
 ## 12. [M2] Integration, write-back and M2 exit
 
-- [ ] 12.1 Write and pass `data_directory_scan`: set known secret values, run an install-start-stop workflow with the fake SteamCMD, and scan every file under the data and instance directories. Flip the row. Verify: the test passes on Windows CI.
+- [x] 12.1 Write and pass `data_directory_scan`: set known secret values, run an install-start-stop workflow with the fake SteamCMD, and scan every file under the data and instance directories. Flip the row. Verify: the test passes on Windows CI.
 - [ ] 12.2 Run the tests on CI: Windows runs every test not tagged `elevated` or `valheim`; Linux runs every test not tagged `windows`, `elevated` or `valheim`; plus `openspec validate --all --strict`. Verify: all pass, and every test-map row not tagged `elevated` or `valheim` is green.
 - [ ] 12.3 Run the `elevated` rows in the `elevated` workflow, and have the user run the `valheim` rows on their machine; record both in `docs/milestones/m2.md`. Verify: every row in the test map is green.
 - [x] 12.4 Write back into `openspec/architecture.md` what this design owns: the component diagram (service mode, admin channel, SteamCMD as `yagura-steam`, ConfinedFs), the secrets row (account passwords, `scope_sid`), the `run_record_rejected` row of the error-reason table, and the resource-bound rows for pairing throttles, the auth-failure aggregation and the firewall reconcile. Verify: each item is present and the ADR index matches task 1.1.
