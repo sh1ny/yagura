@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -8,6 +7,7 @@ import 'package:yagurad/src/steam/steam.dart';
 
 import '../support/daemon_support.dart';
 import '../support/steam_support.dart';
+import '../support/temp_support.dart';
 
 /// A launcher whose process ends at once with [code] and no output.
 class _FailingLauncher implements SteamProcessLauncher {
@@ -47,7 +47,7 @@ class _Process implements SteamProcess {
 
 void main() {
   test('an_unpack_failure_names_the_exit_code_and_the_output', () async {
-    final root = Directory.systemTemp.createTempSync('yagurad_unpack_');
+    final root = createCanonicalTempSync('yagurad_unpack_');
     addTearDown(() => root.deleteSync(recursive: true));
     final server = await serveArchive(body: const [1, 2, 3]);
     final bootstrap = SteamCmdBootstrap(

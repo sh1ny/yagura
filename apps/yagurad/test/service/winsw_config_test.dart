@@ -23,7 +23,7 @@ ServiceConfig _config({String? data, String bind = '0.0.0.0:7443'}) =>
 
 void main() {
   group('the WinSW configuration', () {
-    test('points_at_the_version_directory_and_runs_in_service_mode', () {
+    windowsTest('points_at_the_version_directory_and_runs_in_service_mode', () {
       final xml = _config().render(_template);
 
       expect(xml, contains('<id>yagurad</id>'));
@@ -157,7 +157,7 @@ void main() {
   });
 
   group('the install layout', () {
-    test('is_under_program_files', () {
+    windowsTest('is_under_program_files', () {
       final layout = InstallLayout.standard(
         environment: {'ProgramFiles': r'C:\Program Files'},
       );
@@ -171,7 +171,7 @@ void main() {
       );
     });
 
-    test('finds_its_root_from_a_versioned_executable', () {
+    windowsTest('finds_its_root_from_a_versioned_executable', () {
       final found = InstallLayout.containing(
         r'C:\Program Files\Yagura\0.2.0\bin\yagurad.exe',
       )!;

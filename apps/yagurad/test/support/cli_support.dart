@@ -6,6 +6,8 @@ import 'package:test/test.dart';
 import 'package:yagurad/src/cli/run_command.dart';
 import 'package:yagurad/src/host/secret_store.dart';
 
+import 'temp_support.dart';
+
 /// A `yagurad run` in this process: collects its output, reports where it
 /// listens and stops when [stop] is called.
 class RunningCli {
@@ -14,7 +16,7 @@ class RunningCli {
     Directory? data,
     bool Function()? isLocalSystem,
     SecretProtector? secretProtector,
-  }) : data = data ?? Directory.systemTemp.createTempSync('yagurad_cli_') {
+  }) : data = data ?? createCanonicalTempSync('yagurad_cli_') {
     addTearDown(() async {
       stop();
       await exit;

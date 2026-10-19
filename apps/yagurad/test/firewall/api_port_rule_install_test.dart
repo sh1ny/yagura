@@ -1,3 +1,6 @@
+@Tags(['windows'])
+library;
+
 import 'dart:async';
 
 import 'package:test/test.dart';

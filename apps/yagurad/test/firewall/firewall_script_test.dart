@@ -11,6 +11,8 @@ import 'package:yagurad/src/firewall/firewall_script.dart';
 import 'package:yagurad/src/firewall/rule_names.dart';
 import 'package:yagurad/src/firewall/powershell_firewall.dart';
 
+import '../support/temp_support.dart';
+
 // The reconcile script of design D11 against stand-ins for the firewall
 // cmdlets, in Windows PowerShell. Nothing here reads or writes the firewall of
 // the machine: the stand-ins are functions, which PowerShell prefers to the
@@ -28,7 +30,13 @@ function Get-Service {
   [pscustomobject]@{ Status = $env:YAGURA_FAKE_SERVICE }
 }
 function Get-NetFirewallRule {
-  [CmdletBinding()] param($Group)
+  [CmdletBinding()] param($Group, $Name)
+  if ($null -ne $Name) {
+    $removed = @(Get-Content -Path $log | Where-Object { $_ -like 'remove *' } | ForEach-Object { $_.Substring(7) -split ' ' })
+    if ($removed -contains $Name) { return }
+    foreach ($rule in $state) { if ($rule.name -eq $Name) { [pscustomobject]@{ Name = $rule.name; InstanceID = $rule.name } } }
+    return
+  }
   Add-Content -Path "$log.groups" -Value "group $Group"
   if ($state.Count -eq 0) {
     $record = New-Object System.Management.Automation.ErrorRecord (New-Object System.Exception 'No MSFT_NetFirewallRule objects found'), 'CmdletizationQuery_NotFound_Group', 'ObjectNotFound', $Group
@@ -75,6 +83,14 @@ function Set-NetFirewallRule {
 }
 function Remove-NetFirewallRule {
   [CmdletBinding()] param($Name)
+  # A batch with the failing rule in it removes the ones before it, then fails.
+  if ($env:YAGURA_FAKE_FAIL_REMOVE) {
+    foreach ($one in @($Name)) {
+      if ($one -eq $env:YAGURA_FAKE_FAIL_REMOVE) { throw "Access is denied for $one" }
+      Add-Content -Path $log -Value "remove $one"
+    }
+    return
+  }
   Add-Content -Path $log -Value "remove $Name"
 }
 
@@ -139,6 +155,7 @@ Future<ScriptRun> runScript(
   List<Map<String, String>> rules = const [],
   String service = 'Running',
   String? failName,
+  String? failRemove,
   bool otherFilterIds = false,
 }) async {
   final script = File(p.join(dir.path, 'firewall.ps1'))
@@ -171,6 +188,7 @@ Future<ScriptRun> runScript(
       'YAGURA_SCRIPT': script.path,
       requestPathVariable: requestFile.path,
       'YAGURA_FAKE_FAIL': ?failName,
+      'YAGURA_FAKE_FAIL_REMOVE': ?failRemove,
       if (otherFilterIds) 'YAGURA_FAKE_FILTER_IDS': 'other',
     },
   );
@@ -203,7 +221,7 @@ void main() {
   late Directory dir;
 
   setUp(() {
-    dir = Directory.systemTemp.createTempSync('yagurad_firewall_script_');
+    dir = createCanonicalTempSync('yagurad_firewall_script_');
     addTearDown(() => dir.deleteSync(recursive: true));
   });
 
@@ -511,6 +529,39 @@ void main() {
 
     expect(run.actions, {_a: 'failed', _b: 'created'});
     final failed = run.changes.firstWhere((c) => c['action'] == 'failed');
+    expect(failed['error'], contains('Access is denied'));
+  });
+
+  test('a_reconcile_deletes_in_one_call', () async {
+    final run = await runScript(
+      dir,
+      {'mode': 'reconcile', 'desired': <Object?>[]},
+      rules: [rule(_a, 'UDP', '2456'), rule(_b, 'UDP', '2457')],
+    );
+
+    expect(run.exitCode, 0, reason: run.stderr);
+    expect(run.actions, {_a: 'deleted', _b: 'deleted'});
+    expect(run.log, ['remove $_a $_b']);
+  });
+
+  test('a_failed_batch_delete_is_tried_rule_by_rule', () async {
+    const c = 'Yagura/inst-0123456789ab/rcon/tcp';
+    final run = await runScript(
+      dir,
+      {'mode': 'reconcile', 'desired': <Object?>[]},
+      rules: [
+        rule(_a, 'UDP', '2456'),
+        rule(_b, 'UDP', '2457'),
+        rule(c, 'TCP', '2458'),
+      ],
+      failRemove: _b,
+    );
+
+    // The batch removed $_a before it failed on $_b; the retry of $_a finds
+    // nothing, which is still a deletion.
+    expect(run.exitCode, 0, reason: run.stderr);
+    expect(run.actions, {_a: 'deleted', _b: 'failed', c: 'deleted'});
+    final failed = run.changes.firstWhere((x) => x['action'] == 'failed');
     expect(failed['error'], contains('Access is denied'));
   });
 

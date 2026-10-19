@@ -39,7 +39,13 @@ import 'rule_names.dart';
 /// name prefix under `Yagura/` (the daemon uses `Yagura/`; the elevated tests
 /// use the prefix of their own instance). The script never exits: it ends by
 /// writing the answer, and tests run it against stand-ins for the cmdlets.
+///
+/// Lines that are only a comment are left out of the script that runs: it goes
+/// on the command line, which has room for about 9,000 characters of it.
 final firewallScript = _template
+    .split('\n')
+    .where((line) => !line.trimLeft().startsWith('#'))
+    .join('\n')
     .replaceAll('__GROUP__', firewallGroup)
     .replaceAll('__OWNED__', ownedRuleNamePattern);
 
@@ -274,14 +280,21 @@ try {
     # Owned rules that nothing wants any more (the install of the service adds
     # its one rule without judging the rest).
     $prune = $request.prune -ne $false
-    foreach ($name in @($actual.Keys | Sort-Object)) {
-      if ($prune -and ($name -cmatch $owned) -and $name.StartsWith($scope, [System.StringComparison]::Ordinal) -and -not $wanted.ContainsKey($name)) {
-        try {
-          Remove-NetFirewallRule -Name $name
-          Record $name 'deleted' ''
-        }
-        catch {
-          Record $name 'failed' (Plain $_.Exception.Message)
+    $gone = @(foreach ($name in @($actual.Keys | Sort-Object)) {
+      if ($prune -and ($name -cmatch $owned) -and $name.StartsWith($scope, [System.StringComparison]::Ordinal) -and -not $wanted.ContainsKey($name)) { $name }
+    })
+    # One call for all of them: each call costs about 400 ms, whatever it
+    # removes. When it fails, each rule is tried alone, and a rule the batch
+    # already removed counts as deleted.
+    if ($gone) {
+      try { Remove-NetFirewallRule -Name $gone; foreach ($n in $gone) { Record $n 'deleted' '' } }
+      catch {
+        foreach ($n in $gone) {
+          try { Remove-NetFirewallRule -Name $n; Record $n 'deleted' '' }
+          catch {
+            $m = Plain $_.Exception.Message
+            if (Get-NetFirewallRule -Name $n -ErrorAction SilentlyContinue) { Record $n 'failed' $m } else { Record $n 'deleted' '' }
+          }
         }
       }
     }

@@ -5,12 +5,14 @@ import 'package:test/test.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/steam/steam.dart';
 
+import '../support/temp_support.dart';
+
 void main() {
   late Directory temp;
   late YaguraDatabase database;
 
   setUp(() {
-    temp = Directory.systemTemp.createTempSync('yagura_steam_state_');
+    temp = createCanonicalTempSync('yagura_steam_state_');
     database = YaguraDatabase.open(p.join(temp.path, 'yagura.db'));
     addTearDown(() {
       database.close();

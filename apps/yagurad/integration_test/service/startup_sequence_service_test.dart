@@ -9,6 +9,7 @@ import 'package:test/test.dart';
 import '../../test/support/account_support.dart';
 import '../../test/support/elevated_support.dart';
 import '../../test/support/process_support.dart';
+import '../../test/support/temp_support.dart';
 
 // host-service, "Startup sequence" in service mode (design D6): the data
 // directory is opened without following links, owned by Administrators and
@@ -72,7 +73,7 @@ void main() {
 
   test('data_directory_is_a_link', tags: ['elevated'], () async {
     final tools = await processTools();
-    final target = Directory.systemTemp.createTempSync('yagurad_target_');
+    final target = createCanonicalTempSync('yagurad_target_');
     addTearDown(() {
       try {
         target.deleteSync(recursive: true);
@@ -134,7 +135,7 @@ void main() {
     tags: ['elevated'],
     () async {
       final tools = await processTools();
-      final target = Directory.systemTemp.createTempSync('yagurad_target_');
+      final target = createCanonicalTempSync('yagurad_target_');
       addTearDown(() {
         try {
           target.deleteSync(recursive: true);

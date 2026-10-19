@@ -221,7 +221,7 @@ String? _unsafeAncestor(EntrySecurity found, {required bool volumeRoot}) {
 /// whatever its parent grants.
 List<String> ancestorProblems(String root, AclInspector inspector) {
   final problems = <String>[];
-  final parts = p.split(p.normalize(p.absolute(root)));
+  final parts = p.windows.split(p.windows.normalize(p.windows.absolute(root)));
   // Only a local drive letter: over a network path the owner and the entries
   // are the server's, and the share root is any folder on it.
   if (!RegExp(r'^[A-Za-z]:\\$').hasMatch(parts.first)) {
@@ -232,7 +232,7 @@ List<String> ancestorProblems(String root, AclInspector inspector) {
   // parts[0] is the drive (`C:\`) or the share of a UNC path.
   var current = parts.first;
   for (var i = 0; i < parts.length - 1; i++) {
-    if (i > 0) current = p.join(current, parts[i]);
+    if (i > 0) current = p.windows.join(current, parts[i]);
     try {
       final why = _unsafeAncestor(
         inspector.inspect(current),

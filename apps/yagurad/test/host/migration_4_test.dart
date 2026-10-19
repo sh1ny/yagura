@@ -5,6 +5,8 @@ import 'package:test/test.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/host/migrations.dart';
 
+import '../support/temp_support.dart';
+
 Set<String> columnsOf(YaguraDatabase db, String table) => {
   for (final row in db.sqlite.select('PRAGMA table_info($table)'))
     row['name']! as String,
@@ -15,7 +17,7 @@ void main() {
   late YaguraDatabase db;
 
   setUp(() {
-    dir = Directory.systemTemp.createTempSync('yagurad_migration4_');
+    dir = createCanonicalTempSync('yagurad_migration4_');
     db = YaguraDatabase.open(p.join(dir.path, 'yagura.db'));
     addTearDown(() {
       db.close();

@@ -14,6 +14,7 @@ import 'package:yagurad/src/process/process.dart';
 import '../support/daemon_support.dart';
 import '../support/process_support.dart';
 import '../support/valheim_support.dart';
+import '../support/temp_support.dart';
 
 /// The `stop_requested_at` of the instance's newest run, read from SQLite.
 int? stopRequestedAt(TestEnv env, String instanceId) {
@@ -240,7 +241,7 @@ void main() {
     () async {
       requireBreakaway();
       final tools = await processTools();
-      final work = Directory.systemTemp.createTempSync('yagura_valheim_');
+      final work = createCanonicalTempSync('yagura_valheim_');
       addTearDown(() => deleteDirectory(work));
       final data = p.join(work.path, 'data');
       final existing = Platform.environment[valheimServerEnvironment];

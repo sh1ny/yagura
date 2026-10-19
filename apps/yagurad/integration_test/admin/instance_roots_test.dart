@@ -15,6 +15,7 @@ import 'package:yagurad/src/platform/win32_security.dart';
 import '../../test/support/admin_support.dart';
 import '../../test/support/daemon_support.dart';
 import '../../test/support/elevated_support.dart';
+import '../../test/support/temp_support.dart';
 
 const srvSid = 'S-1-5-21-111-222-333-1001';
 const steamSid = 'S-1-5-21-111-222-333-1002';
@@ -81,7 +82,7 @@ void main() {
     // the data directory's parent at all.
     final env = TestEnv();
     final h = await start(env);
-    final otherDrive = Directory.systemTemp.createTempSync('yagurad_drive_');
+    final otherDrive = createCanonicalTempSync('yagurad_drive_');
     addTearDown(() => otherDrive.deleteSync(recursive: true));
     await h.run(['roots', 'add', otherDrive.path]);
 
@@ -464,7 +465,7 @@ void main() {
     'roots_add_writes_the_real_protected_descriptor',
     tags: ['elevated'],
     () async {
-      final root = Directory.systemTemp.createTempSync('yagurad_root_');
+      final root = createCanonicalTempSync('yagurad_root_');
       addTearDown(() => root.deleteSync(recursive: true));
 
       final directory = const WindowsAclWriter().open(root.path);

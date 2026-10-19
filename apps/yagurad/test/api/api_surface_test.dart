@@ -10,6 +10,7 @@ import 'package:yagurad/src/host/secret_store.dart';
 
 import '../support/api_support.dart';
 import '../support/daemon_support.dart';
+import '../support/secret_support.dart';
 
 /// Asks the reflection service on [path] (the v1 or v1alpha name) for
 /// [requests].
@@ -47,7 +48,12 @@ void main() {
     });
 
     test('GetHealth reports what this version does not build', () async {
-      final api = await ApiHarness.start(TestEnv());
+      // The protector is a fake: the real one is DPAPI, which only Windows has.
+      final env = TestEnv();
+      final api = await ApiHarness.start(
+        env,
+        daemon: await env.start(secretProtector: FakeSecretProtector(devSid)),
+      );
 
       final health = await api.system.getHealth(pb.GetHealthRequest());
 

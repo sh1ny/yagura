@@ -12,6 +12,7 @@ import 'package:yagurad/src/platform/disk_space.dart';
 import 'package:yagurad/src/snapshots/snapshots.dart';
 
 import '../../test/hooks/hook_test_support.dart';
+import '../../test/support/temp_support.dart';
 
 // Real NTFS junctions and symbolic links, planted the way a game server
 // would plant them, against the daemon's file operations (design D8).
@@ -91,7 +92,7 @@ DirectorySnapshotter snapshotterIn(String root) => DirectorySnapshotter(
 
 void main() {
   setUp(() {
-    temp = Directory.systemTemp.createTempSync('yagura_links_');
+    temp = createCanonicalTempSync('yagura_links_');
     addTearDown(() {
       // Links first: deleting the temporary tree must never reach a target.
       for (final link in _planted.toList()) {

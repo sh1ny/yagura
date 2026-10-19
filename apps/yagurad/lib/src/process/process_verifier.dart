@@ -211,7 +211,7 @@ class ProcessVerifier {
       if (identity == null || identity.created <= relay.created) continue;
       // The console host of the relay's console is its child too.
       if (_consoleHosts.contains(
-        p.basename(identity.executable).toLowerCase(),
+        p.windows.basename(identity.executable).toLowerCase(),
       )) {
         continue;
       }

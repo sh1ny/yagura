@@ -7,6 +7,7 @@ import 'package:yagurad/src/logs/logs.dart';
 
 import '../support/daemon_support.dart';
 import 'log_test_support.dart';
+import '../support/temp_support.dart';
 
 /// Valheim with its log source on the server's standard output.
 String stdoutValheim(TestEnv env) => env.installValheim(
@@ -102,7 +103,7 @@ void main() {
   });
 
   test('the_capture_writer_rotates_at_10_mib_by_default', () {
-    final dir = Directory.systemTemp.createTempSync('yagurad_capture_');
+    final dir = createCanonicalTempSync('yagurad_capture_');
     addTearDown(() => dir.deleteSync(recursive: true));
     final writer = CaptureWriter.open(dir.path);
     addTearDown(writer.close);
@@ -121,7 +122,7 @@ void main() {
   });
 
   test('a_new_writer_continues_in_the_instance_capture_directory', () {
-    final dir = Directory.systemTemp.createTempSync('yagurad_capture_');
+    final dir = createCanonicalTempSync('yagurad_capture_');
     addTearDown(() => dir.deleteSync(recursive: true));
     final directory = CaptureWriter.directoryFor(dir.path);
     expect(p.isWithin(dir.path, directory), isTrue);

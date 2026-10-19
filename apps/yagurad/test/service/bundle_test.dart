@@ -8,6 +8,7 @@ import 'package:yagurad/src/service/winsw_config.dart';
 import 'package:yagurad/src/version.dart';
 
 import '../support/service_support.dart';
+import '../support/temp_support.dart';
 
 void main() {
   group('the running bundle', () {
@@ -93,7 +94,7 @@ void main() {
 
   test('copy_takes_bin_and_lib_and_not_winsw', () {
     final bundle = makeBundle('0.1.0');
-    final target = Directory.systemTemp.createTempSync('yagurad_copy_');
+    final target = createCanonicalTempSync('yagurad_copy_');
     addTearDown(() => target.deleteSync(recursive: true));
     final destination = p.join(target.path, '0.1.0');
 

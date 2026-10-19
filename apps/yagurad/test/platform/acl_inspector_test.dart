@@ -10,6 +10,22 @@ import 'package:yagurad/src/platform/win32_paths.dart';
 import 'package:yagurad/src/platform/win32_security.dart';
 import 'package:yagurad/src/service/install_root_security.dart';
 
+import '../support/temp_support.dart';
+
+/// [sddl] with the owner and the trustee of every entry written as a full SID,
+/// whichever form (alias or SID) the text used.
+String _normalized(String sddl) {
+  String sid(String text) => sidToString(stringToSid(text));
+  final owner = RegExp(r'^O:(.+?)(?=D:|G:|S:|$)').firstMatch(sddl)![1]!;
+  final rest = sddl.substring('O:$owner'.length);
+  final entries = rest.replaceAllMapped(RegExp(r'\(([^)]*)\)'), (m) {
+    final parts = m[1]!.split(';');
+    parts[5] = sid(parts[5]);
+    return '(${parts.join(';')})';
+  });
+  return 'O:${sid(owner)}$entries';
+}
+
 // Read only: the real inspector over folders every Windows machine has. It
 // creates nothing and changes no permissions.
 void main() {
@@ -27,7 +43,7 @@ void main() {
   });
 
   test('a_folder_in_the_users_profile_does_not', () {
-    final temp = Directory.systemTemp.path;
+    final temp = canonicalSystemTemp().path;
 
     expect(
       ancestorProblems(p.join(temp, 'Yagura'), inspector),
@@ -57,7 +73,7 @@ void main() {
     // Not elevated: the owner is the current user and the DACL gives it
     // full control as well. Only the form of the read-back matters here.
     final me = lookupAccountSid(Platform.environment['USERNAME']!)!;
-    final temp = Directory.systemTemp.createTempSync('yagurad_create_');
+    final temp = createCanonicalTempSync('yagurad_create_');
     addTearDown(() => temp.deleteSync(recursive: true));
     final path = p.join(temp.path, 'root');
     final dacl =
@@ -67,7 +83,9 @@ void main() {
     final created = createProtectedDirectory(path, 'O:$me$dacl');
     addTearDown(created.close);
 
-    expect(created.security().sddl, 'O:$me$dacl');
+    // Windows prints some SIDs as aliases (the built-in Administrator is
+    // `LA`), so the two are compared by the SIDs they name.
+    expect(_normalized(created.security().sddl), _normalized('O:$me$dacl'));
     expect(Directory(path).existsSync(), isTrue);
     expect(
       () => createProtectedDirectory(path, 'O:$me$dacl'),

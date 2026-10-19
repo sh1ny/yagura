@@ -11,6 +11,7 @@ import 'package:yagurad/src/logs/log_offset_store.dart';
 import 'package:yagurad/src/logs/logs.dart';
 
 import 'log_test_support.dart';
+import '../support/temp_support.dart';
 
 /// Extra coverage for the log hub beyond the spec rows: truncation, saved
 /// offsets and the current-run mark the `log_match` health check (task 7.3)
@@ -170,7 +171,7 @@ void main() {
     late YaguraDatabase database;
 
     setUp(() {
-      dir = Directory.systemTemp.createTempSync('yagurad_offsets_');
+      dir = createCanonicalTempSync('yagurad_offsets_');
       database = YaguraDatabase.open(
         p.join(dir.path, 'yagura.db'),
         migrations: allMigrations,

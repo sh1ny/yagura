@@ -8,6 +8,7 @@ import 'package:yagurad/src/admin/admin_wire.dart';
 
 import 'logon_support.dart';
 import 'process_support.dart';
+import 'temp_support.dart';
 
 // Helpers of the `elevated` rows. They need an elevated Windows session and
 // change the machine (a scheduled task running as LocalSystem, a local
@@ -404,7 +405,7 @@ class StandardUser {
     List<String> arguments, {
     Duration timeout = const Duration(seconds: 60),
   }) async {
-    final folder = Directory.systemTemp.createTempSync('yagurad_user_');
+    final folder = createCanonicalTempSync('yagurad_user_');
     addTearDown(() async {
       try {
         folder.deleteSync(recursive: true);

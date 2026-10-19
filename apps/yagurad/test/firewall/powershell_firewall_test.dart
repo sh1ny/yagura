@@ -9,6 +9,8 @@ import 'package:yagurad/src/firewall/firewall_backend.dart';
 import 'package:yagurad/src/firewall/firewall_script.dart';
 import 'package:yagurad/src/firewall/powershell_firewall.dart';
 
+import '../support/temp_support.dart';
+
 // How the backend runs PowerShell and reads its answer, with a harmless
 // command in place of the script. The script itself is in
 // firewall_script_test.dart; the real firewall is the `elevated` rows.
@@ -17,7 +19,7 @@ const _timeout = Duration(seconds: 20);
 
 /// Where the stubs' request files go; every test ends with it empty.
 final requests = Directory(
-  p.join(Directory.systemTemp.path, 'yagurad_ps_test_$pid'),
+  p.join(canonicalSystemTemp().path, 'yagurad_ps_test_$pid'),
 );
 
 /// A backend whose PowerShell runs [command] instead of the script.
@@ -52,7 +54,7 @@ void main() {
 
   test('a_request_directory_that_cannot_be_made_is_unavailable', () async {
     final blocker = File(
-      p.join(Directory.systemTemp.path, 'yagurad_ps_file_$pid'),
+      p.join(canonicalSystemTemp().path, 'yagurad_ps_file_$pid'),
     )..writeAsStringSync('');
     addTearDown(blocker.deleteSync);
     final backend = PowerShellFirewall(
@@ -90,7 +92,7 @@ void main() {
     other.deleteSync();
 
     final own = Directory(
-      p.join(Directory.systemTemp.path, 'yagurad_ps_own_$pid'),
+      p.join(canonicalSystemTemp().path, 'yagurad_ps_own_$pid'),
     );
     addTearDown(() {
       if (own.existsSync()) own.deleteSync(recursive: true);
@@ -254,7 +256,7 @@ void main() {
   test('a_missing_powershell_is_unavailable', () async {
     final backend = PowerShellFirewall(
       directory: requests.path,
-      executable: p.join(Directory.systemTemp.path, 'no', 'powershell.exe'),
+      executable: p.join(canonicalSystemTemp().path, 'no', 'powershell.exe'),
     );
 
     await expectLater(

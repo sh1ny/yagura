@@ -22,6 +22,7 @@ import 'dart:io';
 import 'package:args/args.dart';
 import 'package:grpc/grpc.dart';
 import 'package:path/path.dart' as p;
+import 'package:sqlite3/sqlite3.dart';
 import 'package:yagura_proto/yagura_proto.dart' as pb;
 
 const _hookArgument = '--bundle-smoke-hook-ran';
@@ -161,6 +162,7 @@ class _Smoke {
       fakeServer,
     );
     _prepareData();
+    await _seedSteamCmdReady();
     await _compile(
       p.join(
         'apps',
@@ -428,10 +430,27 @@ data_paths:
     File(p.join(plugin.path, 'hooks.js')).writeAsStringSync(
       'exports.onPreStart = () => ({args: ["$_hookArgument"]});\n',
     );
-    // SteamCMD is pre-seeded (a fake) so Install makes no network call.
-    final steam = Directory(p.join(data, 'steamcmd', 'anonymous'))
-      ..createSync(recursive: true);
-    File(p.join(steam.path, '.yagura-ready')).writeAsStringSync('');
+  }
+
+  /// SteamCMD is pre-seeded (a fake) so Install makes no network call. The
+  /// daemon remembers a ready installation in its database, not in a file the
+  /// game servers' account could write, so a first daemon creates the
+  /// database and is stopped, and the row is written before the fake goes in
+  /// (a daemon may sweep an installation it does not know to be ready).
+  Future<void> _seedSteamCmdReady() async {
+    await _killDaemon(await _startDaemon('to create the database'));
+    final database = sqlite3.open(p.join(data, 'yagura.db'));
+    try {
+      database.execute(
+        'INSERT OR REPLACE INTO steamcmd_installations '
+        '(installation, ready_at) VALUES (?, ?)',
+        ['anonymous', DateTime.now().millisecondsSinceEpoch],
+      );
+    } finally {
+      database.close();
+    }
+    Directory(p.join(data, 'steamcmd', 'anonymous'))
+        .createSync(recursive: true);
   }
 
   // ---- the daemon ------------------------------------------------------------

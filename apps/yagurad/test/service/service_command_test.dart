@@ -13,6 +13,7 @@ import 'package:yagurad/src/service/service_control.dart';
 
 import '../support/admin_support.dart';
 import '../support/service_support.dart';
+import '../support/temp_support.dart';
 
 /// `yagurad service ...` through `runCli`, over the fakes of the installer.
 class _Cli {
@@ -20,7 +21,7 @@ class _Cli {
     this.elevated = true,
     bool withBundle = true,
     FakeServiceControl? control,
-  }) : temp = Directory.systemTemp.createTempSync(),
+  }) : temp = createCanonicalTempSync(),
        control = control ?? FakeServiceControl() {
     addTearDown(() => temp.deleteSync(recursive: true));
     bundle = withBundle ? makeBundle('0.1.0', parent: temp) : null;
@@ -147,7 +148,7 @@ void main() {
     expect(result.code, 64);
   });
 
-  test('install_then_status_then_uninstall', () async {
+  windowsTest('install_then_status_then_uninstall', () async {
     final cli = _Cli();
 
     final install = await cli.run(['install', '--bind', '127.0.0.1:7443']);
@@ -191,30 +192,36 @@ void main() {
     expect(result.err, contains('bundle_invalid'));
   });
 
-  test('a_second_install_of_the_same_version_is_service_exists', () async {
-    final cli = _Cli();
-    await cli.run(['install']);
+  windowsTest(
+    'a_second_install_of_the_same_version_is_service_exists',
+    () async {
+      final cli = _Cli();
+      await cli.run(['install']);
 
-    final again = await cli.run(['install']);
+      final again = await cli.run(['install']);
 
-    expect(again.code, 1);
-    expect(again.err, contains('service_exists'));
-  });
+      expect(again.code, 1);
+      expect(again.err, contains('service_exists'));
+    },
+  );
 
-  test('purge_accounts_with_a_server_running_is_servers_running', () async {
-    final cli = _Cli();
-    await cli.run(['install']);
-    cli.servers.running = ['Friends'];
+  windowsTest(
+    'purge_accounts_with_a_server_running_is_servers_running',
+    () async {
+      final cli = _Cli();
+      await cli.run(['install']);
+      cli.servers.running = ['Friends'];
 
-    final result = await cli.run(['uninstall', '--purge-accounts']);
+      final result = await cli.run(['uninstall', '--purge-accounts']);
 
-    expect(result.code, 1);
-    expect(result.err, contains('servers_running'));
-    expect(result.err, contains('Friends'));
-    expect(cli.purger.calls, 0);
-  });
+      expect(result.code, 1);
+      expect(result.err, contains('servers_running'));
+      expect(result.err, contains('Friends'));
+      expect(cli.purger.calls, 0);
+    },
+  );
 
-  test('the_install_dir_option_moves_the_installation', () async {
+  windowsTest('the_install_dir_option_moves_the_installation', () async {
     final cli = _Cli();
     final dir = p.join(cli.temp.path, 'elsewhere');
 
@@ -231,7 +238,7 @@ void main() {
     expect(cli.control.services, {'yagurad-test': anything});
   });
 
-  test(
+  windowsTest(
     'purge_accounts_deletes_the_rows_of_the_data_directory_in_use',
     () async {
       final cli = _Cli()..useRealPurger = true;
@@ -280,29 +287,32 @@ void main() {
     }
   });
 
-  test('a_service_name_other_than_the_default_reaches_the_daemon', () async {
-    final cli = _Cli();
+  windowsTest(
+    'a_service_name_other_than_the_default_reaches_the_daemon',
+    () async {
+      final cli = _Cli();
 
-    final result = await cli.run([
-      'install',
-      '--service-name',
-      'yagurad-b',
-      '--install-dir',
-      cli.installDir,
-    ]);
+      final result = await cli.run([
+        'install',
+        '--service-name',
+        'yagurad-b',
+        '--install-dir',
+        cli.installDir,
+      ]);
 
-    expect(result.code, 0, reason: result.err);
-    final xml = File(p.join(cli.installDir, 'yagurad-b.xml'))
-        .readAsStringSync();
-    expect(xml, contains('--service-name yagurad-b'));
-    expect(
-      File(
-        InstallLayout(
-          root: cli.installDir,
-          serviceName: 'yagurad-b',
-        ).markerFile('0.1.0'),
-      ).readAsStringSync(),
-      'yagurad-b',
-    );
-  });
+      expect(result.code, 0, reason: result.err);
+      final xml = File(p.join(cli.installDir, 'yagurad-b.xml'))
+          .readAsStringSync();
+      expect(xml, contains('--service-name yagurad-b'));
+      expect(
+        File(
+          InstallLayout(
+            root: cli.installDir,
+            serviceName: 'yagurad-b',
+          ).markerFile('0.1.0'),
+        ).readAsStringSync(),
+        'yagurad-b',
+      );
+    },
+  );
 }

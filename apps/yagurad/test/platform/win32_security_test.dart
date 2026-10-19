@@ -7,7 +7,10 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/platform/win32_paths.dart';
 import 'package:yagurad/src/platform/win32_security.dart';
+
+import '../support/temp_support.dart';
 
 void main() {
   test('dpapi_blob_round_trips', () {
@@ -78,19 +81,35 @@ void main() {
     expect(sddlParses('D:P(A;;GA;;;SY)(A;;GA;;;BA)'), isTrue);
     expect(sddlParses('not sddl'), isFalse);
 
-    final dir = Directory.systemTemp.createTempSync('yagurad_sddl_');
-    addTearDown(() => dir.deleteSync(recursive: true));
+    final temp = createCanonicalTempSync('yagurad_sddl_');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    // The host's temp folder may hand nothing down, so the file gets its
+    // parent from a folder with a DACL that does: SYSTEM and Administrators.
+    // Whether `icacls` shows the copied entries as inherited (`(I)`) differs
+    // between hosts, so protection is read from the descriptor, in process.
+    final me = currentUserSid();
+    final dir = Directory(p.join(temp.path, 'parent'));
+    createProtectedDirectory(
+      dir.path,
+      'O:$me'
+      'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;$me)',
+    ).close();
     final file = File(p.join(dir.path, 'f.txt'))..writeAsStringSync('x');
     String acl() => Process.runSync('icacls', [file.path]).stdout as String;
-    // A file in the temp folder inherits Administrators from its parent.
-    expect(acl(), allOf(contains('Administrators'), contains('(I)')));
+    String dacl() => inspectEntrySecurity(file.path).sddl;
+    // A file gets Administrators from its parent.
+    expect(acl(), contains('Administrators'));
 
     setFileDacl(file.path, 'D:P(A;;GA;;;${currentUserSid()})(A;;GA;;;SY)');
 
     final after = acl();
     expect(after, contains(r'NT AUTHORITY\SYSTEM'));
     expect(after, isNot(contains('Administrators')));
-    expect(after, isNot(contains('(I)')), reason: 'protected: no inheritance');
+    expect(
+      dacl(),
+      allOf(contains('D:P'), isNot(contains(';ID;'))),
+      reason: 'protected: no inheritance',
+    );
     expect(file.readAsStringSync(), 'x');
   });
 

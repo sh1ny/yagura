@@ -10,6 +10,8 @@ import 'package:yagurad/src/files/files.dart';
 import 'package:yagurad/src/process/process_host.dart';
 import 'package:yagurad/src/process/run_files.dart';
 
+import '../../test/support/temp_support.dart';
+
 // The daemon writes `launch.json` and `cancel.json` into the run directory
 // of an instance. A junction planted by the server in place of `.yagura`,
 // `.yagura/run` or the run directory must stop the write (design D8).
@@ -42,7 +44,7 @@ LaunchRequest launchIn(String instance, String runDirectory) => LaunchRequest(
 
 void main() {
   setUp(() {
-    temp = Directory.systemTemp.createTempSync('yagura_runfiles_');
+    temp = createCanonicalTempSync('yagura_runfiles_');
     addTearDown(() {
       // Junctions first: deleting the tree must never reach a target.
       for (final e in temp.listSync(recursive: true, followLinks: false)) {

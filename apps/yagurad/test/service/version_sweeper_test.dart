@@ -7,12 +7,14 @@ import 'package:yagurad/src/process/run_store.dart';
 import 'package:yagurad/src/service/install_layout.dart';
 import 'package:yagurad/src/service/version_sweeper.dart';
 
+import '../support/temp_support.dart';
+
 /// An install root with the given version directories (each holding a
 /// `bin\yagurad.exe` and the marker of the install that made it) and some
 /// directories that are not versions.
 class _Root {
   _Root(List<String> versions) {
-    root = Directory.systemTemp.createTempSync('yagurad_versions_');
+    root = createCanonicalTempSync('yagurad_versions_');
     addTearDown(() {
       if (root.existsSync()) root.deleteSync(recursive: true);
     });

@@ -13,6 +13,7 @@ import 'package:yagurad/src/service/service_control.dart';
 import '../../test/support/elevated_support.dart';
 import '../../test/support/process_support.dart';
 import '../../test/support/service_rig.dart';
+import '../../test/support/temp_support.dart';
 
 final _pairingString = RegExp(
   r'yagura://([^:/?]+):(\d+)\?code=([0-9A-Z]{10})'
@@ -205,7 +206,7 @@ void main() {
   test('not_elevated', tags: ['windows'], () async {
     final suffix = Random.secure().nextInt(1 << 30).toRadixString(16);
     final name = 'yagurad-t$suffix';
-    final temp = Directory.systemTemp.createTempSync('yagurad_noelev_');
+    final temp = createCanonicalTempSync('yagurad_noelev_');
     addTearDown(() => temp.deleteSync(recursive: true));
     final installDir = p.join(temp.path, 'install');
     final out = StringBuffer();

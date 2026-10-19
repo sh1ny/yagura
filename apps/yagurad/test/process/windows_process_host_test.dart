@@ -13,6 +13,7 @@ import 'package:yagurad/src/process/windows_process_host.dart';
 
 import '../support/daemon_support.dart';
 import '../support/process_support.dart';
+import '../support/temp_support.dart';
 
 /// A launch of the `fake_server` fixture in its own run directory under
 /// [root].
@@ -38,7 +39,7 @@ void main() {
     () async {
       // Under `dart run` the helper modes would be handed to dart.exe, which
       // answers "Could not find a command named launch".
-      final dir = Directory.systemTemp.createTempSync('yagura_host_');
+      final dir = createCanonicalTempSync('yagura_host_');
       addTearDown(() => dir.deleteSync(recursive: true));
       final host = WindowsProcessHost(
         helperExecutable: Platform.resolvedExecutable,

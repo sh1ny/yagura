@@ -163,7 +163,7 @@ void main() {
       );
 
       expect(target.readAsStringSync(), 'precious');
-    });
+    }, skip: Platform.isWindows ? false : 'the Windows lock file');
 
     test('a lock file with several names stops the service start', () async {
       final env = TestEnv();

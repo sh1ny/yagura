@@ -16,6 +16,7 @@ import 'elevated_support.dart';
 import 'firewall_elevated_support.dart';
 import 'process_support.dart';
 import 'service_support.dart';
+import 'temp_support.dart';
 
 // The rig of the `elevated` rows of the service install and upgrade (task
 // group 8). It installs a REAL Windows service, so it fails at once unless the
@@ -94,7 +95,7 @@ class ServiceRig {
     final rig = ServiceRig._(
       process,
       'yagurad-t$suffix',
-      Directory.systemTemp.createTempSync('yagurad_service_'),
+      createCanonicalTempSync('yagurad_service_'),
       port,
     );
     addTearDown(rig._cleanup);

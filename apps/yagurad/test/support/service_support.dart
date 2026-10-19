@@ -16,6 +16,7 @@ import 'package:yagurad/src/service/service_control.dart';
 import 'package:yagurad/src/service/service_installer.dart';
 
 import 'admin_support.dart';
+import 'temp_support.dart';
 
 /// The directory of the WinSW binary and template in the repository, seen
 /// from `apps/yagurad`.
@@ -25,8 +26,9 @@ const winswSourceDirectory = '../../tool/winsw';
 /// executable and library are placeholders, WinSW and the template are the
 /// repository's.
 Bundle makeBundle(String version, {Directory? parent, bool withWinsw = true}) {
-  final root = (parent ?? Directory.systemTemp.createTempSync('yagurad_b_'))
-      .createTempSync('bundle_');
+  final root = (parent ?? createCanonicalTempSync('yagurad_b_')).createTempSync(
+    'bundle_',
+  );
   File(p.join(root.path, 'bin', 'yagurad.exe'))
     ..createSync(recursive: true)
     ..writeAsStringSync('yagurad $version');
@@ -168,7 +170,7 @@ class InstallerRig {
     String serviceName = defaultServiceName,
     this.elevated = true,
     Bundle? bundle,
-  }) : root = Directory.systemTemp.createTempSync('yagurad_install_') {
+  }) : root = createCanonicalTempSync('yagurad_install_') {
     addTearDown(() {
       if (root.existsSync()) root.deleteSync(recursive: true);
     });
@@ -302,3 +304,8 @@ Future<YaguraException> failureOf(Future<void> Function() body) async {
   }
   fail('expected a YaguraException');
 }
+
+/// A test that installs below a Windows path (a drive letter, the
+/// `%ProgramFiles%` rules, ACLs): it runs where the `windows` tag does.
+void windowsTest(String name, dynamic Function() body) =>
+    test(name, body, tags: ['windows']);

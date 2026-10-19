@@ -135,6 +135,10 @@ Future<String?> exchange(
     return null;
   }
   final echo = Completer<String?>();
+  // A server that refuses the client certificate closes after the handshake
+  // (TLS 1.3 lets the client finish first): writing then fails with a broken
+  // pipe on Linux. That is the refusal, not an error of the test.
+  unawaited(secure.done.then<void>((_) {}, onError: (Object _) {}));
   secure.listen(
     (data) {
       if (!echo.isCompleted) echo.complete(utf8.decode(data));
@@ -146,7 +150,12 @@ Future<String?> exchange(
       if (!echo.isCompleted) echo.complete(null);
     },
   );
-  secure.add(utf8.encode('x'));
+  try {
+    secure.add(utf8.encode('x'));
+  } on Object {
+    secure.destroy();
+    return null;
+  }
   final result = await echo.future.timeout(
     const Duration(seconds: 5),
     onTimeout: () => null,

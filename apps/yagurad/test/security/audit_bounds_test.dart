@@ -5,13 +5,15 @@ import 'package:test/test.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/security/audit.dart';
 
+import '../support/temp_support.dart';
+
 /// The bounds of design D4 on the two tables, at small sizes.
 void main() {
   late YaguraDatabase db;
   late DateTime now;
 
   setUp(() {
-    final dir = Directory.systemTemp.createTempSync('yagurad_audit_');
+    final dir = createCanonicalTempSync('yagurad_audit_');
     addTearDown(() => dir.deleteSync(recursive: true));
     db = YaguraDatabase.open(p.join(dir.path, 'yagura.db'));
     addTearDown(db.close);

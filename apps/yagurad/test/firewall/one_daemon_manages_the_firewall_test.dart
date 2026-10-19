@@ -2,7 +2,6 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
 
 import 'package:test/test.dart';
 import 'package:yagura_proto/yagura_proto.dart' as pb;
@@ -13,6 +12,7 @@ import '../support/admin_support.dart';
 import '../support/api_support.dart';
 import '../support/daemon_support.dart';
 import '../support/firewall_support.dart';
+import '../support/temp_support.dart';
 
 // Design D11: a host runs one Yagura service, and the service manages the
 // group `Yagura`. The admin channel check is a safety net for a second daemon
@@ -130,7 +130,7 @@ void main() {
     final firewall = FakeFirewall()..gate = Completer<void>();
     final env = TestEnv();
     env.installValheim();
-    final root = Directory.systemTemp.createTempSync('yagurad_root_');
+    final root = createCanonicalTempSync('yagurad_root_');
     addTearDown(() => root.deleteSync(recursive: true));
     final starting = startFirewalled(
       env,

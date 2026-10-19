@@ -6,8 +6,10 @@ import 'package:test/test.dart';
 import 'package:yagurad/src/errors.dart';
 import 'package:yagurad/src/files/files.dart';
 
+import '../support/temp_support.dart';
+
 Directory makeRoot() {
-  final dir = Directory.systemTemp.createTempSync('yagura_writer_test_');
+  final dir = createCanonicalTempSync('yagura_writer_test_');
   addTearDown(() {
     if (dir.existsSync()) dir.deleteSync(recursive: true);
   });

@@ -1,8 +1,6 @@
 @Timeout(Duration(minutes: 15))
 library;
 
-import 'dart:io';
-
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagurad/src/firewall/firewall_backend.dart';
@@ -11,6 +9,7 @@ import 'package:yagurad/src/firewall/powershell_firewall.dart';
 import 'package:yagurad/src/firewall/rule_names.dart';
 
 import '../../test/support/firewall_elevated_support.dart';
+import '../../test/support/temp_support.dart';
 
 // The reconcile script of design D11 against the real Windows Firewall. These
 // rows create, change and delete rules, so they run only in the manual
@@ -23,7 +22,7 @@ import '../../test/support/firewall_elevated_support.dart';
 // The runner's temp folder belongs to its administrator, as the data
 // directory belongs to SYSTEM and Administrators in the service.
 PowerShellFirewall backendFor(String id) => PowerShellFirewall(
-  directory: p.join(Directory.systemTemp.path, 'yagurad_firewall_requests'),
+  directory: p.join(canonicalSystemTemp().path, 'yagurad_firewall_requests'),
   scope: 'Yagura/$id/',
 );
 const _timeout = Duration(seconds: 60);

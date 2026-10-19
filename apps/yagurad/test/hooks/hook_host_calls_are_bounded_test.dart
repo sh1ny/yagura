@@ -13,6 +13,7 @@ import 'package:yagurad/src/hooks/host_api.dart';
 import '../support/api_support.dart';
 import '../support/daemon_support.dart';
 import 'hook_test_support.dart';
+import '../support/temp_support.dart';
 
 /// A worker the test controls: it finishes when [finish] is called and, when
 /// [exitsOnKill] is false, ignores kill requests like a worker stuck in native
@@ -189,7 +190,7 @@ exports.onPreStart = function () {
   });
 
   test('read_cap_applies_to_bytes_read', () {
-    final dir = Directory.systemTemp.createTempSync('yagura_cap_');
+    final dir = createCanonicalTempSync('yagura_cap_');
     addTearDown(() => dir.deleteSync(recursive: true));
     File(p.join(dir.path, 'grown.log'))
         .writeAsBytesSync(List.filled(200 * 1024, 0x61));
@@ -213,7 +214,7 @@ exports.onPreStart = function () {
 
   test('listing_does_not_stat_an_external_link_target', () async {
     final instance = makeInstance();
-    final outside = Directory.systemTemp.createTempSync('yagura_outside_');
+    final outside = createCanonicalTempSync('yagura_outside_');
     addTearDown(() => outside.deleteSync(recursive: true));
     File(p.join(outside.path, 'secret.txt')).writeAsStringSync('x' * 500);
     writeInstanceFile(instance, 'keys/inside.txt', 'abc');

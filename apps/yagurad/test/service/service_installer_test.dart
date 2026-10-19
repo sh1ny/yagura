@@ -1,3 +1,6 @@
+@Tags(['windows'])
+library;
+
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -14,6 +17,7 @@ import 'package:yagurad/src/service/winsw_config.dart';
 
 import '../support/admin_support.dart';
 import '../support/service_support.dart';
+import '../support/temp_support.dart';
 
 /// An ACL writer that tells [onWrite] what the directory holds when its DACL
 /// is written, then lets [inner] record the write.
@@ -890,7 +894,7 @@ void main() {
       ),
     ]) {
       test(label, () {
-        final dir = Directory.systemTemp.createTempSync(folder);
+        final dir = createCanonicalTempSync(folder);
         addTearDown(() => dir.deleteSync(recursive: true));
         final layout = InstallLayout(root: dir.path, serviceName: 'yagurad-x');
         final xml =

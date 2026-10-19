@@ -10,6 +10,7 @@ import 'package:yagurad/src/host/secret_store.dart';
 
 import '../support/daemon_support.dart';
 import '../support/secret_support.dart';
+import '../support/temp_support.dart';
 
 Uint8List bytes(String text) => Uint8List.fromList(utf8.encode(text));
 
@@ -18,7 +19,7 @@ void main() {
   late String dbPath;
 
   setUp(() {
-    dir = Directory.systemTemp.createTempSync('yagurad_secrets_');
+    dir = createCanonicalTempSync('yagurad_secrets_');
     dbPath = p.join(dir.path, 'yagura.db');
     addTearDown(() => dir.deleteSync(recursive: true));
   });

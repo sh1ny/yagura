@@ -7,11 +7,12 @@ import 'package:yagurad/src/service/install_layout.dart';
 import 'package:yagurad/src/service/version_sweeper.dart';
 
 import '../support/daemon_support.dart';
+import '../support/temp_support.dart';
 
 /// An install root with version directories `0.1.0` (old), `0.2.0` (the
 /// running one).
 InstallLayout _installRoot() {
-  final root = Directory.systemTemp.createTempSync('yagurad_install_');
+  final root = createCanonicalTempSync('yagurad_install_');
   addTearDown(() => root.deleteSync(recursive: true));
   final layout = InstallLayout(root: root.path);
   for (final v in ['0.1.0', '0.2.0']) {

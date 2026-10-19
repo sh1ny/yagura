@@ -10,6 +10,7 @@ import 'package:yagurad/src/platform/win32_paths.dart';
 
 import '../support/admin_support.dart';
 import '../support/daemon_support.dart';
+import '../support/temp_support.dart';
 
 /// A junction at [link] leading to [target] (needs no privilege).
 void junction(String link, String target) {
@@ -21,7 +22,7 @@ void main() {
   late Directory work;
 
   setUp(() {
-    work = Directory.systemTemp.createTempSync('yagurad_handle_');
+    work = createCanonicalTempSync('yagurad_handle_');
     addTearDown(() {
       // Junctions are removed without touching their targets.
       for (final entity in work.listSync()) {

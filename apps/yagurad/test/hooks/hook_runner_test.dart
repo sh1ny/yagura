@@ -7,6 +7,7 @@ import 'package:yagurad/src/errors.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
 
 import 'hook_test_support.dart';
+import '../support/temp_support.dart';
 
 Matcher failsWith(String reason, {String? messageContains}) => throwsA(
   isA<YaguraException>()
@@ -349,7 +350,7 @@ exports.onPreStart = () => {
       'a link inside the instance to outside cannot be read through',
       () async {
         final instance = makeInstance();
-        final outside = Directory.systemTemp.createTempSync('yagura_outside_');
+        final outside = createCanonicalTempSync('yagura_outside_');
         addTearDown(() => outside.deleteSync(recursive: true));
         File(p.join(outside.path, 'secret.txt')).writeAsStringSync('secret');
         try {

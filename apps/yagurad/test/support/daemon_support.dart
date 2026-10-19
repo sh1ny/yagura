@@ -24,6 +24,8 @@ import 'package:yagurad/src/service/version_sweeper.dart';
 import 'package:yagurad/src/snapshots/snapshots.dart';
 import 'package:yagurad/src/steam/steam.dart';
 
+import 'temp_support.dart';
+
 /// The Valheim reference manifest of `packages/yagura_plugin`.
 const valheimFixture = '../../packages/yagura_plugin/test/fixtures/valheim';
 
@@ -263,7 +265,7 @@ class TestEnv {
   /// service rows pass a folder under `%ProgramData%`, as a real install has
   /// its data, so the service accounts reach it the way they would there.
   TestEnv({Directory? parent})
-    : root = (parent ?? Directory.systemTemp).createTempSync('yagurad_test_') {
+    : root = (parent ?? canonicalSystemTemp()).createTempSync('yagurad_test_') {
     addTearDown(() async {
       for (final daemon in List.of(_daemons)) {
         await daemon.close();

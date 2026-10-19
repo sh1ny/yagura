@@ -7,8 +7,10 @@ import 'package:yagurad/src/files/confined_fs.dart';
 import 'package:yagurad/src/files/confined_fs_portable.dart';
 import 'package:yagurad/src/files/instance_fs.dart';
 
+import '../support/temp_support.dart';
+
 Directory makeRoot() {
-  final dir = Directory.systemTemp.createTempSync('yagura_confined_');
+  final dir = createCanonicalTempSync('yagura_confined_');
   addTearDown(() {
     if (dir.existsSync()) dir.deleteSync(recursive: true);
   });

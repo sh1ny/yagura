@@ -8,13 +8,14 @@ import 'package:yagurad/src/platform/win32_logon.dart';
 import 'package:yagurad/src/steam/steam.dart';
 
 import '../support/daemon_support.dart';
+import '../support/temp_support.dart';
 
 final onWindows = Platform.isWindows ? false : 'needs Windows';
 
 Future<SteamProcess> _start(SteamAccount account) =>
     JobObjectLauncher(account: account).start(Platform.resolvedExecutable, [
       '--version',
-    ], workingDirectory: Directory.systemTemp.path);
+    ], workingDirectory: canonicalSystemTemp().path);
 
 // Design D10, failure table: "SteamCMD as yagura-steam / Logon fails:
 // Operation fails launch_logon_failed", the reason the game-server path gives

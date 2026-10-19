@@ -7,6 +7,7 @@ import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/service/account_purger.dart';
 
 import '../support/service_support.dart';
+import '../support/temp_support.dart';
 
 /// Accounts in memory: a SID per name, and a profile error per SID.
 class _FakeAccounts implements AccountOperations {
@@ -51,7 +52,7 @@ class _FakeAccounts implements AccountOperations {
 /// A data directory whose database holds the secret rows of the accounts and
 /// of an instance.
 Directory _dataDirectory() {
-  final dir = Directory.systemTemp.createTempSync('yagurad_purge_');
+  final dir = createCanonicalTempSync('yagurad_purge_');
   addTearDown(() => dir.deleteSync(recursive: true));
   final db = YaguraDatabase.open(p.join(dir.path, 'yagura.db'));
   try {
@@ -240,7 +241,7 @@ void main() {
     });
 
     test('rows_that_cannot_be_deleted_keep_the_account_reported', () async {
-      final data = Directory.systemTemp.createTempSync('yagurad_purge_');
+      final data = createCanonicalTempSync('yagurad_purge_');
       addTearDown(() => data.deleteSync(recursive: true));
       File(p.join(data.path, 'yagura.db')).writeAsStringSync('not a database');
 
@@ -254,7 +255,7 @@ void main() {
     });
 
     test('no_database_is_no_rows_to_delete', () async {
-      final empty = Directory.systemTemp.createTempSync('yagurad_purge_');
+      final empty = createCanonicalTempSync('yagurad_purge_');
       addTearDown(() => empty.deleteSync(recursive: true));
 
       final outcomes = await HostAccountPurger(
@@ -369,7 +370,7 @@ void main() {
     });
 
     test('without_a_database_no_server_runs', () async {
-      final empty = Directory.systemTemp.createTempSync('yagurad_purge_');
+      final empty = createCanonicalTempSync('yagurad_purge_');
       addTearDown(() => empty.deleteSync(recursive: true));
 
       final names = await HostServerProbe(
