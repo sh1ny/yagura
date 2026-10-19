@@ -48,7 +48,7 @@ The command ends by printing the next step: pairing a device.
 yagurad pair
 ```
 
-`yagurad pair` prints a pairing string, `yagura://<host>:<port>?code=<CODE>&ca=sha256:<64 hex>&name=<name>`. Enter it in the desktop client within 10 minutes; see [data-directory.md](data-directory.md) for the other admin commands.
+`yagurad pair` prints a pairing string, `yagura://<host>:<port>?code=<CODE>&ca=sha256:<64 hex>&name=<name>`. Enter it in the desktop client within 10 minutes (see [desktop.md](desktop.md)); see [data-directory.md](data-directory.md) for the other admin commands.
 
 The first start of the service trusts a data directory that already exists. On a host where a `--dev` daemon has run, give the service the data directory you want it to use with `--data-dir`, and read the secret-store notes in [data-directory.md](data-directory.md): secrets that the dev daemon protected for its own account are deleted at the first service start.
 
