@@ -53,7 +53,7 @@ In service mode the daemon SHALL reconcile owned rules at startup, after any por
 
 #### Scenario: Reconcile times out
 - **WHEN** the firewall does not answer a reconcile within 30 s
-- **THEN** the reconcile fails with `firewall_unavailable`, no owned rule is deleted, affected instances show `firewall: degraded`, and the next reconcile runs normally
+- **THEN** the reconcile fails with `firewall_unavailable`, no owned rule that is still wanted is deleted (a run stopped at its limit may already have applied part of its changes, which the next reconcile completes), affected instances show `firewall: degraded`, and the next reconcile runs normally
 
 ### Requirement: RCON ports closed by default
 Ports with purpose `rcon` SHALL get no rule unless the instance explicitly sets them exposed, because the daemon reaches RCON locally.
