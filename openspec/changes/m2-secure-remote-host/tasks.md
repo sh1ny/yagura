@@ -242,7 +242,7 @@ Covers: host-service → Game servers run under a low-privilege account, Startup
 
 Covers: firewall-rules (all requirements); host-service → Startup sequence (firewall unavailable); instance-lifecycle → Deleting (owned rules removed).
 
-- [ ] 10.1 Write the failing tests for this group's rows (fake firewall for in-process rows, the real Windows Firewall for `elevated` rows); verify each fails for the stated reason.
+- [x] 10.1 Write the failing tests for this group's rows (fake firewall for in-process rows, the real Windows Firewall for `elevated` rows); verify each fails for the stated reason.
 - [ ] 10.2 Write the reconcile PowerShell script and time one run with 300 rules in the `elevated` workflow (never on the developer's desktop). If it takes over 10 s, stop and revisit D11 with the user before wiring triggers. Verify: the timing is recorded in `docs/milestones/m2.md`, and `admins_own_rule_untouched` and `foreign_rule_inside_the_group` pass in the `elevated` workflow.
 - [ ] 10.3 Implement the reconciler (D11): desired state from instances and launched ports, the owned-name regex with its round-trip test, single-flight with one coalesced pending run, operations awaiting the reconcile (60 s bound), degraded flags and `firewall_ok`, service mode only (`not_built` in dev mode), the API port rule, and the triggers. Verify: all firewall rows, `firewall_unavailable_at_startup` and `delete_keeping_files` pass (`elevated` ones in the `elevated` workflow); flip them.
 - [ ] 10.4 Document the firewall rules (naming, what is never touched, how to see degraded state) in the operator docs. Verify: the doc names the group, the naming scheme and `firewall_unavailable`.

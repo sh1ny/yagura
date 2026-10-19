@@ -3,13 +3,18 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagura_proto/yagura_proto.dart' as pb;
 import 'package:yagurad/src/host/data_directory.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/host/migrations.dart';
 
+import 'package:yagurad/src/firewall/rule_names.dart';
+
 import '../support/acl_support.dart';
 import '../support/daemon_support.dart';
+import '../support/firewall_support.dart';
 import '../support/secret_support.dart';
+import '../support/secure_support.dart';
 
 /// A database at the current schema, closed again, with one operation row.
 int seedCurrentDatabase(TestEnv env) {
@@ -64,6 +69,32 @@ void main() {
     );
     live.close();
     expect(daemon.instances.list(), isEmpty);
+  });
+
+  test('firewall_unavailable_at_startup', () async {
+    final env = TestEnv();
+    final firewall = FakeFirewall()
+      ..unavailable = 'the Windows Firewall service is stopped';
+
+    // The daemon comes up and serves calls; the step is a notice.
+    final daemon = await startFirewalled(env, firewall);
+    final notices = daemon.startupNotices.where((n) => n.step == 'firewall');
+    expect(notices, hasLength(1));
+    expect(notices.single.message, contains('stopped'));
+    expect(firewall.calls, ['reconcile']);
+
+    final harness = await SecureHarness.start(env, daemon: daemon);
+    final device = await harness.pair('Laptop');
+    final health = await device.system.getHealth(pb.GetHealthRequest());
+    expect(health.firewallOk, isFalse);
+    expect(health.notBuilt, isNot(contains('firewall')));
+
+    // Once the firewall is back, the next reconcile clears it.
+    firewall.unavailable = null;
+    await daemon.firewall!.request();
+    final later = await device.system.getHealth(pb.GetHealthRequest());
+    expect(later.firewallOk, isTrue);
+    expect(firewall.rule(apiRuleName), 'tcp/$apiPort');
   });
 
   test('corrupt_database_is_a_fatal_database_step', () async {

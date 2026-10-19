@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagurad/src/admin/admin_transport.dart';
 import 'package:yagurad/src/errors.dart';
+import 'package:yagurad/src/firewall/firewall_backend.dart';
 import 'package:yagurad/src/platform/acl_writer.dart';
 import 'package:yagurad/src/host/daemon.dart';
 import 'package:yagurad/src/host/data_dir_protector.dart';
@@ -348,6 +349,8 @@ class TestEnv {
     InstanceAcls? instanceAcls,
     Future<List<InternetAddress>> Function()? hostAddresses,
     VersionSweeper? versionSweeper,
+    FirewallBackend? firewall,
+    Duration firewallTimeout = const Duration(seconds: 30),
     // Nothing polls by itself unless a test says so: tests call `pollNow`.
     LogHubOptions logOptions = const LogHubOptions.manual(),
   }) async {
@@ -378,6 +381,8 @@ class TestEnv {
         instanceAcls: instanceAcls,
         hostAddresses: hostAddresses,
         versionSweeper: versionSweeper,
+        firewall: firewall,
+        firewallTimeout: firewallTimeout,
         logOptions: logOptions,
         hookHost: hookHost,
         os: os,

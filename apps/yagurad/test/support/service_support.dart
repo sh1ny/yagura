@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagurad/src/errors.dart';
+import 'package:yagurad/src/firewall/api_port_rule.dart';
 import 'package:yagurad/src/instances/instance_roots.dart'
     show administratorsSid;
 import 'package:yagurad/src/platform/acl_inspector.dart';
@@ -215,6 +216,14 @@ class InstallerRig {
   /// released here.
   void Function()? onDelay;
 
+  ApiPortRule? _apiRule;
+
+  /// Gives the installer the API port rule it creates and removes.
+  set apiRule(ApiPortRule rule) {
+    _apiRule = rule;
+    installer = _make();
+  }
+
   /// Replaces the ACL writer of the installer.
   set aclWriter(AclWriter writer) {
     _aclWriter = writer;
@@ -234,6 +243,7 @@ class InstallerRig {
     isElevated: () => elevated,
     servers: servers,
     purger: purger,
+    apiRule: _apiRule,
     aclWriter: _aclWriter ?? acl,
     inspector: inspector,
     delay: (d) async {

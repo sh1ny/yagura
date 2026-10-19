@@ -3,10 +3,12 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/firewall/rule_names.dart';
 import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/operations/operations.dart';
 
 import '../support/daemon_support.dart';
+import '../support/firewall_support.dart';
 
 /// Puts a world save into the instance directory.
 File writeSave(String directory) {
@@ -40,9 +42,13 @@ void main() {
   test('delete_keeping_files', () async {
     final env = TestEnv();
     env.installValheim();
-    final daemon = await env.start();
+    final firewall = FakeFirewall();
+    final daemon = await startFirewalled(env, firewall);
     final instance = await createInstalled(daemon);
     final save = writeSave(instance.directory);
+    // An administrator's rule for the same port, outside the group.
+    expect(firewall.rule(ruleOf(instance.id, 'game', 'udp')), 'udp/2456');
+    firewall.add('Valheim manual', port: '2456');
 
     final op = daemon.instances.delete(instance.id);
     final done = await daemon.operations.whenDone(op.id);
@@ -50,6 +56,9 @@ void main() {
     expect(done.status, OperationStatus.succeeded);
     expect(daemon.instances.list(), isEmpty);
     expect(save.existsSync(), isTrue);
+    // The instance's rules go with it, and nothing else does.
+    expect(firewall.ownedNames, [apiRuleName]);
+    expect(firewall.rule('Valheim manual'), 'udp/2456');
     // The operation outlives the instance.
     expect(daemon.operations.get(op.id)!.status, OperationStatus.succeeded);
   });

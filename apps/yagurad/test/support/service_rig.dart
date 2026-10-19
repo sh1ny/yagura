@@ -13,6 +13,7 @@ import 'account_support.dart'
     show accountSid, queryDatabase, removeServiceAccounts, sddlOf;
 import 'daemon_support.dart';
 import 'elevated_support.dart';
+import 'firewall_elevated_support.dart';
 import 'process_support.dart';
 import 'service_support.dart';
 
@@ -528,6 +529,13 @@ class ServiceRig {
       await powershell('sc.exe delete $name', failOnTimeout: false);
     }
     await process.env.closeDaemons();
+    // The daemon of the service owned firewall rules (instance ports, its API
+    // port); a row ends without them.
+    try {
+      await removeYaguraGroup();
+    } on Object catch (e) {
+      printOnFailure('cannot remove the Yagura firewall rules: $e');
+    }
     try {
       servers.addAll(runningServers());
     } on Object {
