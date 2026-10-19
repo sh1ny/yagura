@@ -224,7 +224,7 @@ Covers: host-service → Windows service install and control, Servers survive se
 
 - [x] 8.1 Write the failing tests for this group's rows (`elevated` ones run in the `elevated` workflow against a throwaway data directory and service name); verify each fails for the stated reason.
 - [x] 8.2 Implement `service install|configure|uninstall|status` (D6): versioned install directories, the WinSW XML template in `tool/winsw/`, the 60 s ready poll over the admin pipe, upgrade from a newer bundle, `service_exists`, `port_conflict` on configure, `--purge-accounts` (accounts, their profiles and secret rows) with `servers_running`, and deletion of unused version directories at startup. Verify: this group's rows pass in the `elevated` workflow; record them in `docs/milestones/m2.md`; flip them.
-- [ ] 8.3 Write `docs/install.md` (install, configure, upgrade, uninstall, and the pairing command printed at the end). Verify: each command in it is exercised by a row of this group.
+- [x] 8.3 Write `docs/install.md` (install, configure, upgrade, uninstall, and the pairing command printed at the end). Verify: each command in it is exercised by a row of this group.
 - [ ] 8.4 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
 
 ## 9. [M2] Service accounts, launcher, ACLs and verified termination
