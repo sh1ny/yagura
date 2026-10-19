@@ -252,7 +252,7 @@ Covers: firewall-rules (all requirements); host-service → Startup sequence (fi
 
 Covers: desktop-client (all requirements); daemon-security → Client pins the daemon CA.
 
-- [ ] 11.1 Write the failing widget tests for this group's rows against fake daemon connections and a fake keychain; verify each fails for the stated reason.
+- [x] 11.1 Write the failing widget tests for this group's rows against fake daemon connections and a fake keychain; verify each fails for the stated reason.
 - [ ] 11.2 Implement the daemon registry and per-daemon secure connections (D13): keychain storage, pinned CA with authority `yagurad-<daemon-id>`, connection states with backoff 1 s to 30 s, `revoked` and `expired`, and the loopback dev daemon entry. Verify: the multiple-daemons and CA-pinning rows pass; flip them.
 - [ ] 11.3 Implement pairing from a pairing string (in-process key and CSR, `Pairing.Info`, fingerprint check, `Enroll`, key deleted on failure), renewal on connect and every 24 h, the create flow calling `SetSecret` after `CreateInstance`, and the revision-conflict reload that keeps edits. Verify: the remaining group rows pass; flip them; the M1 forms rows still pass.
 - [ ] 11.4 Update the desktop user docs (pairing, daemon list states, conflicts). Verify: each state shown in the UI is described.

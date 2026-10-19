@@ -403,6 +403,123 @@ void main() {
     expect(submitted!.secrets, {'pass': 's3cret'});
   });
 
+  testWidgets('create_an_instance_with_a_secret', (tester) async {
+    final daemon = FakeDaemon();
+    daemon.plugins['testgame'] = PluginDetail(
+      summary: PluginSummary(id: 'testgame', name: 'Test Game'),
+      settingsSchema: JsonDocument(
+        json: jsonEncode({
+          'rconPassword': {'type': 'secret', 'label': 'RCON password'},
+        }),
+        schemaVersion: 7,
+      ),
+    );
+    final harness = Harness(daemon: daemon);
+    await pumpApp(tester, harness, const HomePage(daemonId: kDevDaemonId));
+
+    await tester.tap(find.byKey(const ValueKey('action:create')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('create:plugin')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Test Game').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('create:name')), 'Gamma');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('create:submit')));
+    await tester.pumpAndSettle();
+
+    // The form asks for the password; it is not sent with the create.
+    await tester.enterText(_field('rconPassword'), 'hunter2');
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await tester.pumpAndSettle();
+
+    final create = daemon.creates.single;
+    expect(
+      utf8.decode(create.writeToBuffer(), allowMalformed: true),
+      isNot(contains('hunter2')),
+    );
+    // SetSecret follows CreateInstance, with the revision it returned.
+    expect(daemon.secretCalls.single, (
+      instanceId: 'new',
+      key: 'rconPassword',
+      value: 'hunter2',
+      revision: 1,
+    ));
+    expect(
+      daemon.calls.indexOf('CreateInstance:testgame'),
+      lessThan(daemon.calls.indexOf('SetSecret:new:rconPassword')),
+    );
+    // The instance is listed and its secret shows as set.
+    await tester.tap(find.text('Gamma'));
+    await settle(tester);
+    expect(
+      find.descendant(
+        of: _field('rconPassword'),
+        matching: find.textContaining('A value is set'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('someone_else_saved_first', (tester) async {
+    final harness = _harness();
+    await _pumpEditor(tester, harness);
+
+    // Someone else saved a new revision that this client has not seen yet.
+    harness.daemon.instances = [
+      makeInstance(
+        id: 'i1',
+        name: 'Alpha',
+        ports: [
+          Port(name: 'game', number: 2456, protocol: Protocol.PROTOCOL_UDP),
+        ],
+        settings: const {'serverName': 'Theirs'},
+        revision: 4,
+      ),
+    ];
+    await tester.enterText(_field('serverName'), 'Mine');
+    await tester.enterText(_field('maxPlayers'), '20');
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await settle(tester);
+
+    expect(harness.daemon.updates.single.expectedRevision.toInt(), 3);
+    // The instance was reloaded, and the fields that differ are listed.
+    expect(harness.daemon.calls, contains('GetInstance:i1'));
+    final conflict = find.byKey(const ValueKey('settings:conflict'));
+    expect(conflict, findsOneWidget);
+    expect(
+      find.descendant(
+        of: conflict,
+        matching: find.textContaining('serverName'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: conflict, matching: find.textContaining('Theirs')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: conflict, matching: find.textContaining('Mine')),
+      findsOneWidget,
+    );
+    // The user's edits are still in the form, not replaced.
+    expect(
+      find.descendant(of: _field('serverName'), matching: find.text('Mine')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: _field('maxPlayers'), matching: find.text('20')),
+      findsOneWidget,
+    );
+
+    // Re-applying them saves against the revision just loaded.
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await settle(tester);
+    expect(harness.daemon.updates, hasLength(2));
+    expect(harness.daemon.updates.last.expectedRevision.toInt(), 4);
+    expect(find.byKey(const ValueKey('settings:conflict')), findsNothing);
+  });
+
   testWidgets('a_schema_that_cannot_be_read_falls_back_to_read_only', (
     tester,
   ) async {

@@ -45,7 +45,8 @@ void main() {
     // Still down on the first retry: the next delay doubles.
     harness.delay.release();
     await settle(tester);
-    expect(find.textContaining('Reconnecting'), findsOneWidget);
+    expect(find.textContaining('Reconnecting'), findsNothing);
+    expect(find.textContaining('Offline'), findsOneWidget);
     expect(harness.delay.requested.last, const Duration(seconds: 2));
 
     // It comes back with the instance stopped (it changed while we were away).
