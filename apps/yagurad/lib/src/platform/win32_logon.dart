@@ -388,30 +388,7 @@ class AccountSession {
     final win32 = Win32.instance;
     final sid = lookupAccountSid(account);
     if (sid == null) throw LogonFailure(account, 'LookupAccountName', 1332);
-    final user = account.toNativeUtf16();
-    final domain = '.'.toNativeUtf16();
-    final secret = password.toNativeUtf16();
-    final token = calloc<IntPtr>();
-    try {
-      final logon = callReadingError(
-        () => _logonUser(user, domain, secret, _logon32LogonBatch, 0, token),
-        (r) => r == 0,
-      );
-      if (logon.value == 0) {
-        throw LogonFailure(account, 'LogonUserW', logon.error);
-      }
-    } finally {
-      // The password does not stay in native memory.
-      for (var i = 0; i <= password.length; i++) {
-        (secret.cast<Uint16>() + i).value = 0;
-      }
-      calloc
-        ..free(user)
-        ..free(domain)
-        ..free(secret);
-    }
-    final handle = token.value;
-    calloc.free(token);
+    final handle = _batchLogon(account, password);
     var profile = 0;
     var objects = (station: 0, desktop: 0);
     Pointer<Void> environment = nullptr;
@@ -720,6 +697,55 @@ void _requireTrustedOwner(
     'the window $kind is owned by $owner, not SYSTEM, Administrators or $account',
     _errorInvalidOwner,
   );
+}
+
+/// Logs [account] on with [password] (batch logon) and loads its profile,
+/// starting no process: the account's registry hive stays loaded until the
+/// returned function unloads it and closes the token (design D7, the service
+/// host's profile hold). Throws a [LogonFailure] naming the call and its
+/// error.
+void Function() loadAccountProfile(String account, String password) {
+  final win32 = Win32.instance;
+  final token = _batchLogon(account, password);
+  final int profile;
+  try {
+    profile = _loadProfile(account, token);
+  } on Object {
+    win32.closeHandle(token);
+    rethrow;
+  }
+  return () {
+    _unloadUserProfile(token, profile);
+    win32.closeHandle(token);
+  };
+}
+
+/// The token of a batch logon of [account] with [password]; the caller
+/// closes it. The password does not stay in native memory.
+int _batchLogon(String account, String password) {
+  final user = account.toNativeUtf16();
+  final domain = '.'.toNativeUtf16();
+  final secret = password.toNativeUtf16();
+  final token = calloc<IntPtr>();
+  try {
+    final logon = callReadingError(
+      () => _logonUser(user, domain, secret, _logon32LogonBatch, 0, token),
+      (r) => r == 0,
+    );
+    if (logon.value == 0) {
+      throw LogonFailure(account, 'LogonUserW', logon.error);
+    }
+    return token.value;
+  } finally {
+    for (var i = 0; i <= password.length; i++) {
+      (secret.cast<Uint16>() + i).value = 0;
+    }
+    calloc
+      ..free(user)
+      ..free(domain)
+      ..free(secret)
+      ..free(token);
+  }
 }
 
 int _loadProfile(String account, int token) {

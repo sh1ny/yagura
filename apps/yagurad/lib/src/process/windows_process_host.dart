@@ -7,9 +7,11 @@ import 'package:path/path.dart' as p;
 import '../errors.dart';
 import '../files/instance_fs.dart';
 import '../platform/win32.dart';
+import '../platform/win32_logon.dart';
 import '../platform/win32_process.dart';
 import 'launcher_modes.dart';
 import 'process_host.dart';
+import 'profile_hold.dart';
 import 'process_verifier.dart';
 import 'run_files.dart';
 import 'stop_engine.dart';
@@ -47,7 +49,9 @@ class WindowsProcessHost implements ProcessHost {
     this.launcherTimeout = const Duration(minutes: 2),
     this.account,
     ProcessVerifier? verifier,
-  }) : verifier = verifier ?? ProcessVerifier();
+    ProfileHold? profileHold,
+  }) : verifier = verifier ?? ProcessVerifier(),
+       profileHold = profileHold ?? _holdFor(account);
 
   /// The `yagurad` executable the `launch` and `signal` modes run from.
   final String helperExecutable;
@@ -73,7 +77,22 @@ class WindowsProcessHost implements ProcessHost {
   /// terminates or re-attaches it (design D9).
   final ProcessVerifier verifier;
 
+  /// Keeps the game-server account's profile loaded from before a launch
+  /// starts the launcher until the last server of the account has ended
+  /// (design D7); null in development mode.
+  final ProfileHold? profileHold;
+
   final _servers = <_WindowsServer>{};
+
+  static ProfileHold? _holdFor(ServerAccount? account) => account == null
+      ? null
+      : ProfileHold(() {
+          final secret = account.password();
+          if (secret == null) {
+            throw StateError('the account ${account.name} has no password');
+          }
+          return loadAccountProfile(account.name, secret);
+        });
 
   @override
   Future<RunningServer> launch(LaunchRequest request) async {
@@ -126,6 +145,31 @@ class WindowsProcessHost implements ProcessHost {
         details: {'instanceId': request.instanceId},
       );
     }
+    final hold = profileHold;
+    if (hold == null) return _launchWith(request, files, credentials);
+    // The launcher's own profile load ends before the relay starts the server.
+    try {
+      hold.retain();
+    } on LogonFailure catch (e) {
+      throw YaguraException(
+        'launch_logon_failed',
+        'the account ${account?.name ?? e.account} could not be logged on: '
+            '${launcherFailureText(e)}',
+        details: {'instanceId': request.instanceId},
+      );
+    }
+    try {
+      return await _launchWith(request, files, credentials);
+    } finally {
+      hold.release();
+    }
+  }
+
+  Future<RunningServer> _launchWith(
+    LaunchRequest request,
+    RunFiles files,
+    AccountCredentials? credentials,
+  ) async {
     final helper = await Process.start(helperExecutable, [
       'launch',
       '--run-dir',
@@ -363,6 +407,21 @@ class WindowsProcessHost implements ProcessHost {
       win32.closeHandle(handle);
       return null;
     }
+    // The server holds its account's profile until it ends, not while the
+    // daemon only lets go of it: a running server keeps needing its hive.
+    final hold = profileHold;
+    var held = false;
+    if (hold != null) {
+      try {
+        hold.retain();
+        held = true;
+      } on Object catch (e) {
+        stderr.writeln(
+          'yagurad: the profile of ${account?.name ?? 'the server account'} '
+          'could not be loaded for server ${identity.pid}: $e',
+        );
+      }
+    }
     final server = _WindowsServer(
       identity,
       relay,
@@ -370,6 +429,7 @@ class WindowsProcessHost implements ProcessHost {
       DateTime.now(),
       _servers.remove,
       recordRejected: rejected,
+      onEnded: held ? hold!.release : null,
     );
     _servers.add(server);
     return server;
@@ -527,6 +587,7 @@ class _WindowsServer implements RunningServer {
     this.startedAt,
     void Function(_WindowsServer) onClosed, {
     this.recordRejected = false,
+    this.onEnded,
   }) : _handle = rawHandle,
        _onClosed = onClosed {
     _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
@@ -547,6 +608,9 @@ class _WindowsServer implements RunningServer {
   final bool recordRejected;
 
   final void Function(_WindowsServer) _onClosed;
+
+  /// Called once, when the process has ended (not when it is released).
+  final void Function()? onEnded;
   final _exit = Completer<int>();
   late final Timer _timer;
   int _handle;
@@ -566,6 +630,7 @@ class _WindowsServer implements RunningServer {
     if (_exit.isCompleted) return;
     _exit.complete(exitCodeOfHandle(_handle));
     release();
+    onEnded?.call();
   }
 
   /// Stops polling and closes the handle; the process keeps running.
