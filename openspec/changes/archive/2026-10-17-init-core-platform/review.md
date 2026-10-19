@@ -3,11 +3,11 @@
 ## Metadata
 
 - **Round:** 4
-- **Prior round:** Round 3 had two reviews. The subagent review returned APPROVE_WITH_CHANGES (R3-M1..M5, R3-S1..S9). The OMP review (`review-round3-omp.md`) returned REVISE (C1, C2, M1..M10, S1..S4). The user treated round 3 as REVISE, and the author's Rebuttals table (commit 60261d2) marks every finding fixed. This round re-checks each listed fix against the artifacts at HEAD 66914e4 and then reviews the change afresh.
+- **Prior round:** Round 3 had two reviews. The subagent review returned APPROVE_WITH_CHANGES (R3-M1..M5, R3-S1..S9). The OMP review (`review-round3-omp.md`) returned REVISE (C1, C2, M1..M10, S1..S4). The user treated round 3 as REVISE, and the author's Rebuttals table (commit 43eba9f) marks every finding fixed. This round re-checks each listed fix against the artifacts at HEAD b2e6849 and then reviews the change afresh.
 - **Reviewer:** fresh-context subagent (Claude Code, `specwright-reviewer` role). The request named no specific `SKILL.md` paths, only "Dart/Flutter ones" under `.claude/skills/`. I loaded and applied `dart-setup-ffi-assets`, `dart-use-ffigen`, `dart-build-cli-app` and `flutter-apply-architecture-best-practices` from `F:\Dev\Dart\yagura\.claude\skills\`. None failed to load.
 - **Reviewed:**
   - The change: `openspec/changes/init-core-platform/proposal.md`, `design.md`, `tasks.md`, and all 9 `specs/*/spec.md`.
-  - Prior round: `git show 60261d2:openspec/changes/init-core-platform/review.md` (including its Rebuttals) and `openspec/changes/init-core-platform/review-round3-omp.md`.
+  - Prior round: `git show 43eba9f:openspec/changes/init-core-platform/review.md` (including its Rebuttals) and `openspec/changes/init-core-platform/review-round3-omp.md`.
   - Context:
     - `openspec/roadmap.md` (M1 section and exit criteria).
     - `openspec/architecture.md` (state machine, state ownership, failure and recovery, resource bounds).
@@ -18,7 +18,7 @@
   - Checks:
     - `openspec validate init-core-platform --strict` passes.
     - By script, all 148 scenarios in the 9 specs have a test-map row with a matching requirement and scenario name.
-  - Re-checks after the verdict: round 4 fixes at `git diff 9773c10..ba3c924`, then the R4-S9 and R4-S10 fixes at `git show a65da02` (design D17 and D25, the M1 instance-lifecycle delta, the backlog's MODIFIED "Deleting an instance protects game data", and the Rebuttals rows). `openspec validate init-core-platform --strict` and `openspec validate platform-backlog --strict` pass at a65da02.
+  - Re-checks after the verdict: round 4 fixes at `git diff 0bd0acb..7925bb1`, then the R4-S9 and R4-S10 fixes at `git show a193b03` (design D17 and D25, the M1 instance-lifecycle delta, the backlog's MODIFIED "Deleting an instance protects game data", and the Rebuttals rows). `openspec validate init-core-platform --strict` and `openspec validate platform-backlog --strict` pass at a193b03.
 
 <!-- This verdict covers only the contents reviewed. Editing proposal, specs or design afterward (other than applying Required Changes) voids it. -->
 
@@ -220,9 +220,9 @@ VERDICT: APPROVE_WITH_CHANGES
      - **THEN** the instance becomes `running` on the new run's line
    - Map it in the test map (`apps/yagurad/test/instances/log_match_health_check_test.dart`, group 7).
 
-### Re-check (round 4, after commits 8880730 and ba3c924)
+### Re-check (round 4, after commits a58ea0e and 7925bb1)
 
-The reviewer re-checked `git diff 9773c10..ba3c924` against the artifacts. All three Required Changes are applied:
+The reviewer re-checked `git diff 0bd0acb..7925bb1` against the artifacts. All three Required Changes are applied:
 
 1. **R4-M1: applied.**
    - The test map moves every row listed in Required Change 1 to the stated file and group.
@@ -275,9 +275,9 @@ The edits introduced two small gaps. Neither blocks the Required Changes; the au
   - *Problem:* Both still say "while an operation runs", but the delete requirement now refuses delete while an operation is queued *or* running.
   - *Fix:* Align the wording for Delete.
 
-### Re-check (R4-S9 and R4-S10, after commit a65da02)
+### Re-check (R4-S9 and R4-S10, after commit a193b03)
 
-The reviewer re-checked `git show a65da02`. It touches only `design.md`, the M1 `specs/instance-lifecycle/spec.md`, the backlog's `specs/instance-lifecycle/spec.md` and this file's Rebuttals. Both gaps are fixed:
+The reviewer re-checked `git show a193b03`. It touches only `design.md`, the M1 `specs/instance-lifecycle/spec.md`, the backlog's `specs/instance-lifecycle/spec.md` and this file's Rebuttals. Both gaps are fixed:
 
 - **R4-S9: fixed.**
   - The delete requirement keeps the instance's operation records past the delete until normal history pruning. "Deleting files survives a daemon crash" says operation records are kept when the rows are removed.
@@ -291,7 +291,7 @@ The reviewer re-checked `git show a65da02`. It touches only `design.md`, the M1 
   - *Nit (no action required):* the backlog sentence "remove its database rows except its operation records, which ..., and its firewall rules and content-store references" can be read as also exempting the firewall rules. The "Delete keeping files" scenario settles it (firewall rules are removed). The author may move the exception to a separate sentence, as M1 does.
 - `openspec validate init-core-platform --strict` passes. `openspec validate platform-backlog --strict` passes; its INFO notes about MODIFIED deltas on specs that do not exist yet are expected until M1 is archived.
 
-The edits introduce no new inconsistency. They are wording fixes for the reviewer's own R4-S9 and R4-S10 findings, so the verdict still covers the artifacts at a65da02.
+The edits introduce no new inconsistency. They are wording fixes for the reviewer's own R4-S9 and R4-S10 findings, so the verdict still covers the artifacts at a193b03.
 
 CHANGES_APPLIED: yes
 
