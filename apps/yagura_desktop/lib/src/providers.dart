@@ -51,6 +51,58 @@ final devDaemonEnabledProvider = Provider<bool>(
 final daemonRegistryProvider =
     NotifierProvider<DaemonRegistry, List<DaemonRecord>>(DaemonRegistry.new);
 
+/// What is wrong with the saved daemon list.
+final class ListProblem {
+  const ListProblem(
+    this.message, {
+    this.canDiscard = false,
+    this.discardDetail = '',
+    this.canDiscardCopy = false,
+    this.savingRefused = false,
+  });
+
+  final String message;
+
+  /// Whether unreadable entries can be discarded (see
+  /// [DaemonRegistry.discardUnreadable]), and what the confirmation says.
+  final bool canDiscard;
+  final String discardDetail;
+
+  /// Whether a kept copy of a damaged list can be discarded (see
+  /// [DaemonRegistry.discardDamagedCopy]).
+  final bool canDiscardCopy;
+
+  /// Whether the list cannot be saved, so no daemon can be paired.
+  final bool savingRefused;
+}
+
+/// The daemons whose clock looks wrong: a certificate they just issued is
+/// already due for renewal.
+final daemonClockSuspectProvider =
+    NotifierProvider<DaemonClockSuspects, Set<String>>(DaemonClockSuspects.new);
+
+class DaemonClockSuspects extends Notifier<Set<String>> {
+  @override
+  Set<String> build() => const {};
+
+  void mark(String id, {required bool suspect}) {
+    if (state.contains(id) == suspect) return;
+    state = suspect ? {...state, id} : ({...state}..remove(id));
+  }
+}
+
+/// The problem with the saved daemon list, null when it was read in full.
+final daemonListProblemProvider =
+    NotifierProvider<DaemonListProblem, ListProblem?>(DaemonListProblem.new);
+
+class DaemonListProblem extends Notifier<ListProblem?> {
+  @override
+  ListProblem? build() => null;
+
+  // ignore: use_setters_to_change_properties
+  void report(ListProblem? problem) => state = problem;
+}
+
 /// The connection object of a daemon. Tests override it with a connection
 /// over a fake transport.
 final daemonConnectionProvider = Provider.family<DaemonConnection, String>((
@@ -67,6 +119,14 @@ final daemonConnectionProvider = Provider.family<DaemonConnection, String>((
     dialer: ref.read(daemonDialerProvider),
     now: ref.read(clockProvider),
     delay: ref.read(renewalDelayProvider),
+    onRenewed: (at) =>
+        ref.read(daemonRegistryProvider.notifier).markRenewed(daemonId, at),
+    onClockSuspect: ({required bool suspect}) {
+      if (!ref.mounted) return;
+      ref
+          .read(daemonClockSuspectProvider.notifier)
+          .mark(daemonId, suspect: suspect);
+    },
   );
   final connection = DaemonConnection(
     id: daemonId,
@@ -74,6 +134,13 @@ final daemonConnectionProvider = Provider.family<DaemonConnection, String>((
     afterConnect: link.keepFresh,
     delay: ref.read(reconnectDelayProvider),
     now: ref.read(clockProvider),
+    lastSeenBefore: () => ref
+        .read(daemonRegistryProvider)
+        .where((d) => d.id == daemonId)
+        .firstOrNull
+        ?.lastSeen,
+    onSeen: (seen) =>
+        ref.read(daemonRegistryProvider.notifier).markSeen(daemonId, seen),
   );
   ref.onDispose(connection.dispose);
   connection.start();

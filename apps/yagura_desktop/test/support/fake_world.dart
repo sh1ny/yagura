@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -26,6 +27,12 @@ class FakeKeychain implements Keychain {
   final Map<String, String> entries = {};
   bool unavailable = false;
 
+  /// Makes `write` fail while reads still work.
+  bool failWrites = false;
+
+  /// Makes `delete` fail for keys containing this text.
+  String? failDeleteContaining;
+
   void _check() {
     if (unavailable) throw const KeychainUnavailable('locked');
   }
@@ -39,12 +46,16 @@ class FakeKeychain implements Keychain {
   @override
   Future<void> write(String key, String value) async {
     _check();
+    if (failWrites) throw const KeychainUnavailable('read-only');
     entries[key] = value;
   }
 
   @override
   Future<void> delete(String key) async {
     _check();
+    if (failDeleteContaining case final part? when key.contains(part)) {
+      throw const KeychainUnavailable('delete refused');
+    }
     entries.remove(key);
   }
 }
@@ -55,11 +66,54 @@ class MemoryDaemonListStore implements DaemonListStore {
 
   List<DaemonRecord> records;
 
+  /// What `load` reports as unreadable or damaged.
+  int unreadable = 0;
+  bool damaged = false;
+  bool copied = true;
+  List<String> unreadableNames = [];
+  List<String> overCapNames = [];
+  String? readError;
+  int damagedCopies = 0;
+
+  /// Makes `save` throw while set.
+  Object? saveFailure;
+  int saves = 0;
+
+  /// While set, `save` waits for it (to interleave other changes).
+  Completer<void>? saveGate;
+
   @override
-  Future<List<DaemonRecord>> load() async => [...records];
+  Future<DaemonListLoad> load() async => DaemonListLoad(
+    [...records],
+    unreadable: unreadable,
+    damaged: damaged,
+    copied: copied,
+    unreadableNames: unreadableNames,
+    overCapNames: overCapNames,
+    readError: readError,
+    damagedCopies: damagedCopies,
+  );
+
+  @override
+  String? get saveRefusal => readError != null || (damaged && !copied)
+      ? 'the daemon list is not saved'
+      : null;
+
+  @override
+  void discardUnreadable() {
+    unreadable = 0;
+    unreadableNames = [];
+    overCapNames = [];
+  }
+
+  @override
+  Future<void> discardDamagedCopies() async => damagedCopies = 0;
 
   @override
   Future<void> save(List<DaemonRecord> daemons) async {
+    saves++;
+    if (saveGate case final gate?) await gate.future;
+    if (saveFailure case final failure?) throw failure;
     records = [...daemons];
   }
 }
@@ -85,15 +139,47 @@ class FakeHost {
       notAfter: start.add(const Duration(days: 7300)),
     );
     ca = Certificate.parse(caDer);
-    this.daemon.onRenew = (csr) async {
-      final request = CertificationRequest.parse(csr);
-      renewedKeys.add(request.publicKey);
-      return EnrollResponse(
-        deviceId: 'device-$id',
-        clientCertificateDer: issue(request.publicKey, 'renewed'),
-        caCertificateDer: caDer,
-      );
-    };
+    this.daemon.onRenew = _renew;
+  }
+
+  /// The device's certificates as the daemon keeps them (design D4): the
+  /// fingerprint and whether it ever authenticated a call. The last is the
+  /// newest.
+  final List<({String sha, bool used})> certificates = [];
+
+  /// The fingerprint presented on the connection that is open.
+  String? presenting;
+
+  /// The daemon's gate: a certificate that is not (or no longer) one of the
+  /// device's authenticates nothing; one that is, counts as used.
+  bool authenticate(String sha) {
+    if (certificates.isEmpty) certificates.add((sha: sha, used: true));
+    final at = certificates.indexWhere((c) => c.sha == sha);
+    if (at < 0) return false;
+    certificates[at] = (sha: sha, used: true);
+    presenting = sha;
+    return true;
+  }
+
+  /// `RenewCertificate` with the daemon's rule: the newest certificate may
+  /// renew; the one before it only while the newest has never been used. The
+  /// certificate that renewed stays, the new one is added, all others go.
+  Future<EnrollResponse> _renew(Uint8List csr) async {
+    final newest = certificates.last;
+    if (presenting != newest.sha && newest.used) {
+      throw const DaemonCallException(code: 16, reason: 'unauthenticated');
+    }
+    final request = CertificationRequest.parse(csr);
+    renewedKeys.add(request.publicKey);
+    final der = issue(request.publicKey, 'renewed', validFor: renewalValidFor);
+    certificates
+      ..removeWhere((c) => c.sha != presenting)
+      ..add((sha: sha256Hex(der), used: false));
+    return EnrollResponse(
+      deviceId: 'device-$id',
+      clientCertificateDer: der,
+      caCertificateDer: caDer,
+    );
   }
 
   final String id;
@@ -109,6 +195,10 @@ class FakeHost {
 
   /// What `Pairing.Info` presents as the CA; defaults to the real one.
   Uint8List? presentedCa;
+
+  /// How long the certificates this daemon renews are valid; short ones come
+  /// back already due, as from a daemon whose clock is far behind.
+  Duration renewalValidFor = const Duration(days: 365);
 
   /// The currently valid pairing code, or null.
   String? pairingCode = 'ABCDEFGHJK';
@@ -197,6 +287,13 @@ class FakeDialer implements DaemonDialer {
         ..failure = const DaemonCallException(
           code: 14,
           reason: 'server_ca_mismatch',
+        );
+    }
+    if (!target.authenticate(sha256Hex(credentials.certificateDer))) {
+      return FakeDaemon()
+        ..failure = const DaemonCallException(
+          code: 16,
+          reason: 'unauthenticated',
         );
     }
     return target.daemon;
@@ -303,6 +400,9 @@ class World {
 
   final keychain = FakeKeychain();
   final store = MemoryDaemonListStore();
+
+  /// A store to use instead of [store], for tests over the real file.
+  DaemonListStore? fileStore;
   late final FakeDialer dialer;
   final reconnectDelay = FakeDelay();
   final renewalDelay = FakeDelay();
@@ -363,7 +463,7 @@ class World {
 
   List<Override> get overrides => [
     keychainProvider.overrideWithValue(keychain),
-    daemonListStoreProvider.overrideWithValue(store),
+    daemonListStoreProvider.overrideWithValue(fileStore ?? store),
     daemonDialerProvider.overrideWithValue(dialer),
     clockProvider.overrideWithValue(() => now),
     reconnectDelayProvider.overrideWithValue(reconnectDelay.call),

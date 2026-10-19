@@ -56,6 +56,9 @@ class _PairDialogState extends ConsumerState<PairDialog> {
       if (mounted) Navigator.pop(context, true);
     } on PairingFailure catch (e) {
       if (mounted) setState(() => _error = '${e.reason}: ${e.message}');
+    } on Object catch (e) {
+      // Nothing else should get here; whatever does is shown, not swallowed.
+      if (mounted) setState(() => _error = 'pairing_failed: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -63,8 +66,12 @@ class _PairDialogState extends ConsumerState<PairDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final refused =
+        ref.watch(daemonListProblemProvider)?.savingRefused ?? false;
     final ready =
-        _string.text.trim().isNotEmpty && _name.text.trim().isNotEmpty;
+        !refused &&
+        _string.text.trim().isNotEmpty &&
+        _name.text.trim().isNotEmpty;
     return AlertDialog(
       title: const Text('Pair a daemon'),
       content: SizedBox(
@@ -78,6 +85,16 @@ class _PairDialogState extends ConsumerState<PairDialog> {
               'the line it prints. The code works once, for ten minutes.',
             ),
             const SizedBox(height: 12),
+            if (refused)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Pairing is not possible while the daemon list cannot be '
+                  'saved. See the notice on the daemon list.',
+                  key: const ValueKey('pair:refused'),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
             TextField(
               key: const ValueKey('pair:string'),
               controller: _string,

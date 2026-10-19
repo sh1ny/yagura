@@ -37,6 +37,20 @@ final class GrpcTransport implements DaemonTransport {
     required int port,
     required String authority,
     required DeviceCredentials credentials,
+  }) : this._secure(
+         host: host,
+         port: port,
+         authority: authority,
+         credentials: credentials,
+         tls: TlsVerdict(),
+       );
+
+  GrpcTransport._secure({
+    required String host,
+    required int port,
+    required String authority,
+    required DeviceCredentials credentials,
+    required TlsVerdict tls,
   }) : this._(
          ClientChannel(
            host,
@@ -47,12 +61,15 @@ final class GrpcTransport implements DaemonTransport {
                caDer: credentials.caDer,
                certificateDer: credentials.certificateDer,
                keyPem: credentials.keyPem,
+               verdict: tls,
              ),
            ),
          ),
+         tls,
        );
 
-  GrpcTransport._(this._channel) {
+  GrpcTransport._(this._channel, [TlsVerdict? tls])
+    : _tls = tls ?? TlsVerdict() {
     _system = SystemClient(_channel);
     _instances = InstancesClient(_channel);
     _operations = OperationsClient(_channel);
@@ -62,6 +79,7 @@ final class GrpcTransport implements DaemonTransport {
   }
 
   final ClientChannel _channel;
+  final TlsVerdict _tls;
   late final SystemClient _system;
   late final InstancesClient _instances;
   late final OperationsClient _operations;
@@ -78,7 +96,7 @@ final class GrpcTransport implements DaemonTransport {
     try {
       return await call();
     } on GrpcError catch (e) {
-      throw toCallException(e);
+      throw toCallException(e, certificateRejected: _tls.rejected);
     }
   }
 
@@ -86,7 +104,7 @@ final class GrpcTransport implements DaemonTransport {
     try {
       yield* open();
     } on GrpcError catch (e) {
-      throw toCallException(e);
+      throw toCallException(e, certificateRejected: _tls.rejected);
     }
   }
 
@@ -214,15 +232,30 @@ SecurityContext pinnedSecurityContext({
   return context;
 }
 
+/// Records that the TLS stack refused the server's certificate. gRPC reports a
+/// failed handshake only as message text, so this is the structured signal:
+/// the bad-certificate callback runs before that error surfaces.
+final class TlsVerdict {
+  bool rejected = false;
+}
+
 /// Channel credentials over [pinnedSecurityContext], checking the server
-/// against the fixed [authority] (`yagurad-<daemon-id>`).
+/// against the fixed [authority] (`yagurad-<daemon-id>`). A certificate that
+/// fails the check is always refused and noted on [verdict].
 final class PinnedChannelCredentials extends ChannelCredentials {
   PinnedChannelCredentials({
     required String authority,
     required this.caDer,
     this.certificateDer,
     this.keyPem,
-  }) : super.secure(authority: authority);
+    TlsVerdict? verdict,
+  }) : super.secure(
+         authority: authority,
+         onBadCertificate: (certificate, host) {
+           verdict?.rejected = true;
+           return false;
+         },
+       );
 
   final Uint8List caDer;
   final Uint8List? certificateDer;
@@ -245,24 +278,35 @@ final class GrpcPairingChannel implements PairingChannel {
     required int port,
     Uint8List? pinnedCa,
     String? authority,
-  }) : _channel = ClientChannel(
-         host,
-         port: port,
-         options: ChannelOptions(
-           credentials: pinnedCa == null
-               ? const ChannelCredentials.secure(
-                   onBadCertificate: allowBadCertificates,
-                 )
-               : PinnedChannelCredentials(
-                   authority: authority ?? host,
-                   caDer: pinnedCa,
-                 ),
-         ),
-       ) {
+  }) : this._(host, port, pinnedCa, authority, TlsVerdict());
+
+  GrpcPairingChannel._(
+    String host,
+    int port,
+    Uint8List? pinnedCa,
+    String? authority,
+    TlsVerdict tls,
+  ) : _tls = tls,
+      _channel = ClientChannel(
+        host,
+        port: port,
+        options: ChannelOptions(
+          credentials: pinnedCa == null
+              ? const ChannelCredentials.secure(
+                  onBadCertificate: allowBadCertificates,
+                )
+              : PinnedChannelCredentials(
+                  authority: authority ?? host,
+                  caDer: pinnedCa,
+                  verdict: tls,
+                ),
+        ),
+      ) {
     _client = PairingClient(_channel);
   }
 
   final ClientChannel _channel;
+  final TlsVerdict _tls;
   late final PairingClient _client;
 
   static const _timeout = Duration(seconds: 30);
@@ -275,7 +319,7 @@ final class GrpcPairingChannel implements PairingChannel {
         options: CallOptions(timeout: _timeout),
       );
     } on GrpcError catch (e) {
-      throw toCallException(e);
+      throw toCallException(e, certificateRejected: _tls.rejected);
     }
   }
 
@@ -287,7 +331,7 @@ final class GrpcPairingChannel implements PairingChannel {
         options: CallOptions(timeout: _timeout),
       );
     } on GrpcError catch (e) {
-      throw toCallException(e);
+      throw toCallException(e, certificateRejected: _tls.rejected);
     }
   }
 
@@ -297,7 +341,14 @@ final class GrpcPairingChannel implements PairingChannel {
 
 /// Reduces a [GrpcError] and its packed `yagura.v1.ErrorDetail` (if any) to a
 /// [DaemonCallException].
-DaemonCallException toCallException(GrpcError error) {
+///
+/// [certificateRejected] is the TLS stack's own verdict (see [TlsVerdict]);
+/// the message text `CERTIFICATE_VERIFY_FAILED` is only a fallback for when
+/// that signal is not available.
+DaemonCallException toCallException(
+  GrpcError error, {
+  bool certificateRejected = false,
+}) {
   ErrorDetail? detail;
   for (final GeneratedMessage message in error.details ?? const []) {
     if (message is Any && message.typeUrl.endsWith('yagura.v1.ErrorDetail')) {
@@ -309,7 +360,8 @@ DaemonCallException toCallException(GrpcError error) {
   final tlsRefused =
       detail == null &&
       error.code == StatusCode.unavailable &&
-      (error.message ?? '').contains('CERTIFICATE_VERIFY_FAILED');
+      (certificateRejected ||
+          (error.message ?? '').contains('CERTIFICATE_VERIFY_FAILED'));
   return DaemonCallException(
     code: error.code,
     reason: tlsRefused ? 'server_ca_mismatch' : detail?.reason ?? '',

@@ -4,7 +4,10 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:grpc/grpc.dart' show GrpcError;
+import 'package:yagura_desktop/src/credentials.dart';
 import 'package:yagura_desktop/src/grpc_transport.dart';
+import 'package:yagura_desktop/src/transport.dart';
 import 'package:yagura_pki/yagura_pki.dart';
 
 import 'support/fake_world.dart';
@@ -229,6 +232,116 @@ void main() {
       );
 
       expect(result.error, isA<HandshakeException>());
+    });
+
+    DeviceCredentials credentialsFor() {
+      final key = generateKeyPair();
+      final start = DateTime.now().subtract(const Duration(hours: 1));
+      return DeviceCredentials(
+        caDer: caDer,
+        certificateDer: issueClientCertificate(
+          issuerKey: caKey,
+          issuer: ca,
+          subjectKey: key.publicKey,
+          commonName: 'laptop',
+          notBefore: start,
+          notAfter: start.add(const Duration(days: 30)),
+        ),
+        keyPem: key.privateKeyPem,
+      );
+    }
+
+    Future<DaemonCallException> callOver(SecureServerSocket server) async {
+      server.listen((socket) => socket.destroy(), onError: (Object _) {});
+      final transport = GrpcTransport.secure(
+        host: '127.0.0.1',
+        port: server.port,
+        authority: 'yagurad-alpha',
+        credentials: credentialsFor(),
+      );
+      addTearDown(transport.close);
+      try {
+        await transport.getInfo();
+      } on DaemonCallException catch (e) {
+        return e;
+      }
+      fail('the call should have failed');
+    }
+
+    test('a_server_from_another_ca_is_server_ca_mismatch_over_grpc', () async {
+      final otherKey = generateKeyPair();
+      final start = DateTime.now().subtract(const Duration(days: 1));
+      final otherDer = issueCaCertificate(
+        key: otherKey,
+        commonName: 'Other CA',
+        notBefore: start,
+        notAfter: start.add(const Duration(days: 30)),
+      );
+      final server = await serve(
+        'yagurad-alpha',
+        issuerKey: otherKey,
+        issuer: Certificate.parse(otherDer),
+      );
+      addTearDown(server.close);
+
+      final error = await callOver(server);
+
+      expect(error.code, 14);
+      expect(error.reason, 'server_ca_mismatch');
+    });
+
+    test('the_right_ca_under_another_name_is_server_ca_mismatch', () async {
+      final server = await serve('yagurad-other');
+      addTearDown(server.close);
+
+      final error = await callOver(server);
+
+      expect(error.reason, 'server_ca_mismatch');
+    });
+
+    test('an_unreachable_server_is_not_a_ca_mismatch', () async {
+      final server = await serve('yagurad-alpha');
+      final port = server.port;
+      await server.close();
+      final transport = GrpcTransport.secure(
+        host: '127.0.0.1',
+        port: port,
+        authority: 'yagurad-alpha',
+        credentials: credentialsFor(),
+      );
+      addTearDown(transport.close);
+
+      await expectLater(
+        transport.getInfo(),
+        throwsA(
+          isA<DaemonCallException>().having(
+            (e) => e.reason,
+            'reason',
+            isNot('server_ca_mismatch'),
+          ),
+        ),
+      );
+    });
+
+    test('the_message_text_is_only_a_fallback', () {
+      final text = GrpcError.unavailable(
+        'Error connecting: CERTIFICATE_VERIFY_FAILED',
+      );
+      final plain = GrpcError.unavailable('connection refused');
+      expect(toCallException(text).reason, 'server_ca_mismatch');
+      expect(toCallException(plain).reason, isEmpty);
+      expect(
+        toCallException(plain, certificateRejected: true).reason,
+        'server_ca_mismatch',
+      );
+      // A daemon's own answer is never relabelled.
+      expect(
+        toCallException(
+          GrpcError.unauthenticated('x'),
+          certificateRejected: true,
+        ).reason,
+        isEmpty,
+      );
     });
   });
 }

@@ -27,6 +27,11 @@ const pairingWindow = Duration(minutes: 10);
 /// Addresses the throttle remembers; at the bound the oldest is forgotten.
 const throttledAddresses = 10000;
 
+/// How long after issue a device's newest certificate can be replaced by a
+/// renewal from the certificate before it, provided it was never used. It
+/// covers the client's daily check after a lost answer.
+const previousCertificateRenewalWindow = Duration(hours: 26);
+
 const _alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const _codeLength = 10;
 
@@ -150,6 +155,13 @@ class PairingService {
 
   /// Signs the request of [deviceId] for a new key; the old certificate keeps
   /// working until it expires.
+  ///
+  /// The newest certificate of a device may always renew. The one before it
+  /// may renew only while the newest has never authenticated a call and was
+  /// issued less than [previousCertificateRenewalWindow] ago: then it most
+  /// likely never reached the device (the answer was lost, the client could
+  /// not store it), and this renewal retires it. Afterwards, or once the
+  /// newest has been used, a renewal with an older certificate is refused.
   pb.EnrollResponse renew({
     required String deviceId,
     required Uint8List csrDer,
@@ -161,8 +173,22 @@ class PairingService {
     }
     // The previous certificate keeps working until it expires, but renewing
     // with it would retire the newer one: a leaked old key could evict the
-    // legitimate client.
-    if (device.newestCertificate?.sha256 != presentedSha256) {
+    // legitimate client. That is accepted only for a newest certificate that
+    // is still unused and fresh; the rest of the time the old key cannot
+    // renew. Within the window after a renewal whose answer was lost, a
+    // leaked old key can still renew (design D4).
+    final newest = device.newestCertificate;
+    final issuedAt = newest?.issuedAt;
+    // A negative age (the clock was set back since the issue) is outside the
+    // window, so a clock correction cannot reopen it.
+    final age = issuedAt == null ? null : _clock().difference(issuedAt);
+    final replaceable =
+        newest != null &&
+        newest.firstUsedAt == null &&
+        age != null &&
+        !age.isNegative &&
+        age < previousCertificateRenewalWindow;
+    if (newest?.sha256 != presentedSha256 && !replaceable) {
       throw YaguraException(
         'unauthenticated',
         'only the newest certificate of a device can renew; use the one '

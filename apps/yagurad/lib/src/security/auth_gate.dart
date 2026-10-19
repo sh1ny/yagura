@@ -127,7 +127,9 @@ class DeviceAuthGate implements AuthGate {
         'this device certificate has expired; pair the device again',
       );
     }
-    _devices.seen(entry.deviceId, text);
+    _devices
+      ..markUsed(sha256Hex(certificate.der))
+      ..seen(entry.deviceId, text);
     final permit = CallPermit(
       deviceId: entry.deviceId,
       address: text,

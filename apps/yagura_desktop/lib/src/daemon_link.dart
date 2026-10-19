@@ -20,6 +20,12 @@ const Duration kRenewalWindow = Duration(days: 30);
 /// How often a connected daemon's certificate is checked.
 const Duration kRenewalCheckInterval = Duration(hours: 24);
 
+/// A daemon's certificate is renewed at most this often, by the client's
+/// clock, whether or not the new one still looks due. A daemon with a wrong
+/// clock issues certificates that look due at once; without the limit every
+/// renewal would trigger the next.
+const Duration kRenewalMinimumInterval = Duration(hours: 24);
+
 /// The seam between a [DaemonConnection] and the keychain: it makes each
 /// attempt's transport from the stored credentials and renews the client
 /// certificate.
@@ -31,6 +37,8 @@ final class DaemonLink {
     required this._dialer,
     required this._now,
     required this._delay,
+    this.onRenewed,
+    this.onClockSuspect,
   }) : _credentials = CredentialStore(keychain);
 
   final String daemonId;
@@ -39,6 +47,15 @@ final class DaemonLink {
   final DaemonDialer _dialer;
   final DateTime Function() _now;
   final Delay _delay;
+
+  /// Called with the time of each renewal, to keep it across restarts.
+  final Future<void> Function(DateTime renewed)? onRenewed;
+
+  /// Called with whether the daemon's clock looks wrong.
+  final void Function({required bool suspect})? onClockSuspect;
+
+  /// The last renewal of this session, in case it could not be saved.
+  DateTime? _renewedAt;
 
   static const _loopback = {'127.0.0.1', 'localhost', '::1'};
 
@@ -79,14 +96,23 @@ final class DaemonLink {
   }
 
   /// Renews the client certificate when due, now and then every
-  /// [kRenewalCheckInterval] until [ended] completes. A refused renewal
-  /// throws [ConnectionBlocked] with [Expired].
+  /// [kRenewalCheckInterval] until [ended] completes. A revoked device throws
+  /// [ConnectionBlocked] with [Revoked]; a renewal the daemon refuses throws
+  /// it with [Expired].
+  ///
+  /// The stored key and certificate are replaced only after the new
+  /// certificate has arrived and been verified. If the answer is lost or the
+  /// keychain write fails, the old pair is intact and the next check renews
+  /// with it: the daemon accepts a renewal from the previous certificate for
+  /// as long as the newest has never been used.
   Future<void> keepFresh(DaemonTransport transport, Future<void> ended) async {
     var over = false;
     unawaited(ended.whenComplete(() => over = true));
     while (!over) {
       try {
-        await _renewIfDue(transport);
+        if (await _renewIfDue(transport)) throw const ConnectionRefresh();
+      } on ConnectionRefresh {
+        rethrow;
       } on ConnectionBlocked {
         rethrow;
       } on Object catch (error) {
@@ -96,11 +122,29 @@ final class DaemonLink {
     }
   }
 
-  Future<void> _renewIfDue(DaemonTransport transport) async {
+  bool _renewedRecently() {
+    final times = [_renewedAt, _record()?.lastRenewal].nonNulls;
+    for (final at in times) {
+      final age = _now().difference(at);
+      if (!age.isNegative && age < kRenewalMinimumInterval) return true;
+    }
+    return false;
+  }
+
+  /// Whether a new certificate was stored; the connection then reconnects
+  /// with it at once, so it is in use within seconds.
+  Future<bool> _renewIfDue(DaemonTransport transport) async {
     final current = await _credentials.load(daemonId);
-    if (current == null) return;
+    if (current == null) return false;
     if (current.certificateNotAfter.difference(_now()) >= kRenewalWindow) {
-      return;
+      onClockSuspect?.call(suspect: false);
+      return false;
+    }
+    if (_renewedRecently()) {
+      // Renewed within the day and still due: the daemon's clock is the
+      // likely cause. Wait for the next check instead of renewing again.
+      onClockSuspect?.call(suspect: true);
+      return false;
     }
     // A new key for the new certificate; the old pair keeps working until the
     // new certificate is in the keychain.
@@ -123,12 +167,27 @@ final class DaemonLink {
         keyPem: key.privateKeyPem,
         certificateDer: certificate,
       );
+      _renewedAt = _now();
+      try {
+        await onRenewed?.call(_renewedAt!);
+      } on Object catch (e) {
+        debugPrint('daemon $daemonId: renewal time not saved: $e');
+      }
+      onClockSuspect?.call(
+        suspect:
+            Certificate.parse(certificate).notAfter.difference(_now()) <
+            kRenewalWindow,
+      );
+      return true;
+    } on KeychainUnavailable catch (e) {
+      // The daemon may have renewed already; the old pair still works.
+      debugPrint('daemon $daemonId: new certificate not stored: $e');
     } on DaemonCallException catch (e) {
-      // 16 UNAUTHENTICATED and 7 PERMISSION_DENIED: the daemon refuses this
-      // certificate. Anything else is a failed attempt to try again.
       if (e.reason == 'device_revoked') {
         throw const ConnectionBlocked(Revoked());
       }
+      // 16 UNAUTHENTICATED and 7 PERMISSION_DENIED: the daemon refuses this
+      // certificate. Anything else is a failed attempt to try again.
       if (e.code == 16 || e.code == 7) {
         throw const ConnectionBlocked(Expired());
       }
@@ -140,5 +199,6 @@ final class DaemonLink {
         // The entry is overwritten by the next attempt.
       }
     }
+    return false;
   }
 }

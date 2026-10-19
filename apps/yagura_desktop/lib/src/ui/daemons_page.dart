@@ -20,7 +20,8 @@ String daemonStateLabel(ConnectionStatus status) => switch (status) {
 
 String _time(DateTime t) {
   String two(int n) => n.toString().padLeft(2, '0');
-  return '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
+  return '${t.year}-${two(t.month)}-${two(t.day)} '
+      '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
 }
 
 /// One sentence about the state: the last error and when the daemon was last
@@ -41,6 +42,12 @@ String daemonStateDetail(ConnectionStatus status) => switch (status) {
         'Pair again to continue.',
 };
 
+/// Added to a daemon's detail line when a certificate it just issued is
+/// already due for renewal.
+const kClockSuspectNote =
+    "The daemon's clock may be wrong: the certificate it just issued is "
+    'already due for renewal.';
+
 /// Whether pairing again would fix [status].
 bool offersRepair(ConnectionStatus status) => switch (status) {
   Revoked() || Expired() => true,
@@ -56,6 +63,7 @@ class DaemonsPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final daemons = ref.watch(daemonRegistryProvider);
+    final problem = ref.watch(daemonListProblemProvider);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Yagura'),
@@ -68,24 +76,116 @@ class DaemonsPage extends ConsumerWidget {
           ),
         ],
       ),
-      body: daemons.isEmpty
-          ? const Center(
+      body: ListView(
+        padding: const EdgeInsets.all(12),
+        children: [
+          if (problem != null)
+            Card(
+              key: const ValueKey('daemons:problem'),
+              color: Theme.of(context).colorScheme.errorContainer,
               child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'No daemons yet. Pair one with the pairing string that '
-                  '"yagurad pair" prints on the host.',
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(problem.message),
+                    if (problem.canDiscard)
+                      TextButton(
+                        key: const ValueKey('daemons:discard'),
+                        onPressed: () => _confirmDiscard(
+                          context,
+                          ref,
+                          problem.discardDetail,
+                        ),
+                        child: const Text('Discard unreadable entries'),
+                      ),
+                    if (problem.canDiscardCopy)
+                      TextButton(
+                        key: const ValueKey('daemons:discard-copy'),
+                        onPressed: () => _confirmDiscardCopy(context, ref),
+                        child: const Text('Discard the damaged copy'),
+                      ),
+                  ],
                 ),
               ),
-            )
-          : ListView(
-              padding: const EdgeInsets.all(12),
-              children: [
-                for (final daemon in daemons)
-                  _DaemonCard(key: ValueKey('daemon:${daemon.id}'), daemon),
-              ],
             ),
+          if (daemons.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Text(
+                'No daemons yet. Pair one with the pairing string that '
+                '"yagurad pair" prints on the host.',
+              ),
+            ),
+          for (final daemon in daemons)
+            _DaemonCard(key: ValueKey('daemon:${daemon.id}'), daemon),
+        ],
+      ),
     );
+  }
+}
+
+Future<void> _confirmDiscard(
+  BuildContext context,
+  WidgetRef ref,
+  String detail,
+) => _confirmAndRun(
+  context,
+  title: 'Discard unreadable entries?',
+  content: detail,
+  confirmKey: const ValueKey('discard:confirm'),
+  run: ref.read(daemonRegistryProvider.notifier).discardUnreadable,
+  failure: 'The entries were not discarded',
+);
+
+Future<void> _confirmDiscardCopy(BuildContext context, WidgetRef ref) =>
+    _confirmAndRun(
+      context,
+      title: 'Discard the damaged copy?',
+      content:
+          'daemons.json.damaged, the copy kept of the damaged daemon list, is '
+          'deleted for good. Afterwards the keys and certificates stored in '
+          'the keychain for daemons that are not in the current list are '
+          'deleted too. To keep them, restore the copy by hand first.',
+      confirmKey: const ValueKey('discard-copy:confirm'),
+      run: ref.read(daemonRegistryProvider.notifier).discardDamagedCopy,
+      failure: 'The copy was not discarded',
+    );
+
+Future<void> _confirmAndRun(
+  BuildContext context, {
+  required String title,
+  required String content,
+  required Key confirmKey,
+  required Future<void> Function() run,
+  required String failure,
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: SingleChildScrollView(child: Text(content)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: confirmKey,
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Discard'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+  try {
+    await run();
+  } on Object catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(SnackBar(content: Text('$failure: $e')));
+    }
   }
 }
 
@@ -100,6 +200,7 @@ class _DaemonCard extends ConsumerWidget {
     final status =
         ref.watch(connectionStatusProvider(id)).value ?? const Connecting();
     final instances = ref.watch(instancesProvider(id)).value ?? const [];
+    final clockSuspect = ref.watch(daemonClockSuspectProvider).contains(id);
     final scheme = Theme.of(context).colorScheme;
     final problem = switch (status) {
       Offline() || Revoked() || Expired() || IncompatibleDaemon() => true,
@@ -138,7 +239,9 @@ class _DaemonCard extends ConsumerWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              daemonStateDetail(status),
+              clockSuspect
+                  ? '${daemonStateDetail(status)} $kClockSuspectNote'
+                  : daemonStateDetail(status),
               key: ValueKey('daemon:$id:detail'),
               style: TextStyle(color: problem ? scheme.error : null),
             ),
@@ -206,8 +309,15 @@ class _DaemonCard extends ConsumerWidget {
         ],
       ),
     );
-    if (remove == true) {
+    if (remove != true) return;
+    try {
       await ref.read(daemonRegistryProvider.notifier).remove(daemon.id);
+    } on Object catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(content: Text('${daemon.name} was not removed: $e')),
+        );
+      }
     }
   }
 }

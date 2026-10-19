@@ -92,13 +92,16 @@ void main() {
     await fresh.instances.listInstances(pb.ListInstancesRequest());
   });
 
-  test('only the newest certificate can renew', () async {
+  test('an_old_certificate_cannot_renew_once_the_newest_was_used', () async {
     final (h, device) = await twentyDaysLeft();
     final older = Certificate.parse(device.certificate);
     final newKey = generateKeyPair();
     final response = await renew(device, newKey);
     final current = renewed(h, device, newKey, response);
     final newer = Certificate.parse(current.certificate);
+
+    // The newest certificate is in use.
+    await current.instances.listInstances(pb.ListInstancesRequest());
 
     // The previous certificate still works for ordinary calls, but renewing
     // with it would evict the newer one.
@@ -117,6 +120,150 @@ void main() {
     );
     await current.instances.listInstances(pb.ListInstancesRequest());
     await device.instances.listInstances(pb.ListInstancesRequest());
+  });
+
+  test(
+    'renewal_retried_with_the_previous_certificate_after_a_lost_response',
+    () async {
+      final (h, device) = await twentyDaysLeft();
+      final original = Certificate.parse(device.certificate);
+
+      // The daemon renews and the answer is lost: the client never learns
+      // the certificate, so it never uses it.
+      final lostKey = generateKeyPair();
+      final lost = renewed(h, device, lostKey, await renew(device, lostKey));
+
+      // It renews again with the certificate it still has.
+      h.clock.advance(const Duration(hours: 1));
+      final newKey = generateKeyPair();
+      final fresh = renewed(h, device, newKey, await renew(device, newKey));
+      final issued = Certificate.parse(fresh.certificate);
+
+      // One device with the new expiry, holding the presenting certificate
+      // and the new one.
+      expect(issued.sha256, isNot(Certificate.parse(lost.certificate).sha256));
+      final devices = (await fresh.pairing.listDevices(pb.ListDevicesRequest()))
+          .devices;
+      expect(devices, hasLength(1));
+      expect(devices.single.name, 'desk-01');
+      expect(
+        devices.single.certificateExpiresAt.toDateTime().toUtc(),
+        issued.notAfter,
+      );
+      expect(
+        devices.single.certificates.map((c) => c.sha256),
+        unorderedEquals([original.sha256, issued.sha256]),
+      );
+
+      // The undelivered certificate no longer authenticates.
+      await expectLater(
+        pb.InstancesClient(lost.connect())
+            .listInstances(pb.ListInstancesRequest()),
+        failsWithStatus(StatusCode.unauthenticated, 'unauthenticated'),
+      );
+      await fresh.instances.listInstances(pb.ListInstancesRequest());
+      await device.instances.listInstances(pb.ListInstancesRequest());
+    },
+  );
+
+  test('the_previous_certificate_cannot_renew_after_the_window', () async {
+    final (h, device) = await twentyDaysLeft();
+    final original = Certificate.parse(device.certificate);
+
+    // A renewal whose answer is never used.
+    final lostKey = generateKeyPair();
+    final lost = renewed(h, device, lostKey, await renew(device, lostKey));
+
+    // Inside the window the previous certificate may still renew; one hour
+    // before the end it can, after it it cannot.
+    h.clock.advance(const Duration(hours: 26) - const Duration(minutes: 1));
+    h.clock.advance(const Duration(minutes: 2));
+    await expectLater(
+      renew(device, generateKeyPair()),
+      failsWithStatus(StatusCode.unauthenticated, 'unauthenticated'),
+    );
+
+    // Nothing changed: both certificates are still the device's.
+    final devices = (await lost.pairing.listDevices(pb.ListDevicesRequest()))
+        .devices;
+    expect(
+      devices.single.certificates.map((c) => c.sha256),
+      unorderedEquals([
+        original.sha256,
+        Certificate.parse(lost.certificate).sha256,
+      ]),
+    );
+  });
+
+  test('a_clock_set_back_does_not_reopen_the_window', () async {
+    final (h, device) = await twentyDaysLeft();
+    final original = Certificate.parse(device.certificate);
+    final lostKey = generateKeyPair();
+    final lost = renewed(h, device, lostKey, await renew(device, lostKey));
+
+    // The host clock is corrected to before the certificate was issued.
+    h.clock.advance(const Duration(days: -3));
+    await expectLater(
+      renew(device, generateKeyPair()),
+      failsWithStatus(StatusCode.unauthenticated, 'unauthenticated'),
+    );
+
+    final devices = (await lost.pairing.listDevices(pb.ListDevicesRequest()))
+        .devices;
+    expect(
+      devices.single.certificates.map((c) => c.sha256),
+      unorderedEquals([
+        original.sha256,
+        Certificate.parse(lost.certificate).sha256,
+      ]),
+    );
+  });
+
+  test('the_previous_certificate_can_renew_just_inside_the_window', () async {
+    final (h, device) = await twentyDaysLeft();
+    final lostKey = generateKeyPair();
+    await renew(device, lostKey);
+
+    h.clock.advance(const Duration(hours: 25, minutes: 59));
+    final response = await renew(device, generateKeyPair());
+
+    // (The new certificate starts 26 hours after the real time, which TLS
+    // would not accept yet, so the device is checked with the old one.)
+    final devices = (await device.pairing.listDevices(pb.ListDevicesRequest()))
+        .devices;
+    expect(devices.single.certificates, hasLength(2));
+    expect(
+      devices.single.certificates.map((c) => c.sha256),
+      contains(
+        Certificate.parse(Uint8List.fromList(response.clientCertificateDer))
+            .sha256,
+      ),
+    );
+  });
+
+  test('first_use_is_recorded_once', () async {
+    final (h, device) = await twentyDaysLeft();
+    final newKey = generateKeyPair();
+    final fresh = renewed(h, device, newKey, await renew(device, newKey));
+    final newest = Certificate.parse(fresh.certificate).sha256;
+
+    DateTime? firstUsed() => h.security.devices
+        .get(device.deviceId)!
+        .certificates
+        .singleWhere((c) => c.sha256 == newest)
+        .firstUsedAt;
+
+    expect(firstUsed(), isNull, reason: 'issued but never presented');
+
+    await fresh.instances.listInstances(pb.ListInstancesRequest());
+    final first = firstUsed();
+    expect(first, h.clock.time);
+
+    // Later calls, even much later, leave it alone.
+    h.clock.advance(const Duration(hours: 5));
+    await fresh.instances.listInstances(pb.ListInstancesRequest());
+    await fresh.instances.listInstances(pb.ListInstancesRequest());
+    expect(firstUsed(), first);
   });
 
   test('a second renewal retires the first certificate', () async {

@@ -7,10 +7,22 @@ import 'atomically.dart';
 /// A certificate a device may present (design D4): its current one and,
 /// after a renewal, the previous one until it expires.
 class DeviceCertificateRow {
-  const DeviceCertificateRow(this.sha256, this.notAfter);
+  const DeviceCertificateRow(
+    this.sha256,
+    this.notAfter, [
+    this.firstUsedAt,
+    this.issuedAt,
+  ]);
 
   final String sha256;
   final DateTime notAfter;
+
+  /// When the daemon issued the certificate (its own clock).
+  final DateTime? issuedAt;
+
+  /// When the certificate first authenticated a call; null while it never
+  /// has (it may not have reached the device).
+  final DateTime? firstUsedAt;
 }
 
 class DeviceRecord {
@@ -36,7 +48,8 @@ class DeviceRecord {
 
   bool get revoked => revokedAt != null;
 
-  /// The certificate issued last; the only one that may renew.
+  /// The certificate issued last. It may always renew; the one before it
+  /// only while this one has never been used.
   DeviceCertificateRow? get newestCertificate =>
       certificates.isEmpty ? null : certificates.last;
 
@@ -50,11 +63,14 @@ class DeviceRecord {
 
 /// What the auth gate knows about a certificate fingerprint.
 class CertificateEntry {
-  const CertificateEntry(this.deviceId, this.notAfter, this.revoked);
+  CertificateEntry(this.deviceId, this.notAfter, this.revoked, this.used);
 
   final String deviceId;
   final DateTime notAfter;
   final bool revoked;
+
+  /// Whether the certificate has authenticated a call before.
+  bool used;
 }
 
 /// Enrolled devices and their certificates (design D4), with the in-memory
@@ -90,6 +106,19 @@ class DeviceStore {
   /// that certificate.
   CertificateEntry? lookup(String fingerprint) => _index[fingerprint];
 
+  /// Notes that the certificate [fingerprint] authenticated a call. The first
+  /// time writes `first_used_at`; later calls cost nothing.
+  void markUsed(String fingerprint) {
+    final entry = _index[fingerprint];
+    if (entry == null || entry.used) return;
+    _database.sqlite.execute(
+      'UPDATE device_certificates SET first_used_at = ? '
+      'WHERE sha256 = ? AND first_used_at IS NULL',
+      [_clock().millisecondsSinceEpoch, fingerprint],
+    );
+    entry.used = true;
+  }
+
   /// Adds a device holding the certificate [sha256]. The caller opens the
   /// transaction when this must be atomic with something else.
   DeviceRecord enroll({
@@ -116,9 +145,9 @@ class DeviceStore {
           [id, name, now, now, address],
         )
         ..execute(
-          'INSERT INTO device_certificates(device_id, sha256, not_after) '
-          'VALUES (?, ?, ?)',
-          [id, sha256, notAfter.millisecondsSinceEpoch],
+          'INSERT INTO device_certificates(device_id, sha256, not_after, '
+          'issued_at) VALUES (?, ?, ?, ?)',
+          [id, sha256, notAfter.millisecondsSinceEpoch, now],
         );
     });
     _reindex();
@@ -128,7 +157,8 @@ class DeviceStore {
   /// Adds a renewed certificate to [deviceId]. Only the certificate that
   /// asked for the renewal ([presentedSha256]) is kept beside the new one;
   /// any other certificate of the device is dropped, so a key retired by a
-  /// renewal stops working with the second one (design D4).
+  /// renewal stops working with the second one, and so does a newest
+  /// certificate that was replaced before it was ever used (design D4).
   void addCertificate(
     String deviceId,
     String sha256,
@@ -143,9 +173,14 @@ class DeviceStore {
           [deviceId, presentedSha256],
         )
         ..execute(
-          'INSERT INTO device_certificates(device_id, sha256, not_after) '
-          'VALUES (?, ?, ?)',
-          [deviceId, sha256, notAfter.millisecondsSinceEpoch],
+          'INSERT INTO device_certificates(device_id, sha256, not_after, '
+          'issued_at) VALUES (?, ?, ?, ?)',
+          [
+            deviceId,
+            sha256,
+            notAfter.millisecondsSinceEpoch,
+            _clock().millisecondsSinceEpoch,
+          ],
         );
     });
     _reindex();
@@ -231,13 +266,16 @@ class DeviceStore {
         revokedBy: row['revoked_by']! as String,
         certificates: [
           for (final c in _database.sqlite.select(
-            'SELECT sha256, not_after FROM device_certificates '
+            'SELECT sha256, not_after, first_used_at, issued_at '
+            'FROM device_certificates '
             'WHERE device_id = ? ORDER BY not_after, rowid',
             [row['id']],
           ))
             DeviceCertificateRow(
               c['sha256']! as String,
               _time(c['not_after']! as int),
+              (c['first_used_at'] as int?).let(_time),
+              _time(c['issued_at']! as int),
             ),
         ],
       ),
@@ -246,13 +284,14 @@ class DeviceStore {
   void _reindex() {
     final index = <String, CertificateEntry>{};
     for (final row in _database.sqlite.select(
-      'SELECT c.sha256, c.not_after, c.device_id, d.revoked_at '
+      'SELECT c.sha256, c.not_after, c.device_id, c.first_used_at, d.revoked_at '
       'FROM device_certificates c JOIN devices d ON d.id = c.device_id',
     )) {
       index[row['sha256']! as String] = CertificateEntry(
         row['device_id']! as String,
         _time(row['not_after']! as int),
         row['revoked_at'] != null,
+        row['first_used_at'] != null,
       );
     }
     _index = index;

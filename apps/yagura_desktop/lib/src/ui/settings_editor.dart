@@ -36,6 +36,7 @@ class _SettingsEditorState extends ConsumerState<SettingsEditor> {
   /// After a `revision_conflict`: the fields where the saved settings differ
   /// from what the user is about to save.
   List<FieldDifference> _conflict = const [];
+  String? _conflictHeader;
   bool _saving = false;
 
   /// The instance the form was filled from. The form copies its values once,
@@ -106,15 +107,58 @@ class _SettingsEditorState extends ConsumerState<SettingsEditor> {
           ],
         ),
       );
-      for (final MapEntry(:key, :value) in submission.secrets.entries) {
-        updated = await transport.setSecret(
-          SetSecretRequest(
-            instanceId: instance.id,
-            expectedRevision: updated.revision,
-            key: key,
-            value: value,
-          ),
-        );
+      // The settings are saved: the form moves to this revision now, so a
+      // failure below does not leave it on a revision the daemon has passed.
+      if (mounted) setState(() => _editing = updated);
+      final pending = submission.secrets.entries.toList();
+      for (var i = 0; i < pending.length; i++) {
+        final MapEntry(:key, :value) = pending[i];
+        try {
+          updated = await transport.setSecret(
+            SetSecretRequest(
+              instanceId: instance.id,
+              expectedRevision: updated.revision,
+              key: key,
+              value: value,
+            ),
+          );
+          if (mounted) setState(() => _editing = updated);
+        } on DaemonCallException catch (e) {
+          final notSet = [for (final p in pending.skip(i)) '"${p.key}"'];
+          if (e.reason == 'revision_conflict') {
+            // Someone else changed the instance after the settings were
+            // saved: show what differs and keep the edits, like a conflict on
+            // the settings themselves. The form does not move on silently.
+            await _onConflict(
+              connection,
+              instance,
+              submission,
+              header:
+                  'The settings were saved, but someone else changed this '
+                  'instance before the secrets ${notSet.join(', ')} could be '
+                  'set. Your edits are still in the form. These fields differ '
+                  'from your values; saving again sets the secrets and '
+                  'replaces the saved values with yours.',
+              emptyNotice:
+                  'The settings were saved, but someone else changed this '
+                  'instance before the secrets ${notSet.join(', ')} could be '
+                  'set. No setting shown here differs. Save again to set the '
+                  'secrets.',
+            );
+            return;
+          }
+          if (!mounted) return;
+          setState(() {
+            _violations = const {};
+            _conflict = const [];
+            _editing = updated;
+            _error =
+                'The settings were saved. The secrets ${notSet.join(', ')} '
+                'were not: ${e.message.isEmpty ? e.reason : e.message}. '
+                'Enter them again and save.';
+          });
+          return;
+        }
       }
       if (!mounted) return;
       setState(() {
@@ -153,8 +197,10 @@ class _SettingsEditorState extends ConsumerState<SettingsEditor> {
   Future<void> _onConflict(
     DaemonConnection connection,
     Instance mine,
-    SettingsSubmission submission,
-  ) async {
+    SettingsSubmission submission, {
+    String? header,
+    String? emptyNotice,
+  }) async {
     var current = widget.instance;
     try {
       current = await connection.transport.getInstance(mine.id);
@@ -165,8 +211,14 @@ class _SettingsEditorState extends ConsumerState<SettingsEditor> {
     setState(() {
       _editing = current;
       _violations = const {};
-      _error = null;
       _conflict = differences(submission, current);
+      _conflictHeader = header;
+      _error = _conflict.isEmpty
+          ? emptyNotice ??
+                'Someone else saved first and none of your changes were '
+                    'saved. No setting shown here differs (secrets are never '
+                    'compared). Save again to apply your changes.'
+          : null;
     });
   }
 
@@ -198,7 +250,11 @@ class _SettingsEditorState extends ConsumerState<SettingsEditor> {
             ),
           ),
         if (_conflict.isNotEmpty)
-          _ConflictPanel(differences: _conflict, onReload: _reload),
+          _ConflictPanel(
+            differences: _conflict,
+            header: _conflictHeader,
+            onReload: _reload,
+          ),
         if (widget.instance.revision > _editing.revision)
           Padding(
             padding: const EdgeInsets.all(12),
@@ -307,9 +363,14 @@ Map<String, Object?> _flatten(
 }
 
 class _ConflictPanel extends StatelessWidget {
-  const _ConflictPanel({required this.differences, required this.onReload});
+  const _ConflictPanel({
+    required this.differences,
+    required this.onReload,
+    this.header,
+  });
 
   final List<FieldDifference> differences;
+  final String? header;
   final VoidCallback onReload;
 
   @override
@@ -319,10 +380,12 @@ class _ConflictPanel extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Someone else saved these settings first. Your edits are still in '
-          'the form and nothing was changed. These fields differ from what '
-          'is saved now; saving again replaces the saved values with yours.',
+        Text(
+          header ??
+              'Someone else saved these settings first. Your edits are still '
+                  'in the form and nothing was changed. These fields differ '
+                  'from what is saved now; saving again replaces the saved '
+                  'values with yours.',
         ),
         for (final d in differences)
           Padding(

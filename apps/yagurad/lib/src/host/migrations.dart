@@ -193,4 +193,13 @@ CREATE TABLE daemon_identity (
 
 ALTER TABLE audit ADD COLUMN remote_address TEXT NOT NULL DEFAULT '';
 '''),
+  // M2: when a device certificate was issued and when it first authenticated
+  // a call. A renewal from the previous certificate is accepted only while
+  // the newest is unused and was issued less than 26 hours ago (design D4).
+  // Certificates that exist now count as used and as old.
+  Migration(6, '''
+ALTER TABLE device_certificates ADD COLUMN first_used_at INTEGER;
+ALTER TABLE device_certificates ADD COLUMN issued_at INTEGER NOT NULL DEFAULT 0;
+UPDATE device_certificates SET first_used_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000;
+'''),
 ];

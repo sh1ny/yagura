@@ -44,6 +44,17 @@ class FakeDaemon implements DaemonTransport {
   final List<({String instanceId, String key, String value, int revision})>
   secretCalls = [];
 
+  /// Runs at the start of every `SetSecret` (to change the instance
+  /// meanwhile, as another device would).
+  void Function()? beforeSetSecret;
+
+  /// Thrown by `SetSecret` when set.
+  DaemonCallException? setSecretFailure;
+
+  /// When true a successful `UpdateSettings` stores the new settings and ports
+  /// and bumps the revision, as the real daemon does.
+  bool updateBumpsRevision = false;
+
   /// The CSRs of `RenewCertificate` calls.
   final List<Uint8List> renewals = [];
 
@@ -162,6 +173,8 @@ class FakeDaemon implements DaemonTransport {
       value: request.value,
       revision: request.expectedRevision.toInt(),
     ));
+    beforeSetSecret?.call();
+    if (setSecretFailure case final failure?) throw failure;
     final current = instances.firstWhere((i) => i.id == request.instanceId);
     if (request.expectedRevision != current.revision) {
       throw const DaemonCallException(code: 9, reason: 'revision_conflict');
@@ -252,7 +265,12 @@ class FakeDaemon implements DaemonTransport {
     if (request.expectedRevision != current.revision) {
       throw const DaemonCallException(code: 9, reason: 'revision_conflict');
     }
-    return current;
+    if (!updateBumpsRevision) return current;
+    final updated = current.deepCopy()
+      ..settings = request.settings
+      ..revision = current.revision + 1;
+    emitChanged(updated);
+    return updated;
   }
 
   @override

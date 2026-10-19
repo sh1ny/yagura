@@ -48,6 +48,8 @@ void main() {
       'device_id',
       'sha256',
       'not_after',
+      'first_used_at', // migration 6
+      'issued_at', // migration 6
     });
     expect(columnsOf(db, 'pairing_codes'), {
       'code_hash',
@@ -110,5 +112,31 @@ void main() {
         .select('SELECT launched_ports FROM runs')
         .single;
     expect(run['launched_ports'], '[]');
+  });
+  test('migration_6_counts_existing_certificates_as_used', () {
+    final path = p.join(dir.path, 'v5.db');
+    final v5 = YaguraDatabase.open(
+      path,
+      migrations: allMigrations.take(5).toList(),
+    );
+    v5.sqlite
+      ..execute('INSERT INTO devices(id, name, enrolled_at) VALUES (?, ?, ?)', [
+        'dev-1',
+        'desk',
+        1,
+      ])
+      ..execute(
+        'INSERT INTO device_certificates(device_id, sha256, not_after) '
+        "VALUES ('dev-1', 'abc', 2)",
+      );
+    v5.close();
+
+    final migrated = YaguraDatabase.open(path);
+    addTearDown(migrated.close);
+
+    final row = migrated.sqlite
+        .select('SELECT first_used_at FROM device_certificates')
+        .single;
+    expect(row['first_used_at'], isNotNull);
   });
 }

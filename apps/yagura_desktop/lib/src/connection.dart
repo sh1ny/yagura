@@ -130,6 +130,14 @@ class SecretNotSet implements Exception {
   String toString() => message;
 }
 
+/// Thrown by the `afterConnect` hook when the credentials changed (a renewed
+/// certificate): the connection opens a new transport at once, with the new
+/// pair, and closes the old one after the new one is up. The daemon is not
+/// shown as reconnecting meanwhile.
+class ConnectionRefresh implements Exception {
+  const ConnectionRefresh();
+}
+
 /// Thrown by the connection's `connect` or `afterConnect` hooks when the
 /// daemon cannot be used until the admin acts (pairs again): the connection
 /// takes [status] and stops.
@@ -139,10 +147,12 @@ class ConnectionBlocked implements Exception {
   final ConnectionStatus status;
 }
 
+/// The longest wait between reconnect attempts.
+const Duration kBackoffCap = Duration(seconds: 30);
+
 /// Reconnect delays: 1 s, doubling to a 30 s cap.
 Duration backoffDelay(int attempt) {
-  const cap = Duration(seconds: 30);
-  if (attempt >= 5) return cap;
+  if (attempt >= 5) return kBackoffCap;
   return Duration(seconds: 1 << attempt);
 }
 
@@ -168,6 +178,8 @@ class DaemonConnection {
     this.clientVersion = kClientApiVersion,
     Delay? delay,
     DateTime Function()? now,
+    this.lastSeenBefore,
+    this.onSeen,
   }) : _delay = delay ?? Future<void>.delayed,
        _now = now ?? DateTime.now;
 
@@ -185,6 +197,14 @@ class DaemonConnection {
   final Delay _delay;
   final DateTime Function() _now;
 
+  /// When the daemon last answered in an earlier session (from the daemon
+  /// list), used until it answers in this one.
+  final DateTime? Function()? lastSeenBefore;
+
+  /// Called with the time the daemon answered (on connect) or was lost, so
+  /// the daemon list can keep it across restarts.
+  final void Function(DateTime seen)? onSeen;
+
   final _status = ValueNotifier<ConnectionStatus>(const Connecting());
   final _instances = ValueNotifier<List<Instance>>(const []);
   final _operations = ValueNotifier<List<OperationState>>(const []);
@@ -200,6 +220,11 @@ class DaemonConnection {
   /// reconnect.
   ConnectionStatus? _terminal;
   DateTime? _lastSeen;
+
+  /// Set when the credentials changed: the next attempt starts at once and
+  /// the old transport stays in use until the new one is up.
+  bool _refresh = false;
+  DaemonTransport? _retiring;
 
   /// Ends the current instance stream early (a terminal state, dispose).
   void Function()? _cancelWatch;
@@ -265,6 +290,11 @@ class DaemonConnection {
     _ => '$error',
   };
 
+  void _markSeen() {
+    final seen = _lastSeen = _now();
+    onSeen?.call(seen);
+  }
+
   void _setStatus(ConnectionStatus status) {
     if (!_disposed) _status.value = status;
   }
@@ -272,9 +302,11 @@ class DaemonConnection {
   Future<void> _run() async {
     var attempt = 0;
     var everConnected = false;
+    var refreshing = false;
     while (!_disposed && _terminal == null) {
-      // An offline daemon stays offline while it is retried.
-      if (_status.value is! Offline) {
+      // An offline daemon stays offline while it is retried; a refresh keeps
+      // the connected state until the new transport is up.
+      if (!refreshing && _status.value is! Offline) {
         _setStatus(everConnected ? const Reconnecting() : const Connecting());
       }
       DaemonTransport? transport;
@@ -299,10 +331,13 @@ class DaemonConnection {
             return;
           case final Compatible negotiated:
             _transport = transport;
+            final old = _retiring;
+            _retiring = null;
+            if (old != null) unawaited(old.close().catchError((Object _) {}));
             everConnected = true;
             connected = true;
             attempt = 0;
-            _lastSeen = _now();
+            _markSeen();
             _setStatus(Connected(info: info, negotiated: negotiated));
             for (final waiter in _connectedWaiters) {
               waiter.complete(transport);
@@ -318,22 +353,41 @@ class DaemonConnection {
         if (_terminalFor(error) case final terminal?) _terminate(terminal);
         if (_terminal == null && !_disposed) {
           if (connected) {
-            _lastSeen = _now();
+            _markSeen();
+            _setStatus(const Reconnecting());
+          } else if (everConnected && backoffDelay(attempt) < kBackoffCap) {
+            // It was up in this session: it is `connecting` while it is
+            // retried quickly, `offline` once the backoff reaches its cap.
             _setStatus(const Reconnecting());
           } else {
-            _setStatus(Offline(error: _describe(error), lastSeen: _lastSeen));
+            _setStatus(
+              Offline(
+                error: _describe(error),
+                lastSeen: _lastSeen ?? lastSeenBefore?.call(),
+              ),
+            );
           }
         }
       }
       ended.complete();
-      _transport = null;
-      if (transport != null) {
-        unawaited(transport.close().catchError((Object _) {}));
+      refreshing = _refresh && connected && _terminal == null && !_disposed;
+      _refresh = false;
+      if (refreshing) {
+        // Keep serving on this transport; it is closed once the next one is
+        // up (or when that attempt fails).
+        _retiring = transport;
+        attempt = 0;
+        continue;
       }
+      _transport = null;
+      for (final t in [transport, _retiring]) {
+        if (t != null) unawaited(t.close().catchError((Object _) {}));
+      }
+      _retiring = null;
       if (_disposed || _terminal != null) break;
       if (connected && _status.value is Connected) {
         // The stream ended without an error: the connection is lost too.
-        _lastSeen = _now();
+        _markSeen();
         _setStatus(const Reconnecting());
       }
       await Future.any([_delay(backoffDelay(attempt)), _stop.future]);
@@ -348,6 +402,10 @@ class DaemonConnection {
   ) async {
     try {
       await hook(transport, ended);
+    } on ConnectionRefresh {
+      if (_disposed || _terminal != null) return;
+      _refresh = true;
+      _cancelWatch?.call();
     } on Object catch (error) {
       if (_terminalFor(error) case final terminal?) {
         _terminate(terminal);

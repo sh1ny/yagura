@@ -198,13 +198,13 @@ final class PairingService {
         caFingerprint: presented,
       );
     } on KeychainUnavailable catch (e) {
-      await _discard(id);
+      await _discard(id, listed: knownIds.contains(id));
       throw PairingFailure(
         KeychainUnavailable.reason,
         'The OS keychain stopped answering: ${e.message}',
       );
     } on Object {
-      await _discard(id);
+      await _discard(id, listed: knownIds.contains(id));
       rethrow;
     }
   }
@@ -288,9 +288,16 @@ final class PairingService {
     );
   }
 
-  Future<void> _discard(String id) async {
+  /// Removes what this attempt wrote. A daemon that was not listed before
+  /// loses everything stored for it (a late failure may have left the new
+  /// device entry behind); a listed one keeps its working credentials.
+  Future<void> _discard(String id, {required bool listed}) async {
     try {
-      await _credentials.deletePendingKey(id);
+      if (listed) {
+        await _credentials.deletePendingKey(id);
+      } else {
+        await _credentials.delete(id);
+      }
     } on KeychainUnavailable {
       // Nothing more can be done; the entry is overwritten by the next try.
     }
