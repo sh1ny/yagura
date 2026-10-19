@@ -41,11 +41,11 @@ The client SHALL pair a daemon from a pairing string, generating a device key pe
 - **THEN** the client shows that the code expired or was used, adds no daemon, and removes the key it generated
 
 ### Requirement: Device certificate renewal by the client
-The client SHALL renew its certificate with each daemon when fewer than 30 days of validity remain, on connect and daily while connected. If renewal is refused or the certificate has expired, it SHALL show the daemon as `expired` and offer to pair again.
+The client SHALL renew its certificate with each daemon when fewer than 30 days of validity remain, on connect and daily while connected, at most once per 24 hours per daemon by the client's clock. If renewal is refused or the certificate has expired, it SHALL show the daemon as `expired` and offer to pair again.
 
 #### Scenario: Renewal on connect
 - **WHEN** the client connects to a daemon with 20 days left on its certificate
-- **THEN** it renews, stores the new certificate in the keychain, and keeps the connection
+- **THEN** it renews, stores the new certificate in the keychain, and switches to a connection that presents the new certificate while the daemon stays `connected`
 
 #### Scenario: Certificate already expired
 - **WHEN** the client's certificate for a daemon has expired
