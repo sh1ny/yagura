@@ -256,7 +256,7 @@ Covers: desktop-client (all requirements); daemon-security → Client pins the d
 - [x] 11.2 Implement the daemon registry and per-daemon secure connections (D13): keychain storage, pinned CA with authority `yagurad-<daemon-id>`, connection states with backoff 1 s to 30 s, `revoked` and `expired`, and the loopback dev daemon entry. Verify: the multiple-daemons and CA-pinning rows pass; flip them.
 - [x] 11.3 Implement pairing from a pairing string (in-process key and CSR, `Pairing.Info`, fingerprint check, `Enroll`, key deleted on failure), renewal on connect and every 24 h, the create flow calling `SetSecret` after `CreateInstance`, and the revision-conflict reload that keeps edits. Verify: the remaining group rows pass; flip them; the M1 forms rows still pass.
 - [x] 11.4 Update the desktop user docs (pairing, daemon list states, conflicts). Verify: each state shown in the UI is described.
-- [ ] 11.5 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
+- [x] 11.5 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
 
 ## 12. [M2] Integration, write-back and M2 exit
 
