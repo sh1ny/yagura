@@ -4,7 +4,9 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
+import '../platform/win32.dart';
 import '../platform/win32_files.dart';
+import '../platform/win32_security.dart';
 import 'confined_fs.dart';
 import 'reparse_tags.dart';
 
@@ -239,6 +241,76 @@ class WindowsConfinedBackend implements ConfinedBackend {
       }
     } finally {
       source.close();
+    }
+  }
+
+  @override
+  void setSecurity(
+    ConfinedPath path,
+    String sddl, {
+    String? ownerSid,
+    bool inherit = false,
+  }) => _withSecurityHandle(path, write: true, (handle) {
+    try {
+      setHandleDacl(handle, sddl, ownerSid: ownerSid, protect: !inherit);
+    } on Win32Error catch (e) {
+      throw FileSystemException('cannot set the security: $e', path.toString());
+    }
+  });
+
+  @override
+  String securityOf(ConfinedPath path) {
+    late String sddl;
+    _withSecurityHandle(path, write: false, (handle) {
+      sddl = securityDescriptorSddl(handle);
+    });
+    return sddl;
+  }
+
+  static const _readControl = 0x00020000;
+  static const _writeOwner = 0x00080000;
+
+  /// Calls [use] with a handle on [path] opened without following a link,
+  /// with the rights to read (and, if [write], change) its security.
+  void _withSecurityHandle(
+    ConfinedPath path,
+    void Function(int handle) use, {
+    required bool write,
+  }) {
+    final access =
+        Win32Files.fileReadAttributes |
+        Win32Files.synchronize |
+        _readControl |
+        (write ? Win32.writeDac | _writeOwner : 0);
+    if (path.isRoot) {
+      final rootHandle = _openRootHandle(path, access);
+      if (rootHandle == null) throw _notFound(path);
+      try {
+        use(rootHandle.handle);
+      } finally {
+        rootHandle.close();
+      }
+      return;
+    }
+    final parent = _requireParent(path, _read);
+    try {
+      final opened = _create(
+        parent.handle,
+        path.name,
+        access: access,
+        disposition: Win32Files.fileOpen,
+        options: _common,
+      );
+      if (opened.status < 0) throw _fail(opened.status, path, 'open');
+      try {
+        _refuseLink(opened.handle, path, path.parts.length);
+        _checkInside(opened.handle, parent.rootFinal, path);
+        use(opened.handle);
+      } finally {
+        _nt.ntClose(opened.handle);
+      }
+    } finally {
+      parent.close();
     }
   }
 
@@ -567,6 +639,8 @@ class WindowsConfinedBackend implements ConfinedBackend {
           size: isDirectory ? 0 : (standard + 8).cast<Int64>().value,
           modified: _time((basic + 16).cast<Int64>().value),
           created: _time(basic.cast<Int64>().value),
+          // FILE_STANDARD_INFORMATION.NumberOfLinks
+          links: (standard + 16).cast<Uint32>().value,
         );
       });
 

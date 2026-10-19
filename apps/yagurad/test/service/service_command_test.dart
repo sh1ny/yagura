@@ -88,6 +88,9 @@ class _FakeAccounts implements AccountOperations {
   int deleteProfile(String sid) => 0;
 
   @override
+  int removeRights(String sid) => 0;
+
+  @override
   int deleteAccount(String account) {
     deletedAccounts.add(account);
     return 0;

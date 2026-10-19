@@ -19,6 +19,17 @@ class PortableConfinedBackend implements ConfinedBackend {
   /// The confined directory (absolute, normalised).
   final String root;
 
+  @override
+  void setSecurity(
+    ConfinedPath path,
+    String sddl, {
+    String? ownerSid,
+    bool inherit = false,
+  }) {}
+
+  @override
+  String securityOf(ConfinedPath path) => '';
+
   /// The absolute path of [path] when every component that exists is a plain
   /// directory or file; null when the path or a directory above it is
   /// missing. Fails `sandbox_violation` on a link, the root included.

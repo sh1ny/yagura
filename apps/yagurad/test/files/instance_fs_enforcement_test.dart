@@ -30,18 +30,24 @@ const _allowed = <String, String>{
       'the snapshot folders in the data directory; instance data is read and '
       'written through InstanceFs',
   'steam/stray_processes.dart': '/proc, to find stray SteamCMD processes',
+  'host/data_dir_protector.dart':
+      'creates the parent of the data directory itself (no instance path); the '
+      'directory and everything in it go through ConfinedFs',
   'platform/disk_space.dart':
       'looks for the nearest existing folder to ask its volume for free space; '
       'reads no file',
   'instances/instance_manager.dart':
       'lists the instances root (not an instance) in the marked-directory '
       'sweep; everything below an instance goes through InstanceFs',
-  // The run files. The daemon writes launch.json and cancel.json through
-  // InstanceFs; what stays here is the daemon's by-path read of what the relay
-  // wrote, whose trust is design D9 (group 9).
+  // The run files. The daemon builds them with RunFiles.forRun (or an
+  // InstanceFs), so its reads and writes of launch.json, relay.json, exit.json
+  // and cancel.json go through the instance's ConfinedFs. What stays here is
+  // the by-path branch used when no fs is given: the relay (a separate
+  // process, which can reach only what its own account can already write) and
+  // the tests. The 'the daemon builds RunFiles only with an fs' test below
+  // keeps the daemon off that branch.
   'process/run_files.dart':
-      'reads of relay.json, exit.json and cancel.json '
-      '(design D9)',
+      'the by-path branch (no fs) used by the relay and the tests',
   // The relay is a separate process that owns the server's pipes; it writes
   // its own files by path and runs as the server's account after group 9.
   'process/relay_run_files.dart':
@@ -126,6 +132,27 @@ void main() {
     ]) {
       expect(source, isNot(contains(write)), reason: write);
     }
+  });
+
+  test('the daemon builds RunFiles only with an fs', () {
+    // The relay (launcher_modes.dart) reads and writes by path; everything
+    // else must pass `fs:` or use RunFiles.forRun.
+    final offenders = <String>[];
+    for (final file in _sources()) {
+      final key = _key(file);
+      if (key == 'process/run_files.dart' ||
+          key == 'process/launcher_modes.dart') {
+        continue;
+      }
+      final lines = file.readAsLinesSync();
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].trimLeft().startsWith('//')) continue;
+        if (!RegExp(r'(?<![\w.])RunFiles\(').hasMatch(lines[i])) continue;
+        final call = lines.skip(i).take(4).join(' ');
+        if (!call.contains('fs:')) offenders.add('$key:${i + 1}');
+      }
+    }
+    expect(offenders, isEmpty, reason: 'use RunFiles.forRun or pass fs:');
   });
 
   test('the unconfined InstanceRoot is gone', () {

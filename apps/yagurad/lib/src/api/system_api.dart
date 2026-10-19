@@ -14,12 +14,16 @@ import 'convert.dart';
 import 'service_support.dart';
 
 /// Components this daemon version does not build yet (design D7, D11). The
-/// secret store joins them on a host without one.
-// TODO(D10, group 9): add `steam_account` here until the Steam account exists.
-List<String> notBuiltComponents({required bool secretStore}) => [
+/// secret store joins them on a host without one, and the service accounts
+/// are built only where the daemon manages them (service mode; a development
+/// daemon runs everything as the current user).
+List<String> notBuiltComponents({
+  required bool secretStore,
+  required bool serviceAccounts,
+}) => [
   if (!secretStore) 'secret_store',
   'firewall',
-  'service_accounts',
+  if (!serviceAccounts) 'service_accounts',
 ];
 
 /// The `System` service: `GetInfo`, `GetHealth` and `ListAudit`.
@@ -95,10 +99,12 @@ class SystemApi extends pb.SystemServiceBase with GuardedService {
       hooksDegraded: daemon.hooks.degraded,
       pluginsOk: daemon.plugins.results.every((r) => r.isLoaded),
       secretStoreOk: secretStoreOk,
-      notBuilt: notBuiltComponents(secretStore: secretStore),
-      // The service accounts are not built yet.
+      notBuilt: notBuiltComponents(
+        secretStore: secretStore,
+        serviceAccounts: daemon.serviceAccountsManaged,
+      ),
       adminChannelOk: daemon.adminChannelOk,
-      serviceAccountsOk: false,
+      serviceAccountsOk: daemon.serviceAccountsOk,
       serverCertNotAfter: security == null
           ? null
           : timestamp(security.identity.serverCertificate.notAfter),

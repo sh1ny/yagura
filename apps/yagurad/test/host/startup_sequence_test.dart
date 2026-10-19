@@ -7,6 +7,7 @@ import 'package:yagurad/src/host/data_directory.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/host/migrations.dart';
 
+import '../support/acl_support.dart';
 import '../support/daemon_support.dart';
 import '../support/secret_support.dart';
 
@@ -135,10 +136,15 @@ void main() {
       reason: 'the dev daemon stored it',
     );
 
+    // The data directory protection needs administrator rights; the fake
+    // stands in for it, so this row passes without them.
+    final protector = FakeDataDirProtector();
     daemon = await env.start(
       serviceMode: true,
       secretProtector: FakeSecretProtector(serviceSid),
+      dataDirProtector: protector,
     );
+    expect(protector.events.first, 'open');
 
     // Recovery deleted the row, not just hid it.
     final db = YaguraDatabase.open(p.join(env.data, 'yagura.db'));

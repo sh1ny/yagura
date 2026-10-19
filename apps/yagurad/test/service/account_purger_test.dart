@@ -18,17 +18,29 @@ class _FakeAccounts implements AccountOperations {
   final profilesDeleted = <String>[];
   final accountErrors = <String, int>{};
 
+  /// The calls that change the machine, in the order they were made.
+  final calls = <String>[];
+  final rightsErrors = <String, int>{};
+
   @override
   String? sidOf(String account) => sids[account];
 
   @override
   int deleteProfile(String sid) {
+    calls.add('profile $sid');
     profilesDeleted.add(sid);
     return profileErrors[sid] ?? 0;
   }
 
   @override
+  int removeRights(String sid) {
+    calls.add('rights $sid');
+    return rightsErrors[sid] ?? 0;
+  }
+
+  @override
   int deleteAccount(String account) {
+    calls.add('delete $account');
     if (accountErrors[account] case final error?) return error;
     deleted.add(account);
     sids.remove(account);
@@ -99,6 +111,46 @@ void main() {
       expect(accounts.deleted, ['yagura-srv', 'yagura-steam']);
       // Only the two password rows go; the rest of the database stays.
       expect(_secretIds(data), ['daemon-ca']);
+    });
+
+    test('rights_go_from_the_policy_before_the_account_is_deleted', () async {
+      // NetUserDel leaves an account's rights in the local security policy:
+      // the SID of a deleted account would stay there with its logon rights.
+      final data = _dataDirectory();
+      final accounts = _FakeAccounts({
+        'yagura-srv': 'S-1-5-21-1',
+        'yagura-steam': 'S-1-5-21-2',
+      });
+
+      await HostAccountPurger(
+        dataDirectory: () => data.path,
+        operations: accounts,
+      ).purge();
+
+      expect(accounts.calls, [
+        'profile S-1-5-21-1',
+        'rights S-1-5-21-1',
+        'delete yagura-srv',
+        'profile S-1-5-21-2',
+        'rights S-1-5-21-2',
+        'delete yagura-steam',
+      ]);
+    });
+
+    test('rights_that_cannot_be_removed_keep_the_account', () async {
+      final data = _dataDirectory();
+      final accounts = _FakeAccounts({'yagura-srv': 'S-1-5-21-1'})
+        ..rightsErrors['S-1-5-21-1'] = 5;
+
+      final outcomes = await HostAccountPurger(
+        dataDirectory: () => data.path,
+        operations: accounts,
+      ).purge();
+
+      expect(outcomes.first.removed, isFalse);
+      expect(outcomes.first.reason, contains('LsaRemoveAccountRights'));
+      expect(accounts.deleted, isEmpty);
+      expect(_secretIds(data), contains(serviceAccountSecretId('yagura-srv')));
     });
 
     test('an_account_that_never_existed_is_removed_already', () async {

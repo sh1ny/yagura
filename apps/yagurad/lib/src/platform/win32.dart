@@ -529,6 +529,7 @@ class Win32 {
   static const ownerSecurityInformation = 0x1;
   static const daclSecurityInformation = 0x4;
   static const protectedDaclSecurityInformation = 0x80000000;
+  static const unprotectedDaclSecurityInformation = 0x20000000;
 
   /// `WRITE_DAC` and `GENERIC_WRITE`-free open of a file for a DACL change.
   static const writeDac = 0x00040000;

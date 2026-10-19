@@ -7,7 +7,9 @@ import 'package:sqlite3/sqlite3.dart';
 import '../errors.dart';
 import '../platform/acl_writer.dart';
 import '../platform/win32.dart';
+import '../platform/win32_account_management.dart';
 import '../platform/win32_accounts.dart';
+import '../platform/win32_security.dart';
 
 /// The local accounts the service owns (ADR 0013, 0015).
 const serviceAccountNames = ['yagura-srv', 'yagura-steam'];
@@ -53,6 +55,12 @@ abstract interface class AccountOperations {
   /// Win32 error (2 when the account never had a profile).
   int deleteProfile(String sid);
 
+  /// Takes every right of the account with [sid] out of the local security
+  /// policy (`LsaRemoveAccountRights`); 0 on success, or the Win32 error.
+  /// `NetUserDel` leaves them behind: the deleted account's SID would stay in
+  /// the policy with its logon rights.
+  int removeRights(String sid);
+
   /// Deletes the account; 0 on success or `NERR_UserNotFound` (2221).
   int deleteAccount(String account);
 }
@@ -65,6 +73,16 @@ class WindowsAccountOperations implements AccountOperations {
 
   @override
   int deleteProfile(String sid) => deleteAccountProfile(sid);
+
+  @override
+  int removeRights(String sid) {
+    try {
+      removeAllAccountRights(stringToSid(sid));
+      return 0;
+    } on Win32AccountError catch (e) {
+      return e.code;
+    }
+  }
 
   @override
   int deleteAccount(String account) => deleteLocalAccount(account);
@@ -106,6 +124,19 @@ class HostAccountPurger implements AccountPurger {
               account,
               removed: false,
               reason: 'its profile is still in use (error $profile)',
+            ),
+          );
+          continue;
+        }
+        // The rights go while the account's SID still resolves; the policy
+        // would keep them after NetUserDel.
+        final rights = operations.removeRights(sid);
+        if (rights != 0) {
+          outcomes.add(
+            PurgeOutcome(
+              account,
+              removed: false,
+              reason: 'LsaRemoveAccountRights failed with error $rights',
             ),
           );
           continue;

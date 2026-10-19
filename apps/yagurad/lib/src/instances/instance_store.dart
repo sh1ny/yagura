@@ -149,6 +149,22 @@ class InstanceStore {
     ];
   }
 
+  /// The ACL layout version of the instance directory (`instances.acl_layout`).
+  int aclLayout(String id) {
+    final rows = _database.sqlite.select(
+      'SELECT acl_layout FROM instances WHERE id = ?',
+      [id],
+    );
+    return rows.isEmpty ? 0 : rows.first['acl_layout']! as int;
+  }
+
+  void setAclLayout(String id, int version) {
+    _database.sqlite.execute(
+      'UPDATE instances SET acl_layout = ? WHERE id = ?',
+      [version, id],
+    );
+  }
+
   /// Writes [record] and its ports in one transaction.
   void save(InstanceRecord record) {
     _database.transaction(() => _write(record, record.revision));

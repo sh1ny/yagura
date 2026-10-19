@@ -9,6 +9,8 @@ import '../admin/admin_service.dart';
 import '../admin/admin_transport.dart';
 import '../hooks/hooks.dart';
 import '../instances/health_check.dart';
+import '../instances/instance.dart' show aclMigrationFailedReason;
+import '../instances/instance_acls.dart';
 import '../instances/instance_manager.dart';
 import '../instances/instance_roots.dart';
 import '../instances/instance_store.dart';
@@ -19,11 +21,13 @@ import '../operations/operations.dart';
 import '../platform/acl_writer.dart';
 import '../plugins/plugin_registry.dart';
 import '../process/process.dart';
+import '../service/service_accounts.dart';
 import '../service/version_sweeper.dart';
 import '../snapshots/snapshots.dart';
 import '../steam/steam.dart';
 import '../version.dart';
 import 'data_dir_lock.dart';
+import 'data_dir_protector.dart';
 import 'data_directory.dart';
 import 'database.dart';
 import '../security/security.dart';
@@ -57,6 +61,9 @@ class DaemonConfig {
     this.adminListener,
     this.aclWriter,
     this.accountSids,
+    this.dataDirProtector,
+    this.serviceAccounts,
+    this.instanceAcls,
     this.hostAddresses,
     this.versionSweeper,
     this.logOptions = const LogHubOptions(),
@@ -111,6 +118,19 @@ class DaemonConfig {
   /// Resolves `yagura-srv` and `yagura-steam` for the root DACL.
   final AccountSids? accountSids;
 
+  /// Protects the data directory before the database opens (design D6);
+  /// null in development mode and where a test has no administrator rights.
+  final DataDirProtector? dataDirProtector;
+
+  /// Makes the object that creates and repairs `yagura-srv` and
+  /// `yagura-steam` at every service start (design D7), given the secret store
+  /// that keeps their passwords; null manages no accounts.
+  final ServiceAccounts Function(SecretStore secrets)? serviceAccounts;
+
+  /// Gives instance directories their DACL at create and for older
+  /// instances; null manages no instance ACLs.
+  final InstanceAcls? instanceAcls;
+
   /// The addresses `yagurad pair` picks from; defaults to the host's.
   final Future<List<InternetAddress>> Function()? hostAddresses;
 
@@ -163,6 +183,8 @@ class Daemon {
     required AdminServer? admin,
     required this.security,
     required this.startedAt,
+    required this.serviceAccountsManaged,
+    required this.serviceAccountsOk,
     required SteamService steam,
     required InstanceLogSync logSync,
   }) : _lock = lock, // ignore: prefer_initializing_formals
@@ -188,6 +210,13 @@ class Daemon {
   /// Where instance directories may live (design D5).
   final HostRoots roots;
 
+  /// Whether this daemon manages the service accounts (service mode).
+  final bool serviceAccountsManaged;
+
+  /// Whether the service accounts were set up at this start
+  /// (`GetHealth.service_accounts_ok`).
+  final bool serviceAccountsOk;
+
   /// Whether the admin channel is served (`GetHealth.admin_channel_ok`).
   bool get adminChannelOk => _admin?.serving ?? false;
 
@@ -208,13 +237,50 @@ class Daemon {
   final DateTime startedAt;
 
   static Future<Daemon> start(DaemonConfig config) async {
-    final dataDirectory = _fatal('data_directory', () {
-      return DataDirectory.prepare(config.dataDirectory);
-    });
-    final lock = _fatal(
-      'data_directory_lock',
-      () => DataDirLock.acquire(dataDirectory.lockPath),
-    );
+    // Design D6: in service mode the data directory is opened first, without
+    // following links, and held until it is protected, so nothing is created
+    // behind a link and the directory cannot be swapped.
+    final protector = config.serviceMode ? config.dataDirProtector : null;
+    final held = protector == null
+        ? null
+        : _fatal(
+            'data_directory_protection',
+            () => protector.open(config.dataDirectory),
+          );
+    final DataDirectory dataDirectory;
+    try {
+      dataDirectory = _fatal('data_directory', () {
+        return DataDirectory.prepare(config.dataDirectory);
+      });
+    } on Object {
+      held?.close();
+      rethrow;
+    }
+    final DataDirLock lock;
+    try {
+      lock = _fatal(
+        'data_directory_lock',
+        () => DataDirLock.acquire(dataDirectory.lockPath),
+      );
+    } on Object {
+      held?.close();
+      rethrow;
+    }
+    if (held != null && protector != null) {
+      try {
+        _fatal('data_directory_protection', () {
+          try {
+            held.protect();
+          } finally {
+            held.close();
+          }
+          protector.walk(dataDirectory.path, complete: false);
+        });
+      } on Object {
+        lock.release();
+        rethrow;
+      }
+    }
     final YaguraDatabase database;
     try {
       database = _fatal(
@@ -326,6 +392,7 @@ class Daemon {
               clock: config.clock,
             ),
         runs: runStore,
+        acls: config.serviceMode ? config.instanceAcls : null,
         healthEvaluator: HealthEvaluator(
           pollInterval: config.healthPollInterval,
           settle: config.processHealthSettle,
@@ -376,6 +443,35 @@ class Daemon {
         () => sweeper.sweep(runStore.unresolved()),
       );
     }
+    // Design D7, D6: the accounts, then the rest of the data directory (which
+    // needs their SIDs), then the instance directories.
+    var accountsOk = false;
+    final accounts = config.serviceMode
+        ? config.serviceAccounts?.call(secrets)
+        : null;
+    if (accounts != null) {
+      await degraded('service_accounts', () {
+        accounts.ensure();
+        accountsOk = true;
+      });
+    }
+    if (protector != null) {
+      final server = config.accountSids?.sidOf(gameServerAccount);
+      final steamSid = config.accountSids?.sidOf(steamAccount);
+      await degraded('data_directory_protection', () {
+        protector.walk(
+          dataDirectory.path,
+          serverSid: server,
+          steamSid: steamSid,
+          complete: accountsOk && server != null && steamSid != null,
+        );
+      });
+    }
+    await degraded('instance_acls', () {
+      for (final failure in manager.migrateInstanceAcls()) {
+        notices.add(StartupNotice(aclMigrationFailedReason, failure));
+      }
+    });
     await degraded('reconcile', manager.reconcilePlugins);
     await degraded('marked_directories', manager.sweepMarkedDirectories);
     await degraded('snapshots', manager.purgeExpiredSnapshots);
@@ -407,6 +503,7 @@ class Daemon {
           'data_dir': dataDirectory.path,
           'version': daemonVersion,
           'executable': Platform.resolvedExecutable,
+          'service_accounts_ok': accountsOk,
         },
         hostAddresses: config.hostAddresses,
       );
@@ -435,6 +532,8 @@ class Daemon {
       admin: admin,
       security: security,
       startedAt: (config.clock ?? DateTime.now)(),
+      serviceAccountsManaged: accounts != null,
+      serviceAccountsOk: accountsOk,
       steam: config.steam,
       logSync: logSync,
     );

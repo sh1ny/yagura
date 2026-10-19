@@ -352,10 +352,17 @@ const writeOwner = 0x00080000;
 
 /// Replaces the DACL of the object behind [handle] (opened with `WRITE_DAC`,
 /// and `WRITE_OWNER` for [ownerSid]) with the one from [sddl], through
-/// `SetKernelObjectSecurity`. The new DACL is protected: nothing inherits.
+/// `SetKernelObjectSecurity`. The new DACL is protected, so nothing inherits;
+/// with [protect] false it is marked unprotected instead, for the entries the
+/// daemon's own walk writes to a child (they carry the inherited flag).
 /// Setting the descriptor through the handle that was checked leaves no gap
 /// for a path to be swapped for another.
-void setHandleDacl(int handle, String sddl, {String? ownerSid}) {
+void setHandleDacl(
+  int handle,
+  String sddl, {
+  String? ownerSid,
+  bool protect = true,
+}) {
   final win32 = Win32.instance;
   Win32Error? failure;
   final parseError = _withDescriptor(
@@ -367,7 +374,9 @@ void setHandleDacl(int handle, String sddl, {String? ownerSid}) {
         () => win32.setKernelObjectSecurity(
           handle,
           Win32.daclSecurityInformation |
-              Win32.protectedDaclSecurityInformation |
+              (protect
+                  ? Win32.protectedDaclSecurityInformation
+                  : Win32.unprotectedDaclSecurityInformation) |
               (ownerSid == null ? 0 : Win32.ownerSecurityInformation),
           sd,
         ),

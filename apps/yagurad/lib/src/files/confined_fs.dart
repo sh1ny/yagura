@@ -17,6 +17,7 @@ class ConfinedEntry {
     required this.size,
     required this.modified,
     required this.created,
+    this.links = 1,
   });
 
   /// The entry's own name (no directory part).
@@ -35,6 +36,9 @@ class ConfinedEntry {
   /// When the entry was created (the status-change time where the host has
   /// no creation time).
   final DateTime created;
+
+  /// How many names the file has (hard links); 1 where the host does not say.
+  final int links;
 
   @override
   String toString() => 'ConfinedEntry($name)';
@@ -118,6 +122,23 @@ abstract interface class ConfinedBackend {
 
   /// Renames [from] to [to] within the root, replacing a file at [to].
   void rename(ConfinedPath from, ConfinedPath to);
+
+  /// Sets the DACL of the entry [path] from [sddl], and its owner when
+  /// [ownerSid] is given, through a handle opened without following links:
+  /// only that object changes, nothing propagates (ADR 0015). The DACL is
+  /// protected unless [inherit] is set, which marks it as taking the entries
+  /// of the parent (the walk writes those entries itself). A host without
+  /// ACLs does nothing.
+  void setSecurity(
+    ConfinedPath path,
+    String sddl, {
+    String? ownerSid,
+    bool inherit = false,
+  });
+
+  /// The owner and DACL of the entry [path] as SDDL, or an empty string on a
+  /// host without ACLs.
+  String securityOf(ConfinedPath path);
 }
 
 /// File access confined to one directory (design D8, ADR 0013).
@@ -333,6 +354,25 @@ class ConfinedFs {
   /// Renames [from] to [to], replacing a file there.
   void rename(String from, String to) =>
       _backend.rename(parse(from), parse(to));
+
+  // ---- security --------------------------------------------------------------
+
+  /// Sets the DACL (and, with [ownerSid], the owner) of [path] without
+  /// following links; see [ConfinedBackend.setSecurity].
+  void setSecurity(
+    String path,
+    String sddl, {
+    String? ownerSid,
+    bool inherit = false,
+  }) => _backend.setSecurity(
+    parse(path),
+    sddl,
+    ownerSid: ownerSid,
+    inherit: inherit,
+  );
+
+  /// The owner and DACL of [path] as SDDL.
+  String securityOf(String path) => _backend.securityOf(parse(path));
 
   // ---- copying ---------------------------------------------------------------
 

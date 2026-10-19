@@ -12,14 +12,19 @@ import '../errors.dart';
 import 'admin_commands.dart';
 import 'service_command.dart';
 import '../host/daemon.dart';
+import '../host/data_dir_protector.dart';
 import '../host/data_directory.dart';
+import '../instances/instance_acls.dart';
 import '../host/secret_store.dart';
 import '../platform/win32_security.dart';
 import '../process/launcher_modes.dart';
 import '../platform/acl_writer.dart';
 import '../process/process.dart';
+import '../process/process_verifier.dart';
 import '../service/install_layout.dart';
+import '../service/service_accounts.dart';
 import '../service/version_sweeper.dart';
+import '../steam/steam_process.dart';
 import '../steam/steamcmd_service.dart';
 
 /// The warning dev mode prints (`daemon-security` spec).
@@ -173,7 +178,9 @@ Future<int> _helper(
   final parser = ArgParser()
     ..addOption('run-dir')
     ..addOption('console-of')
-    ..addOption('created');
+    ..addOption('created')
+    // The account credentials come on standard input, one JSON line.
+    ..addFlag('as-account', negatable: false);
   final ArgResults args;
   try {
     args = parser.parse(arguments);
@@ -184,7 +191,22 @@ Future<int> _helper(
   final runDirectory = args['run-dir'] as String?;
   switch (mode) {
     case 'launch' when runDirectory != null:
-      return runLaunchMode(runDirectory, env.out, env.err);
+      AccountCredentials? credentials;
+      if (args['as-account'] as bool) {
+        // Without credentials the relay would start as this process's own
+        // account (LocalSystem under the service): never fall back to that.
+        credentials = AccountCredentials.decode(stdin.readLineSync());
+        if (credentials == null) {
+          env.err.writeln('yagurad: --as-account needs credentials on stdin');
+          return exitUsage;
+        }
+      }
+      return runLaunchMode(
+        runDirectory,
+        env.out,
+        env.err,
+        credentials: credentials,
+      );
     case 'relay' when runDirectory != null:
       return runRelayMode(runDirectory, env.err);
     case 'signal'
@@ -263,14 +285,56 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
   }
 
   final dataDirectory = (args['data-dir'] as String?) ?? defaultDataDirectory();
+  // The service accounts, the data-directory protection and the ACLs are the
+  // real machine's: a test that fakes the LocalSystem check does not run as
+  // LocalSystem and cannot use them.
+  final managed = !dev && Platform.isWindows && env.isLocalSystem == null;
+  ServiceAccounts? accounts;
   final Daemon daemon;
   try {
     daemon = await Daemon.start(
       DaemonConfig(
         dataDirectory: dataDirectory,
         apiPort: bind.port,
-        processHost: env.processHost,
-        steam: SteamCmdService(steamcmdRoot: p.join(dataDirectory, 'steamcmd')),
+        processHost:
+            env.processHost ??
+            (managed
+                ? WindowsProcessHost(
+                    helperExecutable: Platform.resolvedExecutable,
+                    account: ServerAccount(
+                      name: gameServerAccount,
+                      password: () => accounts?.passwordOf(gameServerAccount),
+                    ),
+                    verifier: ProcessVerifier(
+                      accountSid: () =>
+                          const WindowsAccountSids().sidOf(gameServerAccount),
+                    ),
+                  )
+                : null),
+        steam: SteamCmdService(
+          steamcmdRoot: p.join(dataDirectory, 'steamcmd'),
+          launcher: managed
+              ? JobObjectLauncher(
+                  account: SteamAccount(
+                    name: steamAccount,
+                    password: () => accounts?.passwordOf(steamAccount),
+                  ),
+                )
+              : null,
+          unpackThroughLauncher: managed,
+        ),
+        dataDirProtector: managed
+            ? AclDataDirProtector(writer: const WindowsAclWriter())
+            : null,
+        serviceAccounts: managed
+            ? (secrets) => accounts = HostServiceAccounts(
+                backend: const WindowsAccountBackend(),
+                secrets: secrets,
+              )
+            : null,
+        instanceAcls: managed
+            ? HostInstanceAcls(const WindowsAccountSids())
+            : null,
         serviceMode: !dev,
         versionSweeper: dev
             ? null
