@@ -125,12 +125,15 @@ void main() {
       final server = await host.launch(fakeLaunch(rig, root, 'a'));
       // Another application's console: a second server behind its own relay.
       final other = await host.launch(fakeLaunch(rig, root, 'b'));
-      final otherRelay = other.relay!;
-      // A persisted relay record whose PID now belongs to that application.
+      // A persisted relay record that no longer matches the process with that
+      // PID (the relay ended and its PID was reused: the start time differs).
+      // The server's parent PID is still the recorded one (design D9), and the
+      // relay was created before it.
+      final realRelay = server.relay!;
       final reused = ProcessIdentity(
-        pid: otherRelay.pid,
-        executable: otherRelay.executable,
-        created: otherRelay.created + 1,
+        pid: realRelay.pid,
+        executable: realRelay.executable,
+        created: realRelay.created + 1,
       );
       final attached = (await host.reattach(server.identity, relay: reused))!;
 

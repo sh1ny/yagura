@@ -42,6 +42,7 @@ class SteamCmdService implements SteamService {
     SteamCmdBootstrap? bootstrap,
     SteamCmdCommand Function(String installationDirectory)? command,
     SteamProcessLauncher? launcher,
+    this.unpackThroughLauncher = false,
     StrayProcessControl? strays,
     DiskSpaceProbe? diskSpace,
     SteamPatterns? patterns,
@@ -84,6 +85,10 @@ class SteamCmdService implements SteamService {
   final SteamCmdBootstrap _bootstrap;
   final SteamCmdCommand Function(String installationDirectory) _command;
   final SteamProcessLauncher _launcher;
+
+  /// Whether the bootstrap unpacks the archive through the launcher, so that
+  /// it runs as the SteamCMD account (service mode, design D10).
+  final bool unpackThroughLauncher;
   final StrayProcessControl _strays;
   final DiskSpaceProbe _diskSpace;
   final SteamPatterns _patterns;
@@ -230,7 +235,12 @@ class SteamCmdService implements SteamService {
       // Whatever an earlier attempt left is not trusted.
       _remembered.markNotReady(installation);
       _fs.deleteTree(installation);
-      await _bootstrap.install(_fs, installation, cancel: cancel);
+      await _bootstrap.install(
+        _fs,
+        installation,
+        cancel: cancel,
+        launcher: unpackThroughLauncher ? _launcher : null,
+      );
       cancel.throwIfCancelled();
       // SteamCMD updates itself on its first run, which exits with code 7
       // once the update is installed ("Update complete, launching..."), so
@@ -259,7 +269,7 @@ class SteamCmdService implements SteamService {
         throw YaguraException(
           'steamcmd_unavailable',
           'SteamCMD did not run after its self-update: it exited with code '
-              '${outcome.exitCode}; its last ${lastLines.length} output '
+              '${exitCodeText(outcome.exitCode)}; its last ${lastLines.length} output '
               'lines:\n${lastLines.join('\n')}',
           details: {
             'installation': installation,
@@ -360,7 +370,7 @@ class SteamCmdService implements SteamService {
     if (outcome.exitCode != 0) {
       throw YaguraException(
         'steam_unknown_error',
-        'SteamCMD exited with code ${outcome.exitCode}; its last '
+        'SteamCMD exited with code ${exitCodeText(outcome.exitCode)}; its last '
             '${lastLines.length} output lines:\n${lastLines.join('\n')}',
         details: {
           'appId': request.appId,

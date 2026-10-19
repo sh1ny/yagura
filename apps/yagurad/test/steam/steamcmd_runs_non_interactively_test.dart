@@ -80,6 +80,28 @@ void main() {
     expect(steam.appRuns(), hasLength(2));
   });
 
+  test('a Windows status as the exit code is shown in hexadecimal', () async {
+    // 0xC0000142 is what a process that cannot initialise returns (a desktop
+    // or profile its account cannot use): the number alone says nothing.
+    final env = TestEnv();
+    final steam = SteamHarness(
+      env,
+      fakeEnvironment: {
+        'FAKE_STEAMCMD_TRANSCRIPT': 'unknown_failure.txt',
+        'FAKE_STEAMCMD_EXIT': '${0xC0000142}',
+      },
+    );
+
+    await expectLater(
+      steam.service.installApp(
+        requestFor(env),
+        RecordingReporter(),
+        CancelToken(),
+      ),
+      failsWith('steam_unknown_error', messageHas: ['3221225794 (0xC0000142)']),
+    );
+  }, tags: ['windows']);
+
   test('unknown_failure_surfaced', () async {
     final env = TestEnv();
     final steam = SteamHarness(

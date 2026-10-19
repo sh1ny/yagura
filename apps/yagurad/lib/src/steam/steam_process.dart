@@ -7,7 +7,9 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
+import '../errors.dart';
 import '../platform/win32.dart';
+import '../platform/win32_logon.dart';
 
 /// A running SteamCMD process as the Steam service sees it.
 abstract interface class SteamProcess {
@@ -123,7 +125,12 @@ class _PlainProcess implements SteamProcess {
 /// it launches in turn cannot escape the job (design D7). stdin is the NUL
 /// device; stdout and stderr share one pipe.
 class JobObjectLauncher implements SteamProcessLauncher {
-  final _live = <_JobProcess>{};
+  /// With an [account], every process starts as that account on its own
+  /// window station (design D10); without one, as the daemon's user.
+  JobObjectLauncher({this.account});
+
+  final SteamAccount? account;
+  final _live = <SteamProcess>{};
 
   @override
   Future<SteamProcess> start(
@@ -132,12 +139,23 @@ class JobObjectLauncher implements SteamProcessLauncher {
     required String workingDirectory,
     Map<String, String> environment = const {},
   }) async {
-    final process = _JobProcess.spawn(
-      executable,
-      arguments,
-      workingDirectory,
-      environment,
-    );
+    final SteamProcess process;
+    if (account case final account?) {
+      process = await _AccountJobProcess.start(
+        account,
+        executable,
+        arguments,
+        workingDirectory,
+        environment,
+      );
+    } else {
+      process = _JobProcess.spawn(
+        executable,
+        arguments,
+        workingDirectory,
+        environment,
+      );
+    }
     _live.add(process);
     unawaited(process.exitCode.whenComplete(() => _live.remove(process)));
     return process;
@@ -149,6 +167,16 @@ class JobObjectLauncher implements SteamProcessLauncher {
       process.kill();
     }
   }
+}
+
+/// The account SteamCMD runs as (`yagura-steam`, ADR 0014).
+class SteamAccount {
+  const SteamAccount({required this.name, required this.password});
+
+  final String name;
+
+  /// The stored password; null before the accounts were set up.
+  final String? Function() password;
 }
 
 /// Quotes [argument] for a Windows command line (the `CommandLineToArgvW`
@@ -390,6 +418,224 @@ class _JobProcess implements SteamProcess {
       FileSystemException('$call failed');
 }
 
+/// A process started as the SteamCMD account (design D10). The logon, the
+/// profile load and the unload after the process and its job are gone all
+/// happen in one isolate: a profile load is balanced by `UnloadUserProfile`
+/// there, and the first logon of an account takes seconds that the daemon's
+/// isolate must not spend.
+class _AccountJobProcess implements SteamProcess {
+  _AccountJobProcess._(this.pid, this._job, int pipeRead, this._exit) {
+    _exit.whenComplete(() => _exited = true);
+    final output = ReceivePort();
+    final decoder = const Utf8Decoder(allowMalformed: true)
+        .startChunkedConversion(_LineSink(_lines));
+    output.listen((message) {
+      if (message is Uint8List) {
+        decoder.add(message);
+      } else {
+        decoder.close();
+        output.close();
+        _lines.close();
+      }
+    });
+    Isolate.spawn(_readPipe, (output.sendPort, pipeRead));
+  }
+
+  static Future<_AccountJobProcess> start(
+    SteamAccount account,
+    String executable,
+    List<String> arguments,
+    String workingDirectory,
+    Map<String, String> environment,
+  ) async {
+    final password = account.password();
+    if (password == null) {
+      throw YaguraException(
+        'steamcmd_unavailable',
+        'SteamCMD cannot start: the account ${account.name} has no stored '
+            'password yet',
+      );
+    }
+    final port = ReceivePort();
+    final started = Completer<List<Object?>>();
+    final exit = Completer<int>();
+    port.listen((message) {
+      final list = message as List<Object?>;
+      if (list.first == 'exit') {
+        exit.complete(list[1]! as int);
+        port.close();
+      } else if (!started.isCompleted) {
+        started.complete(list);
+        if (list.first == 'failed') port.close();
+      }
+    });
+    await Isolate.spawn(
+      _runAsAccount,
+      _AccountRequest(
+        port.sendPort,
+        account.name,
+        password,
+        [executable, ...arguments].map(quoteWindowsArgument).join(' '),
+        workingDirectory,
+        environment,
+      ),
+    );
+    final result = await started.future;
+    if (result.first == 'failed') {
+      throw YaguraException(
+        'steamcmd_unavailable',
+        'SteamCMD could not be started as ${account.name}: ${result[1]}',
+      );
+    }
+    return _AccountJobProcess._(
+      result[1]! as int,
+      result[2]! as int,
+      result[3]! as int,
+      exit.future,
+    );
+  }
+
+  @override
+  final int pid;
+  final int _job;
+  final Future<int> _exit;
+  final _lines = StreamController<String>();
+  var _exited = false;
+
+  @override
+  Stream<String> get lines => _lines.stream;
+
+  @override
+  Future<int> get exitCode => _exit;
+
+  @override
+  void kill() {
+    if (_exited) return;
+    Win32.instance.terminateJobObject(_job, 1);
+  }
+}
+
+class _AccountRequest {
+  const _AccountRequest(
+    this.port,
+    this.account,
+    this.password,
+    this.commandLine,
+    this.workingDirectory,
+    this.environment,
+  );
+
+  final SendPort port;
+  final String account;
+  final String password;
+  final String commandLine;
+  final String workingDirectory;
+  final Map<String, String> environment;
+}
+
+/// Runs in its own isolate; see [_AccountJobProcess]. Sends `['started', pid,
+/// job, pipeRead]` or `['failed', why]`, then `['exit', code]`.
+void _runAsAccount(_AccountRequest request) {
+  final win = Win32.instance;
+  final allocated = <Pointer<NativeType>>[];
+  AccountSession? session;
+  var job = 0;
+  var process = 0;
+  var thread = 0;
+  var pipeRead = 0;
+  var pipeWrite = 0;
+  var nul = 0;
+  var started = false;
+  try {
+    session = AccountSession.open(request.account, request.password);
+    job = win.createJobObject(nullptr, nullptr);
+    if (job == 0) throw const FileSystemException('CreateJobObject failed');
+    final limits = calloc<Uint8>(Win32.jobExtendedLimitSize);
+    allocated.add(limits);
+    (limits + Win32.jobLimitFlagsOffset).cast<Uint32>().value =
+        Win32.jobKillOnClose;
+    if (win.setInformationJobObject(
+          job,
+          Win32.jobExtendedLimitInformation,
+          limits.cast(),
+          Win32.jobExtendedLimitSize,
+        ) ==
+        0) {
+      throw const FileSystemException('SetInformationJobObject failed');
+    }
+    final attributes = calloc<Uint8>(Win32.securityAttributesSize);
+    allocated.add(attributes);
+    attributes.cast<Uint32>().value = Win32.securityAttributesSize;
+    (attributes + 16).cast<Int32>().value = 1; // inherit
+    final readEnd = calloc<IntPtr>();
+    final writeEnd = calloc<IntPtr>();
+    allocated
+      ..add(readEnd)
+      ..add(writeEnd);
+    if (win.createPipe(readEnd, writeEnd, attributes.cast(), 0) == 0) {
+      throw const FileSystemException('CreatePipe failed');
+    }
+    pipeRead = readEnd.value;
+    pipeWrite = writeEnd.value;
+    // The read end stays ours: it must not be inherited.
+    win.setHandleInformation(pipeRead, 1, 0);
+    final nulName = 'NUL'.toNativeUtf16();
+    allocated.add(nulName);
+    nul = win.createFile(nulName, 0x80000000, 3, attributes.cast(), 3, 0, 0);
+    if (nul == Win32.invalidHandle) {
+      nul = 0;
+      throw const FileSystemException('CreateFile NUL failed');
+    }
+    // Only the pipe's write end and the NUL device are inherited (design
+    // D10): nothing else the daemon holds reaches SteamCMD.
+    final child = session.start(
+      commandLine: request.commandLine,
+      workingDirectory: request.workingDirectory,
+      flags: Win32.createSuspended | Win32.createNewConsole,
+      handles: [nul, pipeWrite],
+      stdin: nul,
+      stdout: pipeWrite,
+      stderr: pipeWrite,
+      environment: request.environment,
+    );
+    process = child.process;
+    thread = child.thread;
+    if (win.assignProcessToJobObject(job, process) == 0) {
+      win.terminateProcess(process, 1);
+      throw const FileSystemException('AssignProcessToJobObject failed');
+    }
+    if (win.resumeThread(thread) == 0xFFFFFFFF) {
+      win.terminateProcess(process, 1);
+      throw const FileSystemException('ResumeThread failed');
+    }
+    win.closeHandle(thread);
+    thread = 0;
+    win.closeHandle(pipeWrite);
+    pipeWrite = 0;
+    win.closeHandle(nul);
+    nul = 0;
+    started = true;
+    request.port.send(<Object?>['started', child.pid, job, pipeRead]);
+  } on Object catch (e) {
+    for (final handle in [thread, pipeWrite, nul, pipeRead, process, job]) {
+      if (handle != 0 && handle != Win32.invalidHandle) win.closeHandle(handle);
+    }
+    session?.close();
+    request.port.send(<Object?>['failed', '$e']);
+  } finally {
+    for (final pointer in allocated) {
+      calloc.free(pointer);
+    }
+  }
+  if (!started) return;
+  final code = _waitProcessAndJob(process, job);
+  // The profile is unloaded once SteamCMD and its job are gone (ADR 0015).
+  session!.close();
+  win.closeHandle(process);
+  win.closeHandle(job);
+  request.port.send(<Object?>['exit', code]);
+}
+
 /// Collects decoded text into whole lines (`\n`, `\r\n` or a lone `\r`, which
 /// SteamCMD uses to redraw a progress line).
 class _LineSink implements Sink<String> {
@@ -446,10 +692,9 @@ void _readPipe((SendPort, int) arguments) {
 }
 
 /// Waits for the process, then for the rest of its job: SteamCMD may hand its
-/// work to a relaunched copy and exit, and that copy must finish. Reports the
+/// work to a relaunched copy and exit, and that copy must finish. Returns the
 /// exit code of the process that was started.
-void _waitProcess((SendPort, int, int) arguments) {
-  final (port, handle, job) = arguments;
+int _waitProcessAndJob(int handle, int job) {
   final win = Win32.instance;
   win.waitForSingleObject(handle, 0xFFFFFFFF);
   final code = calloc<Uint32>();
@@ -479,5 +724,16 @@ void _waitProcess((SendPort, int, int) arguments) {
   } finally {
     calloc.free(accounting);
   }
-  port.send(value);
+  return value;
 }
+
+void _waitProcess((SendPort, int, int) arguments) {
+  final (port, handle, job) = arguments;
+  port.send(_waitProcessAndJob(handle, job));
+}
+
+/// An exit code with its hexadecimal form when it is a Windows status
+/// (`3221225794 (0xC0000142)`).
+String exitCodeText(int code) => code > 0xFFFF || code < 0
+    ? '$code (0x${code.toUnsigned(32).toRadixString(16).toUpperCase()})'
+    : '$code';

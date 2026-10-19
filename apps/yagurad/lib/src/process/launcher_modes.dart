@@ -10,6 +10,7 @@ import '../logs/capture_writer.dart';
 import '../logs/log_models.dart';
 import '../platform/job_restrictions.dart';
 import '../platform/win32.dart';
+import '../platform/win32_logon.dart';
 import '../platform/win32_process.dart';
 import 'relay_run_files.dart';
 import 'run_files.dart';
@@ -18,6 +19,42 @@ import 'run_files.dart';
 const helperOk = 0;
 const helperFailed = 2;
 const helperUsage = 64;
+
+/// The launcher could not log the game-server account on, load its profile or
+/// start the relay as it; stderr names the call and its Win32 error
+/// (`logon_failed: <call> <error>`).
+const helperLogonFailed = 3;
+
+/// The account the launcher starts the relay as, read from its standard input
+/// (never from the command line or the environment, which other processes can
+/// read).
+class AccountCredentials {
+  const AccountCredentials(this.account, this.password);
+
+  final String account;
+  final String password;
+
+  /// `{"account": ..., "password": ...}` on one line.
+  String encode() => jsonEncode({'account': account, 'password': password});
+
+  static AccountCredentials? decode(String? line) {
+    if (line == null) return null;
+    try {
+      final json = jsonDecode(line);
+      if (json is Map &&
+          json['account'] is String &&
+          json['password'] is String) {
+        return AccountCredentials(
+          json['account'] as String,
+          json['password'] as String,
+        );
+      }
+    } on FormatException {
+      return null;
+    }
+    return null;
+  }
+}
 
 /// `yagurad launch --run-dir <dir>` (design D2, ADR 0009): starts the relay in
 /// its own hidden console, outside the daemon's job, prints
@@ -28,9 +65,13 @@ const helperUsage = 64;
 Future<int> runLaunchMode(
   String runDirectory,
   StringSink out,
-  StringSink err,
-) async {
+  StringSink err, {
+  AccountCredentials? credentials,
+}) async {
   final self = Platform.resolvedExecutable;
+  if (credentials != null) {
+    return _launchAsAccount(self, runDirectory, credentials, out, err);
+  }
   try {
     final relay = spawnProcess(
       executable: self,
@@ -60,12 +101,124 @@ Future<int> runLaunchMode(
   }
 }
 
+/// Starts the relay as the game-server account through the logon module
+/// (design D7): logon, profile, environment, `CreateProcessAsUserW` on
+/// `YaguraSrv\Default`. The profile load is balanced by `UnloadUserProfile`
+/// once the relay is started, before this process exits.
+Future<int> _launchAsAccount(
+  String self,
+  String runDirectory,
+  AccountCredentials credentials,
+  StringSink out,
+  StringSink err,
+) async {
+  AccountSession? session;
+  try {
+    session = AccountSession.open(credentials.account, credentials.password);
+    final commandLine = windowsCommandLine(self, [
+      'relay',
+      '--run-dir',
+      runDirectory,
+    ]);
+    StartedProcess started;
+    const flags = Win32.createNewConsole | Win32.createUnicodeEnvironment;
+    // A directory every account can enter: the process takes its current
+    // directory from here, and one the account cannot reach fails its start.
+    final directory = Platform.environment['SystemRoot'] ?? r'C:\Windows';
+    try {
+      started = session.start(
+        commandLine: commandLine,
+        workingDirectory: directory,
+        flags: flags | Win32.createBreakawayFromJob,
+      );
+    } on LogonFailure catch (e) {
+      // A job that does not allow breakaway refuses it with access denied;
+      // the relay then stays in the launcher's job, which ends with it.
+      if (e.call != 'CreateProcessAsUserW' || e.error != 5) rethrow;
+      started = session.start(
+        commandLine: commandLine,
+        workingDirectory: directory,
+        flags: flags,
+      );
+    }
+    final win32 = Win32.instance;
+    final identity = identityOfHandle(started.process, started.pid);
+    // The profile stays loaded until the relay has started and recorded
+    // itself: unloading the hive under a process that is still initialising
+    // fails it (spike S2 waited for the child too).
+    final settled = await _relaySettled(
+      started.process,
+      RunFiles(runDirectory),
+      const Duration(seconds: 30),
+    );
+    win32
+      ..closeHandle(started.thread)
+      ..closeHandle(started.process);
+    if (settled != null) {
+      err.writeln(
+        'the relay (pid ${started.pid}) ended with exit code $settled '
+        '(0x${settled.toUnsigned(32).toRadixString(16).toUpperCase()}) before '
+        'it recorded itself in relay.json',
+      );
+      return helperFailed;
+    }
+    out.writeln(
+      jsonEncode({
+        'relay_pid': started.pid,
+        'relay_created': identity?.created,
+      }),
+    );
+    return helperOk;
+  } on LogonFailure catch (e) {
+    err.writeln('logon_failed: ${e.call} ${e.error}');
+    return helperLogonFailed;
+  } on Object catch (e, stack) {
+    err.writeln('launch failed: $e\n$stack');
+    return helperFailed;
+  } finally {
+    session?.close();
+  }
+}
+
+/// Waits until the relay has written `relay.json` (null), or has ended (its
+/// exit code), or [limit] has passed (null: it is running, only slowly).
+Future<int?> _relaySettled(int process, RunFiles files, Duration limit) async {
+  final deadline = DateTime.now().add(limit);
+  while (DateTime.now().isBefore(deadline)) {
+    if (files.readRelay() != null) return null;
+    if (processEnded(process)) {
+      // It may have recorded itself just before it ended.
+      if (files.readRelay() != null) return null;
+      return exitCodeOfHandle(process);
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+  }
+  return null;
+}
+
 /// `yagurad relay --run-dir <dir>`: starts the server on the relay's own
 /// console, copies its output to the instance's rotating capture, records its
 /// identity and exit, and outlives the daemon.
 ///
 /// Windows only.
 Future<int> runRelayMode(String runDirectory, StringSink err) async {
+  try {
+    return await _runRelay(runDirectory, err);
+  } on Object catch (e, stack) {
+    // The relay's console is hidden: the run's exit file is the only place
+    // the daemon can learn why it ended.
+    err.writeln('relay failed: $e\n$stack');
+    try {
+      RunFiles(runDirectory)
+          .writeExit(-1, DateTime.now(), error: 'the relay failed: $e');
+    } on Object {
+      // Nothing more can be said.
+    }
+    return helperFailed;
+  }
+}
+
+Future<int> _runRelay(String runDirectory, StringSink err) async {
   final win32 = Win32.instance;
   final files = RunFiles(runDirectory);
   final launch = files.readLaunch();

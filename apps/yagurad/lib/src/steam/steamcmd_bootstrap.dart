@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import '../errors.dart';
 import '../files/confined_fs.dart';
 import '../operations/cancel_token.dart';
+import 'steam_process.dart';
 
 /// Downloads [uri] into [destination]; throws on any failure and
 /// [OperationCancelled] once [cancel] fires, after the transfer was aborted.
@@ -52,10 +53,14 @@ class SteamCmdBootstrap {
   /// the HTTP status or the network error; the caller removes the directory
   /// then, so no half-installed directory stays. Throws [OperationCancelled]
   /// once [cancel] fires, with the download or the unpacking stopped.
+  ///
+  /// With a [launcher] the unpacking runs through it, so a service-mode daemon
+  /// extracts as `yagura-steam` and not as SYSTEM (design D10).
   Future<void> install(
     ConfinedFs fs,
     String installation, {
     CancelToken? cancel,
+    SteamProcessLauncher? launcher,
   }) async {
     cancel ??= CancelToken();
     fs.createDirectory(installation);
@@ -80,29 +85,41 @@ class SteamCmdBootstrap {
     }
     // `tar` reads zip and tar.gz alike (bsdtar ships with Windows 10+). Run in
     // the target so a drive letter in the path cannot be taken for a host.
-    final tar = await Process.start(
-      Platform.isWindows
-          ? p.join(
-              Platform.environment['SystemRoot'] ?? r'C:\Windows',
-              'System32',
-              'tar.exe',
-            )
-          : 'tar',
-      ['-xf', 'steamcmd.download'],
-      workingDirectory: fs.absolute(installation),
-    );
-    unawaited(tar.stdout.drain<void>());
-    final stderrText = tar.stderr
-        .transform(const SystemEncoding().decoder)
-        .join();
-    unawaited(cancel.whenCancelled.then((_) => tar.kill()));
-    final code = await tar.exitCode;
+    final tarPath = Platform.isWindows
+        ? p.join(
+            Platform.environment['SystemRoot'] ?? r'C:\Windows',
+            'System32',
+            'tar.exe',
+          )
+        : 'tar';
+    final int code;
+    final Future<String> stderrText;
+    if (launcher != null) {
+      final tar = await launcher.start(tarPath, [
+        '-xf',
+        'steamcmd.download',
+      ], workingDirectory: fs.absolute(installation));
+      final output = tar.lines.toList().then((lines) => lines.join('\n'));
+      unawaited(cancel.whenCancelled.then((_) => tar.kill()));
+      code = await tar.exitCode;
+      stderrText = output;
+    } else {
+      final tar = await Process.start(tarPath, [
+        '-xf',
+        'steamcmd.download',
+      ], workingDirectory: fs.absolute(installation));
+      unawaited(tar.stdout.drain<void>());
+      stderrText = tar.stderr.transform(const SystemEncoding().decoder).join();
+      unawaited(cancel.whenCancelled.then((_) => tar.kill()));
+      code = await tar.exitCode;
+    }
     cancel.throwIfCancelled();
     if (code != 0) {
       throw YaguraException(
         'steamcmd_unavailable',
-        'the SteamCMD archive from $source could not be unpacked: '
-            '${(await stderrText).trim()}',
+        'the SteamCMD archive from $source could not be unpacked: tar '
+            'exited with code ${exitCodeText(code)}; its output: '
+            '"${(await stderrText).trim()}"',
         details: {'source': '$source'},
       );
     }
