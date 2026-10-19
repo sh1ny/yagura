@@ -32,6 +32,11 @@ const updateInterruptedReason = 'update_interrupted';
 const restoreInterruptedReason = 'restore_interrupted';
 const settingsInvalidReason = 'settings_invalid';
 const pluginMissingReason = 'plugin_missing';
+const runRecordRejectedReason = 'run_record_rejected';
+
+/// The notice and warning of an instance whose directory could not be given
+/// its permissions at the first service start (ADR 0015).
+const aclMigrationFailedReason = 'acl_migration_failed';
 
 /// A port of an instance with its resolved number.
 class PortAssignment {

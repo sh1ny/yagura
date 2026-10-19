@@ -84,6 +84,17 @@ class RunStore {
     );
   }
 
+  /// Records the relay the launcher reported, before the server is known: the
+  /// daemon's own record of the relay, so a `relay.json` rewritten by the
+  /// game-server account never names it (design D9).
+  void recordRelay(String runId, ProcessIdentity relay) {
+    _database.sqlite.execute(
+      'UPDATE runs SET relay_pid = ?, relay_created = ?, '
+      'relay_executable = ? WHERE run_id = ?',
+      [relay.pid, relay.created, relay.executable, runId],
+    );
+  }
+
   /// Marks the run `running` with the identities that were verified.
   void markRunning(
     String runId, {

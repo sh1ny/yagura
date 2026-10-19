@@ -13,6 +13,7 @@ class LaunchRequest {
     required this.instanceDirectory,
     this.runDirectory = '',
     this.stdoutEncoding = 'utf-8',
+    this.onRelayStarted,
   });
 
   final String instanceId;
@@ -39,6 +40,11 @@ class LaunchRequest {
   /// source): the relay rotates its capture files only on whole line breaks
   /// of it.
   final String stdoutEncoding;
+
+  /// Called with the relay's identity as soon as the launcher reports it,
+  /// before the server is known, so the daemon holds its own record of the
+  /// relay (design D9).
+  final void Function(ProcessIdentity relay)? onRelayStarted;
 }
 
 /// The identity a process is re-attached by: PID, executable path and start
@@ -82,6 +88,11 @@ abstract interface class RunningServer {
 
   /// The relay that owns the server's pipes, when the host has one.
   ProcessIdentity? get relay;
+
+  /// Whether the run record did not match this process and it was found by
+  /// the fallback (the verified relay's child): the manager raises notice
+  /// `run_record_rejected` (design D9).
+  bool get recordRejected;
 
   /// Completes with the exit code when the process ends.
   Future<int> get exitCode;
@@ -128,7 +139,9 @@ abstract interface class ProcessHost {
   /// The running server with [identity], or null when no live process has
   /// exactly that PID, executable and start time. [runDirectory] holds the
   /// run's `exit.json`, which gives the exit code of a process that is not
-  /// this daemon's child.
+  /// this daemon's child. Throws `YaguraException('run_record_rejected')`
+  /// when the record names a process that is not a verified server and no
+  /// verified relay has a server of its own (design D9).
   Future<RunningServer?> reattach(
     ProcessIdentity identity, {
     ProcessIdentity? relay,

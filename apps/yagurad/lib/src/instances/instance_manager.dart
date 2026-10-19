@@ -10,6 +10,7 @@ import 'package:yagura_plugin/yagura_plugin.dart';
 import '../errors.dart';
 import '../files/files.dart';
 import '../hooks/hooks.dart';
+import '../host/acl_layout.dart';
 import '../host/data_directory.dart';
 import '../host/secret_store.dart';
 import '../operations/operations.dart';
@@ -19,6 +20,7 @@ import '../snapshots/snapshots.dart';
 import '../steam/steam.dart';
 import 'health_check.dart';
 import 'instance.dart';
+import 'instance_acls.dart';
 import 'instance_file.dart';
 import 'instance_roots.dart';
 import 'instance_store.dart';
@@ -44,6 +46,7 @@ class InstanceManager {
     required this.hooks,
     required this.snapshotter,
     required this.runs,
+    this.acls,
     HealthEvaluator? healthEvaluator,
     this.restartDelay = const Duration(seconds: 5),
     this.autostartInterval = const Duration(seconds: 10),
@@ -83,6 +86,10 @@ class InstanceManager {
   /// Run records and crash timestamps; the supervisor in this class and in
   /// [Lifecycle] is their only writer.
   final RunStore runs;
+
+  /// Writes the instance DACL at create and for older instances; null in
+  /// development mode, which manages no ACLs.
+  final InstanceAcls? acls;
   final HealthEvaluator healthEvaluator;
 
   /// How long after a crash the instance is started again.
@@ -248,6 +255,21 @@ class InstanceManager {
     final directory = _checkDirectory(request.directory, id);
 
     final created = ConfinedFs.create(directory);
+    var aclLayout = 0;
+    if (acls case final acls?) {
+      try {
+        aclLayout = acls.apply(directory);
+      } on Object catch (e) {
+        if (created) InstanceFs(directory).deleteTree('');
+        if (e is AclLinkFound) {
+          throw confinedViolation(
+            e.path,
+            'a link or junction in the new instance directory',
+          );
+        }
+        rethrow;
+      }
+    }
     final now = clock();
     final record = InstanceRecord(
       id: id,
@@ -268,10 +290,44 @@ class InstanceManager {
       if (created) InstanceFs(directory).deleteTree('');
       rethrow;
     }
+    if (aclLayout != 0) store.setAclLayout(id, aclLayout);
     _records[id] = record;
     writeInstanceFile(record);
     _emitChanged(record);
     return view(record);
+  }
+
+  /// Gives every instance whose ACL layout is below the current one the
+  /// instance DACL and the inherited entries (once, at the first service
+  /// start after M1 or a development daemon). A link met leaves the layout
+  /// unchanged and raises warning `acl_migration_failed` naming it; the
+  /// instance's launches fail until the admin removes the link. Returns the
+  /// messages of the instances that could not be migrated.
+  List<String> migrateInstanceAcls() {
+    final writer = acls;
+    if (writer == null) return const [];
+    final failed = <String>[];
+    for (final record in _records.values.toList()) {
+      if (store.aclLayout(record.id) >= currentAclLayout) continue;
+      try {
+        final reached = writer.apply(record.directory);
+        if (reached != 0) store.setAclLayout(record.id, reached);
+      } on Object catch (e) {
+        final path = e is AclLinkFound
+            ? InstanceFs(record.directory).absolute(e.path)
+            : record.directory;
+        final message = e is AclLinkFound
+            ? 'instance "${record.name}": $path is a link or junction; remove '
+                  'it so the instance can be given its permissions'
+            : 'instance "${record.name}": its permissions could not be set: '
+                  '${e is YaguraException ? e.message : e}';
+        record.warning = message;
+        store.save(record);
+        _recoveryNotice(record, aclMigrationFailedReason, message);
+        failed.add(message);
+      }
+    }
+    return failed;
   }
 
   // ---- settings -----------------------------------------------------------
@@ -810,8 +866,22 @@ class InstanceManager {
       snapshotter.clearInterruptedRestore(record.id);
     }
     if (record.stateReason == crashLoopReason) runs.clearCrashes(record.id);
+    if (record.stateReason == runRecordRejectedReason) {
+      // The run record named no verified server; nothing is terminated. The
+      // run is over for the daemon, and the warning keeps the relay PID.
+      for (final run in runs.unresolvedFor(record.id)) {
+        runs.markEnded(run.runId, at: clock(), reason: runRecordRejectedReason);
+      }
+      record
+        ..runId = ''
+        ..server = null;
+    }
     final warning = switch (record.stateReason) {
       crashLoopReason => '',
+      runRecordRejectedReason =>
+        record.warning.isEmpty
+            ? 'the run record was rejected: no verified server'
+            : record.warning,
       restoreInterruptedReason =>
         'the restore was interrupted: data paths may be mixed',
       _ => 'the update did not finish: files may be inconsistent',
@@ -1165,6 +1235,12 @@ class InstanceManager {
             InstanceState.running ||
             InstanceState.stopping:
           await _recoverRun(record);
+        case InstanceState.error
+            when record.stateReason == runRecordRejectedReason:
+          // The rejected run stays unresolved until Stop verifies it again or
+          // Acknowledge ends it.
+          final rejected = runs.unresolvedFor(record.id).lastOrNull;
+          if (rejected != null) record.runId = rejected.runId;
         case InstanceState.notInstalled ||
             InstanceState.stopped ||
             InstanceState.error:
@@ -1195,19 +1271,29 @@ class InstanceManager {
   Future<void> _recoverRun(InstanceRecord record) async {
     RunningServer? server;
     RunRecord? adopted;
+    RunRecord? rejectedRun;
     // Newest run first: it is the one the instance's state refers to.
     for (final run in runs.unresolvedFor(record.id).reversed) {
-      if (adopted == null) {
-        final found = await _reattach(run);
-        if (found != null) {
-          server = found;
-          adopted = run;
+      if (adopted == null && rejectedRun == null) {
+        try {
+          final found = await _reattach(run);
+          if (found != null) {
+            server = found;
+            adopted = run;
+            continue;
+          }
+        } on YaguraException catch (e) {
+          if (e.reason != runRecordRejectedReason) rethrow;
+          _rejectRun(record, run, e.message);
+          rejectedRun = run;
           continue;
         }
       }
+      if (identical(run, rejectedRun)) continue;
       await _endLostRun(run);
     }
 
+    if (rejectedRun != null) return;
     if (server == null || adopted == null) {
       // A stop the admin asked for before the daemon went down stays asked.
       final last = runs.all(record.id).lastOrNull;
@@ -1235,6 +1321,9 @@ class InstanceManager {
     record
       ..server = server
       ..runId = adopted.runId;
+    if (server.recordRejected) {
+      _runRecordNotice(record, adopted, server);
+    }
     if (adopted.state == RunState.pending) {
       runs.markRunning(
         adopted.runId,
@@ -1253,10 +1342,80 @@ class InstanceManager {
     }
   }
 
+  /// Puts [record] in `error: run_record_rejected` for [run]: nothing was
+  /// terminated, the run stays unresolved, and the warning names the relay.
+  void _rejectRun(InstanceRecord record, RunRecord run, String message) {
+    setState(
+      record,
+      InstanceState.error,
+      reason: runRecordRejectedReason,
+      warning: message,
+    );
+    record.runId = run.runId;
+    _recoveryNotice(record, runRecordRejectedReason, message);
+  }
+
+  /// The notice for a server found by the fallback of a rejected run record.
+  void _runRecordNotice(
+    InstanceRecord record,
+    RunRecord run,
+    RunningServer server,
+  ) {
+    final message =
+        'the run record of run ${run.runId} named no verified server; '
+        'the relay ${server.relay?.pid ?? run.relay?.pid ?? 0} has server '
+        '${server.pid}, which is now supervised';
+    record.warning = message;
+    _recoveryNotice(record, runRecordRejectedReason, message);
+  }
+
+  /// Verifies the unresolved run of an instance in `error: run_record_rejected`
+  /// again (the Stop exit). Returns true when a verified server was adopted
+  /// and the normal stop can go on; false when the process is gone (the run
+  /// ended and the instance is `stopped`); throws `run_record_rejected` again
+  /// when it is still not verified.
+  Future<bool> retryRejectedRun(InstanceRecord record) async {
+    final run = runs.unresolvedFor(record.id).lastOrNull;
+    if (run == null) {
+      setState(record, InstanceState.stopped);
+      return false;
+    }
+    final RunningServer? server;
+    try {
+      server = await _reattach(run);
+    } on YaguraException catch (e) {
+      if (e.reason != runRecordRejectedReason) rethrow;
+      record.warning = e.message;
+      saveChanges(record);
+      throw YaguraException(
+        runRecordRejectedReason,
+        e.message,
+        details: {...e.details, 'instanceId': record.id},
+      );
+    }
+    if (server == null) {
+      await _endLostRun(run);
+      record.server = null;
+      record.runId = '';
+      record.lastRequestedRunning = false;
+      setState(record, InstanceState.stopped);
+      return false;
+    }
+    record
+      ..server = server
+      ..runId = run.runId;
+    if (run.state == RunState.pending) {
+      runs.markRunning(run.runId, server: server.identity, relay: server.relay);
+    }
+    setState(record, InstanceState.running);
+    watchExit(record, server);
+    return true;
+  }
+
   /// The live server a run recorded, or null when there is none: no process
   /// has exactly the recorded PID, executable and start time.
   Future<RunningServer?> _reattach(RunRecord run) async {
-    final files = RunFiles(run.directory);
+    final files = RunFiles.forRun(run.directory);
     var serverId = run.server;
     var relayId = run.relay;
     if (serverId == null) {
@@ -1265,13 +1424,15 @@ class InstanceManager {
       final deadline = clock().add(pendingRunWait);
       while (true) {
         final relay = files.readRelay();
+        // The daemon's own record of the relay (the launcher reported it)
+        // wins over relay.json, which the game-server account can rewrite.
+        relayId ??= relay?.relay;
         if (relay?.server case final found?) {
           serverId = found;
-          relayId = relay!.relay;
           break;
         }
         if (relay == null ||
-            !await processHost.isAlive(relay.relay) ||
+            !await processHost.isAlive(relayId ?? relay.relay) ||
             clock().isAfter(deadline)) {
           break;
         }
@@ -1300,7 +1461,7 @@ class InstanceManager {
     // A server that exited while the daemon was down: the relay recorded how.
     final exitCode = run.directory.isEmpty
         ? null
-        : RunFiles(run.directory).readExitCode();
+        : RunFiles.forRun(run.directory).readExitCode();
     runs.markEnded(
       run.runId,
       at: clock(),

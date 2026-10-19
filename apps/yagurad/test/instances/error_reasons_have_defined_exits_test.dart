@@ -1,4 +1,5 @@
 import 'package:test/test.dart';
+import 'package:yagurad/src/host/daemon.dart';
 import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/operations/operations.dart';
 
@@ -130,5 +131,66 @@ void main() {
 
     expect(fixed.state, InstanceState.stopped);
     expect(fixed.stateReason, isEmpty);
+  });
+
+  group('a rejected run record', () {
+    Future<(TestEnv, Daemon, String)> rejected() async {
+      final env = TestEnv();
+      env.installValheim();
+      final first = await env.start();
+      final instance = await createRunning(first);
+      await env.kill(first);
+      env.process.rejectedRelayPid = 4242;
+      final daemon = await env.start();
+      return (env, daemon, instance.id);
+    }
+
+    test('acknowledge_a_rejected_run_record', () async {
+      final (_, daemon, id) = await rejected();
+      final before = daemon.instances.get(id);
+      expect(before.state, InstanceState.error);
+      expect(before.stateReason, 'run_record_rejected');
+      expect(daemon.instances.runs.unresolvedFor(id), hasLength(1));
+
+      final acknowledged = daemon.instances.acknowledge(id);
+
+      expect(acknowledged.state, InstanceState.stopped);
+      expect(acknowledged.stateReason, isEmpty);
+      expect(acknowledged.warning, contains('4242'));
+      expect(daemon.instances.runs.unresolvedFor(id), isEmpty);
+      expect(
+        daemon.instances.runs.all(id).last.endReason,
+        'run_record_rejected',
+      );
+    });
+
+    test('start_refused_after_a_rejected_run_record', () async {
+      final (_, daemon, id) = await rejected();
+
+      expect(
+        () => daemon.instances.start(id),
+        failsWith('invalid_state', messageHas: ['run_record_rejected']),
+      );
+      expect(daemon.instances.get(id).state, InstanceState.error);
+    });
+
+    test('stop_retries_the_verification', () async {
+      final (env, daemon, id) = await rejected();
+      final server = env.process.servers.single;
+
+      final refused = await runStop(daemon, id);
+      expect(refused.status, OperationStatus.failed);
+      expect(refused.resultReason, 'run_record_rejected');
+      expect(daemon.instances.get(id).state, InstanceState.error);
+
+      env.process
+        ..rejectedRelayPid = null
+        ..survivors.add(server);
+      final done = await runStop(daemon, id);
+
+      expect(done.status, OperationStatus.succeeded);
+      expect(daemon.instances.get(id).state, InstanceState.stopped);
+      expect(daemon.instances.runs.unresolvedFor(id), isEmpty);
+    });
   });
 }

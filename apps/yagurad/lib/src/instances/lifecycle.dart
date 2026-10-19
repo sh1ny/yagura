@@ -346,6 +346,8 @@ class Lifecycle {
                     if (source.isStdout) source.encoding,
                 ].firstOrNull ??
                 'utf-8',
+            onRelayStarted: (relay) =>
+                _manager.withRuns((runs) => runs.recordRelay(runId, relay)),
           ),
         );
         _manager.withRuns(
@@ -488,6 +490,15 @@ class Lifecycle {
   }) async {
     final record = _manager.recordForOperation(id);
     final plugin = _manager.requirePlugin(record);
+    if (record.state == InstanceState.error &&
+        record.stateReason == runRecordRejectedReason) {
+      // Stop is the retry: verify the run record again; a verified server is
+      // then stopped as usual.
+      if (!await _manager.retryRejectedRun(record)) {
+        _manager.saveChanges(record);
+        return;
+      }
+    }
     final running =
         record.server != null &&
         (record.state == InstanceState.running ||

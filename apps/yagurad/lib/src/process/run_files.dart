@@ -3,7 +3,9 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../errors.dart';
 import '../files/confined_fs.dart';
+import '../files/instance_fs.dart';
 import 'process_host.dart';
 
 /// The files of one run in `<instance>/.yagura/run/<run-id>/` (ADR 0009):
@@ -12,17 +14,28 @@ import 'process_host.dart';
 /// supervisor that gave up waiting for the server). All carry
 /// `format_version: 1`.
 ///
-/// The daemon writes `launch.json` and `cancel.json` through [fs], the
-/// instance's confinement, so a link a server planted in the run path stops
-/// the write (design D8). The relay writes its own files by path
-/// (`relay_run_files.dart`). Reading is still by path; how far the daemon
-/// trusts `relay.json` and `exit.json` is design D9.
+/// The daemon reads and writes every run file through [fs], the instance's
+/// confinement, so a link a server planted in the run path stops the access
+/// (design D8): the daemon runs as SYSTEM and must not follow a link to a file
+/// only SYSTEM can read. [RunFiles.forRun] builds it for the daemon. The relay
+/// is a separate process running as the server's account; it reads and writes
+/// by path (`relay_run_files.dart`), without [fs], because a link in its own
+/// run directory gains it nothing the account does not already have. How far
+/// the daemon trusts what it reads is design D9.
 class RunFiles {
   const RunFiles(this.directory, {this.fs});
 
+  /// The files of the run in [runDirectory] (`<instance>/.yagura/run/<id>`),
+  /// confined to its instance directory: what the daemon uses.
+  factory RunFiles.forRun(String runDirectory) => RunFiles(
+    runDirectory,
+    fs: InstanceFs(p.dirname(p.dirname(p.dirname(runDirectory)))),
+  );
+
   final String directory;
 
-  /// The instance's files; required by the daemon-side writes.
+  /// The instance's files; the daemon's reads and writes go through it. A
+  /// null [fs] reads by path (the relay and tests).
   final ConfinedFs? fs;
 
   static const formatVersion = 1;
@@ -55,11 +68,18 @@ class RunFiles {
     confined.writeAtomic(confined.relative(path), encode(json));
   }
 
-  /// The decoded file, or null when it is missing, unreadable or not a v1
-  /// object (a reader never trusts a half-written file).
-  static Map<String, Object?>? readJson(String path) {
+  /// The decoded file, or null when it is missing, unreadable, behind a link
+  /// (through [fs]) or not a v1 object (a reader never trusts a half-written
+  /// file).
+  Map<String, Object?>? readJson(String path) {
     try {
-      final decoded = jsonDecode(File(path).readAsStringSync());
+      final confined = fs;
+      final text = confined == null
+          ? File(path).readAsStringSync()
+          : utf8.decode(
+              confined.readBytes(confined.relative(path), maxBytes: _maxBytes),
+            );
+      final decoded = jsonDecode(text);
       if (decoded is Map<String, Object?> &&
           decoded['format_version'] == formatVersion) {
         return decoded;
@@ -68,9 +88,15 @@ class RunFiles {
       return null;
     } on FormatException {
       return null;
+    } on YaguraException {
+      // A link planted in the run path, or a file over the limit: the file
+      // counts as missing.
+      return null;
     }
     return null;
   }
+
+  static const _maxBytes = 1024 * 1024;
 
   void writeLaunch(LaunchRequest request) {
     _writeConfined(launchPath, {
