@@ -75,6 +75,22 @@ void main() {
       final log = File(p.join(instance.directory, 'logs', 'server.log'));
       expect(log.readAsStringSync(), contains('Game server connected'));
       final saveLine = RegExp(r'World save \(5/5\) done');
+      // A new world is still generating its locations after "Game server
+      // connected"; a server told to quit before that ends cannot save (its
+      // quit handler fails), so the stop waits for the end of the generation
+      // (the spelling is Valheim's). Whether a save follows it differs between
+      // Valheim builds, so the count below may start at 0.
+      final generationDone = RegExp(r'Loading: Done\. Total seconds sinze');
+      final generated = DateTime.now().add(const Duration(minutes: 10));
+      while (!generationDone.hasMatch(log.readAsStringSync())) {
+        if (DateTime.now().isAfter(generated)) {
+          fail(
+            'the new world was not generated within 10 minutes\n'
+            'end of server.log:\n${_tail(log, 80)}',
+          );
+        }
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
       final savesBefore = saveLine.allMatches(log.readAsStringSync()).length;
       final world = Directory(
         p.join(instance.directory, 'save', 'worlds_local', 'Dedicated'),
@@ -111,7 +127,15 @@ void main() {
       // The world save was written after the stop was requested and no later
       // than the exit.
       final db = _newestDb(world);
-      expect(db, isNotNull, reason: 'no world save in ${world.path}');
+      expect(
+        db,
+        isNotNull,
+        reason:
+            'no world save in ${world.path}\n'
+            '${_listing(Directory(p.join(instance.directory, 'save')))}\n'
+            'notable lines of server.log:\n${_notable(log)}\n'
+            'end of server.log:\n${_tail(log, 30)}',
+      );
       final savedAt = db!.statSync().modified;
       expect(savedAt.isAfter(requestedAt), isTrue, reason: 'save $savedAt');
       expect(savedAt.isAfter(exitedAt), isFalse, reason: 'save $savedAt');
@@ -139,6 +163,41 @@ bool processAliveForTest(int pid) {
 }
 
 /// The newest `_main.<N>.db2` in [world], or null when there is none.
+/// Every file under [root] with its size and modification time, for a
+/// failure message.
+String _listing(Directory root) {
+  if (!root.existsSync()) return '${root.path} does not exist';
+  return [
+    for (final entity in root.listSync(recursive: true))
+      if (entity is File)
+        '${p.relative(entity.path, from: root.path)} '
+            '${entity.lengthSync()} ${entity.statSync().modified}',
+  ].join('\n');
+}
+
+/// The lines of Valheim's [file] about Steam, its start-up and its errors,
+/// without the world generation's location reports.
+String _notable(File file) {
+  if (!file.existsSync()) return '${file.path} does not exist';
+  final notable = RegExp(
+    'steam|appid|awake|initiali|profile|space|error|exception|warning|quit',
+    caseSensitive: false,
+  );
+  final noise = RegExp('Failed to place|took more than|Placed location');
+  return file
+      .readAsLinesSync()
+      .where((line) => notable.hasMatch(line) && !noise.hasMatch(line))
+      .take(80)
+      .join('\n');
+}
+
+/// The last [lines] lines of [file].
+String _tail(File file, int lines) {
+  if (!file.existsSync()) return '${file.path} does not exist';
+  final all = file.readAsLinesSync();
+  return all.skip(all.length > lines ? all.length - lines : 0).join('\n');
+}
+
 File? _newestDb(Directory world) {
   if (!world.existsSync()) return null;
   final files = world

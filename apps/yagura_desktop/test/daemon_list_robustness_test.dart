@@ -514,7 +514,12 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('daemons:discard-copy')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('discard-copy:confirm')));
-      await settleIo(tester);
+      await settleIo(
+        tester,
+        until: () =>
+            !File('${file.path}.damaged').existsSync() &&
+            world.stateOf(tester, 'charlie') == 'connected',
+      );
       expect(File('${file.path}.damaged').existsSync(), isFalse);
       expect(find.byKey(const ValueKey('daemons:problem')), findsNothing);
       final keys = world.keychain.entries.keys;
@@ -674,20 +679,38 @@ Future<World> _afterDamageAndPairing(WidgetTester tester, File file) async {
       .read(daemonRegistryProvider.notifier)
       .pair(charlie.pairingString(), 'laptop');
   unawaited(pairing.then((_) {}, onError: (Object _) {}));
-  await settleIo(tester);
+  await settleIo(tester, until: () => _lists(file, 'charlie'));
 
   // The restart.
   await tester.pumpWidget(const SizedBox());
   world.fileStore = FileDaemonListStore(file);
   await world.pump(tester);
-  await settleIo(tester);
+  await settleIo(
+    tester,
+    until: () =>
+        find
+            .byKey(const ValueKey('daemons:discard-copy'))
+            .evaluate()
+            .isNotEmpty &&
+        world.stateOf(tester, 'charlie') == 'connected',
+  );
   return world;
 }
 
+/// Whether [file] holds a saved list with the daemon [id].
+bool _lists(File file, String id) {
+  try {
+    return file.readAsStringSync().contains('"id":"$id"');
+  } on FileSystemException {
+    return false; // mid-save
+  }
+}
+
 /// Lets real file I/O finish (the fake clock of a widget test does not), then
-/// settles the widgets.
-Future<void> settleIo(WidgetTester tester) async {
-  for (var i = 0; i < 30; i++) {
+/// settles the widgets. With [until], it goes on, for up to 10 s, until that
+/// holds: a loaded runner can take longer than the 30 rounds.
+Future<void> settleIo(WidgetTester tester, {bool Function()? until}) async {
+  for (var i = 0; i < 30 || (until != null && !until() && i < 1000); i++) {
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 10)),
     );
