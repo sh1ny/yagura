@@ -226,6 +226,7 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
         instanceId: request.instanceId,
         settings: settings,
         ports: request.ports.isEmpty ? null : portOverrides(request.ports),
+        exposure: request.ports.isEmpty ? null : portExposure(request.ports),
         restartPolicy: request.hasRestartPolicy()
             ? request.restartPolicy
             : null,

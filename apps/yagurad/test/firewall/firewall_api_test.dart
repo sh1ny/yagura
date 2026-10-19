@@ -29,14 +29,41 @@ void main() {
       (game.instanceId, game.portName, game.port, game.protocol),
       (instance.id, 'game', 2456, 'udp'),
     );
-    expect((game.managed, game.present), (true, true));
+    expect((game.managed, game.present, game.inStep), (true, true, true));
     // Wanted but gone: listed as not present.
     final query = byName[ruleOf(instance.id, 'query', 'udp')]!;
-    expect((query.managed, query.present), (true, false));
+    expect((query.managed, query.present, query.inStep), (true, false, false));
     // In the group, not ours.
     final foreign = byName['Yagura/handmade']!;
     expect((foreign.managed, foreign.present), (false, true));
     expect(byName[apiRuleName]!.port, apiPort);
+  });
+
+  test('list_rules_shows_the_actual_port_of_a_drifted_rule', () async {
+    final env = TestEnv();
+    env.installValheim();
+    final firewall = FakeFirewall();
+    final daemon = await startFirewalled(env, firewall);
+    final instance = await createInstalled(daemon);
+    // Someone changed the rule by hand: it allows 9999, not 2456.
+    final name = ruleOf(instance.id, 'game', 'udp');
+    firewall.rules[name]!.port = '9999';
+    final harness = await SecureHarness.start(env, daemon: daemon);
+    final client = pb.FirewallClient((await harness.pair('Laptop')).channel);
+
+    final answer = await client.listRules(pb.ListRulesRequest());
+
+    final byName = {for (final r in answer.rules) r.name: r};
+    final drifted = byName[name]!;
+    expect((drifted.port, drifted.protocol), (9999, 'udp'));
+    expect((drifted.present, drifted.inStep), (true, false));
+    // The others are as wanted.
+    final query = byName[ruleOf(instance.id, 'query', 'udp')]!;
+    expect((query.present, query.inStep), (true, true));
+    // After a reconcile all is in step.
+    await client.reconcile(pb.ReconcileRequest());
+    final later = await client.listRules(pb.ListRulesRequest());
+    expect(later.rules.where((r) => r.managed && !r.inStep), isEmpty);
   });
 
   test('list_rules_says_when_the_firewall_is_unavailable', () async {

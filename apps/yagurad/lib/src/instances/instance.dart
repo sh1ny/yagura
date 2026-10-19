@@ -212,6 +212,7 @@ class UpdateSettingsRequest {
     required this.instanceId,
     required this.settings,
     this.ports,
+    this.exposure,
     this.restartPolicy,
     this.steamAccountId,
     this.autostart,
@@ -234,6 +235,11 @@ class UpdateSettingsRequest {
 
   /// Port overrides by name; null leaves ports unchanged.
   final Map<String, int>? ports;
+
+  /// Per-instance firewall exposure by port name (`ports.rcon.exposed`).
+  /// Only a port of purpose `rcon` can be opened or closed this way; every
+  /// other port follows its declaration. Null leaves the choices unchanged.
+  final Map<String, bool>? exposure;
   final String? restartPolicy;
 
   /// Null leaves it unchanged; empty unlinks.

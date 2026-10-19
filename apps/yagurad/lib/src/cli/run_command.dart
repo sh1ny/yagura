@@ -350,6 +350,7 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
             ? null
             : env.adminListener ??
                   (Platform.isWindows ? NamedPipeListener.new : null),
+        adminProbe: dev || !Platform.isWindows ? null : NamedPipeConnector.new,
         aclWriter: dev || !Platform.isWindows ? null : const WindowsAclWriter(),
         accountSids: dev || !Platform.isWindows
             ? null

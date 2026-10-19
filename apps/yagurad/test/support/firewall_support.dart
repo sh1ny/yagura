@@ -4,6 +4,10 @@ import 'package:yagurad/src/firewall/firewall_backend.dart';
 import 'package:yagurad/src/firewall/rule_names.dart';
 import 'package:yagurad/src/host/daemon.dart';
 
+import 'package:yagurad/src/admin/admin_transport.dart';
+import 'package:yagurad/src/admin/named_pipe.dart';
+
+import 'admin_support.dart';
 import 'daemon_support.dart';
 import 'secret_support.dart';
 
@@ -37,9 +41,13 @@ class FakeFirewall implements FirewallBackend {
   /// when the Windows Firewall service is stopped.
   String? unavailable;
 
-  /// When set, a reconcile waits for this to complete, and ignores its
-  /// timeout like a hung script would.
+  /// When set, a reconcile waits for this to complete, like a hung script. It
+  /// gives up at its timeout, as the real backend does when it kills the
+  /// process, but only after [killDelay]: the process takes that long to end.
   Completer<void>? gate;
+
+  /// How long a hung script outlives its timeout before the call returns.
+  Duration killDelay = Duration.zero;
 
   /// Names whose creation fails (the script reports them `failed`).
   final failing = <String>{};
@@ -97,7 +105,17 @@ class FakeFirewall implements FirewallBackend {
     _running++;
     if (_running > maxConcurrent) maxConcurrent = _running;
     try {
-      if (gate case final held?) await held.future;
+      if (gate case final held?) {
+        try {
+          await held.future.timeout(timeout);
+        } on TimeoutException {
+          await Future<void>.delayed(killDelay);
+          throw FirewallUnavailable(
+            'the firewall did not answer within '
+            '${timeout.inMilliseconds >= 1000 ? '${timeout.inSeconds} s' : '${timeout.inMilliseconds} ms'}',
+          );
+        }
+      }
       _check();
       final changes = <RuleChange>[];
       final wanted = {for (final rule in desired) rule.name: rule};
@@ -167,12 +185,24 @@ Future<Daemon> startFirewalled(
   FakeFirewall firewall, {
   Duration firewallTimeout = const Duration(seconds: 30),
   int port = apiPort,
+  String? pipe,
+
+  /// How the daemon looks at a holder of the pipe: a connector that trusts
+  /// the holder, or null for the real check (the test process is not
+  /// LocalSystem, so it trusts nobody).
+  AdminConnector Function()? adminProbe,
+  Duration? adminStartupWait,
 }) => env.start(
   serviceMode: true,
   secretProtector: FakeSecretProtector(serviceSid),
   firewall: firewall,
   firewallTimeout: firewallTimeout,
   port: port,
+  adminListener: pipe == null
+      ? null
+      : () => NamedPipeListener(name: pipe, sddl: currentUserPipeSddl()),
+  adminProbe: adminProbe,
+  adminStartupWait: adminStartupWait,
 );
 
 /// The firewall status of instance [id].

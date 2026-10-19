@@ -38,6 +38,7 @@ const _notYet = {
   'admin_connection_closed',
   'admin_request_timeout',
   'admin_channel_busy',
+  'daemon_starting',
 };
 
 /// `yagurad service install|configure|uninstall|status` (design D6).
@@ -124,6 +125,20 @@ class ServiceInstaller {
     _checkAncestors();
     if (control.status(_name) != ServiceStatus.notInstalled) {
       return _upgrade(bind: bind, dataDirectory: dataDirectory);
+    }
+    // One Yagura service per host: it manages the firewall group and holds
+    // the admin channel. `--service-name` exists for the test rig.
+    final others = [
+      for (final name in await control.yaguraServices())
+        if (name != _name) name,
+    ];
+    if (others.isNotEmpty) {
+      throw YaguraException(
+        'another_service_installed',
+        'the Yagura service ${others.first} is already installed, and a host '
+            'runs one; nothing was changed. Upgrade it by running install '
+            'with its name, or uninstall it first',
+      );
     }
     final bindText = (bind ?? defaultServiceBindText).trim();
     final port = await _checkBind(bindText);
@@ -387,14 +402,36 @@ class ServiceInstaller {
   static String _problem(Object e) =>
       e is FirewallUnavailable ? e.message : '$e';
 
+  /// Whether a daemon answers on the admin channel. Called while this
+  /// service is not running (before its first start, after its stop), so an
+  /// answer is another service's: the one daemon that holds the channel
+  /// manages the firewall group, and this command leaves its rule alone.
+  Future<bool> _anotherServiceManagesFirewall() async {
+    try {
+      await admin('status');
+      return true;
+    } on YaguraException {
+      return false;
+    }
+  }
+
   /// Creates the API port rule. The service is installed either way: a
   /// firewall that cannot be used is a warning, and the daemon's reconciler
   /// creates the rule at a start where it can (design D11).
   Future<void> _ensureApiRule(int port) async {
     final rule = apiRule;
     if (rule == null) return;
+    if (await _anotherServiceManagesFirewall()) {
+      out.writeln(
+        'note: another Yagura service is running and manages the firewall, '
+        'so the rule $apiRuleName was not changed; that service owns the '
+        'group Yagura (see docs/firewall.md)',
+      );
+      return;
+    }
     try {
       await rule.ensure(port);
+      out.writeln('firewall rule $apiRuleName allows tcp port $port');
     } on Object catch (e) {
       out.writeln(
         'warning: the firewall rule $apiRuleName for port $port is missing '
@@ -405,11 +442,48 @@ class ServiceInstaller {
     }
   }
 
+  /// Whether the install root is still the folder the install made: owned by
+  /// Administrators, protected, with nobody else able to write in it. The
+  /// firewall step puts a request file for PowerShell in it, which runs as an
+  /// administrator.
+  bool _rootStillProtected() {
+    ProtectedDirectory? directory;
+    try {
+      if (FileSystemEntity.typeSync(layout.root, followLinks: false) !=
+          FileSystemEntityType.directory) {
+        return false;
+      }
+      directory = aclWriter.open(layout.root);
+      return hasInstallRootProtection(directory.security());
+    } on Object {
+      return false;
+    } finally {
+      directory?.close();
+    }
+  }
+
   /// Removes the API port rule with the service. Servers and their rules stay
-  /// (design D6).
+  /// (design D6). Another service that manages the firewall keeps the rule;
+  /// a root that is no longer ours is not used.
   Future<void> _removeApiRule() async {
     final rule = apiRule;
     if (rule == null) return;
+    if (!_rootStillProtected()) {
+      out.writeln(
+        'warning: the firewall rule $apiRuleName was not removed '
+        '(firewall_unavailable: ${layout.root} is not the protected folder '
+        'the install made, so no request is written there for PowerShell); '
+        'delete the rule by hand in the group Yagura',
+      );
+      return;
+    }
+    if (await _anotherServiceManagesFirewall()) {
+      out.writeln(
+        'kept the firewall rule $apiRuleName: another Yagura service is '
+        'running and manages the firewall',
+      );
+      return;
+    }
     try {
       await rule.remove();
     } on Object catch (e) {

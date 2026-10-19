@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:test/test.dart';
 import 'package:yagurad/src/firewall/api_port_rule.dart';
+import 'package:yagurad/src/platform/acl_writer.dart';
 import 'package:yagurad/src/firewall/rule_names.dart';
 import 'package:yagurad/src/service/service_control.dart';
 
@@ -28,6 +29,12 @@ void main() {
 
     expect(firewall.rule(apiRuleName), 'tcp/8443');
     expect(rig.control.calls, ['install', 'start']);
+    // The command says it made the rule, before the service starts, so a row
+    // can tell this from the daemon's own reconcile.
+    expect(
+      rig.output,
+      contains('firewall rule $apiRuleName allows tcp port 8443'),
+    );
   });
 
   test('install_leaves_the_instance_rules_alone', () async {
@@ -101,6 +108,60 @@ void main() {
     expect(rig.control.status('yagurad'), ServiceStatus.running);
     expect(rig.output, contains('firewall_unavailable'));
     expect(rig.output, contains('cannot read the answer'));
+  });
+
+  test(
+    'install_leaves_the_rule_to_the_service_that_holds_the_channel',
+    () async {
+      // Another service's daemon answers on the admin channel before this
+      // service ever starts.
+      rig.foreignDaemon = true;
+
+      await rig.installer.install();
+
+      expect(firewall.calls, isEmpty);
+      expect(rig.output, contains('another Yagura service'));
+      expect(rig.output, contains(apiRuleName));
+      expect(rig.control.calls, ['install', 'start']);
+    },
+  );
+
+  test(
+    'uninstall_keeps_the_rule_of_the_service_that_holds_the_channel',
+    () async {
+      await rig.installer.install();
+      expect(firewall.rule(apiRuleName), 'tcp/7443');
+      firewall.calls.clear();
+      // This service is stopped by the uninstall; another one answers.
+      rig.foreignDaemon = true;
+
+      await rig.installer.uninstall();
+
+      expect(rig.control.status('yagurad'), ServiceStatus.notInstalled);
+      expect(firewall.rule(apiRuleName), 'tcp/7443');
+      expect(firewall.calls, isEmpty);
+      expect(rig.output, contains('kept the firewall rule $apiRuleName'));
+      expect(rig.output, contains('another Yagura service'));
+    },
+  );
+
+  test('uninstall_does_not_use_a_root_that_is_no_longer_protected', () async {
+    await rig.installer.install();
+    firewall.calls.clear();
+    // Someone replaced the folder: users can write in it now.
+    rig.acl.overrides[rig.layout.root] = const EntrySecurity(
+      isLink: false,
+      sddl: 'O:BUD:P(A;OICI;FA;;;BU)',
+    );
+
+    await rig.installer.uninstall();
+
+    // The service is removed; no PowerShell request was made.
+    expect(rig.control.status('yagurad'), ServiceStatus.notInstalled);
+    expect(firewall.calls, isEmpty);
+    expect(firewall.rule(apiRuleName), 'tcp/7443');
+    expect(rig.output, contains('warning'));
+    expect(rig.output, contains('not the protected folder'));
   });
 
   test('uninstall_removes_the_rule_and_only_that', () async {

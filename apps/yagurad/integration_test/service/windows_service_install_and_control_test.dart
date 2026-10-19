@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagurad/src/cli/service_command.dart';
 import 'package:yagurad/src/platform/win32_service.dart';
+import 'package:yagurad/src/service/service_control.dart';
 
 import '../../test/support/elevated_support.dart';
 import '../../test/support/process_support.dart';
@@ -183,6 +184,24 @@ void main() {
   // Runs the command in this process with the real service control manager,
   // but never installs: when the session is elevated the check is told it is
   // not, so the row also passes in the elevated workflow.
+  // Read only: the real manager lists its services with their images, and
+  // none is ours unless a Yagura service is installed on this machine.
+  test(
+    'the_service_list_is_read_without_elevation',
+    tags: ['windows'],
+    () async {
+      final images = listServiceImages();
+
+      final rpc = images.where((s) => s.name == 'RpcSs');
+      expect(rpc, hasLength(1), reason: 'every Windows has RpcSs');
+      expect(rpc.single.imagePath.toLowerCase(), contains('svchost'));
+      expect(images.every((s) => s.imagePath.isNotEmpty), isTrue);
+
+      final names = await const WinswServiceControl().yaguraServices();
+      expect(names, isNot(contains('RpcSs')));
+    },
+  );
+
   test('not_elevated', tags: ['windows'], () async {
     final suffix = Random.secure().nextInt(1 << 30).toRadixString(16);
     final name = 'yagurad-t$suffix';

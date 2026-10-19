@@ -12,8 +12,10 @@ import '../../test/support/service_rig.dart';
 // Windows Firewall service is protected and refuses to stop. That scenario is
 // `firewall_unavailable_at_service_install` in
 // test/firewall/api_port_rule_install_test.dart, with the fake firewall.)
-// These rows install a throwaway service and change firewall rules,
-// so they run only in the manual `elevated` workflow.
+// These rows install a throwaway service and change firewall rules, and its
+// daemon reconciles the whole group `Yagura` (and the rig's clean-up empties
+// it), so they run only in the manual `elevated` workflow, on its runner, never
+// on a host with a Yagura service.
 
 Future<ServiceRig> rigWithoutInstances() async {
   final rig = await ServiceRig.create(instances: 0);
@@ -36,6 +38,12 @@ void main() {
     // An inbound TCP rule for the bind port, in the group, from the install.
     expect(await apiRuleAllows(rig.port), isTrue, reason: '${install.stdout}');
     expect('${install.stdout}', isNot(contains('warning')));
+    // The install made it (it says so before it starts the service), not only
+    // the daemon's startup reconcile.
+    expect(
+      '${install.stdout}',
+      contains('firewall rule $apiRuleName allows tcp port ${rig.port}'),
+    );
     // And the daemon agrees.
     expect(await rig.daemonStatus(), contains('api_port_rule: present'));
   });

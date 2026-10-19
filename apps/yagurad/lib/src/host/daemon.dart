@@ -61,6 +61,8 @@ class DaemonConfig {
     this.serviceMode = false,
     this.secretProtector,
     this.adminListener,
+    this.adminProbe,
+    this.adminStartupWait = const Duration(seconds: 3),
     this.aclWriter,
     this.accountSids,
     this.dataDirProtector,
@@ -114,6 +116,15 @@ class DaemonConfig {
   /// Opens the endpoint of the admin channel (design D5); null serves none.
   /// The channel is served in service mode only.
   final AdminListener Function()? adminListener;
+
+  /// A connector to the admin channel, to tell whether a Yagura daemon
+  /// already holds it when this daemon cannot open it; null trusts nobody.
+  final AdminConnector Function()? adminProbe;
+
+  /// How long a request on the admin channel waits for startup to finish
+  /// before it is refused `daemon_starting`. Below the 5 seconds a client
+  /// waits for the reply, so a request the client gave up on never runs.
+  final Duration adminStartupWait;
 
   /// Writes the protected DACLs of instance roots; null cannot protect a
   /// root, so `roots add` fails `root_not_protected`.
@@ -492,10 +503,76 @@ class Daemon {
         notices.add(StartupNotice(aclMigrationFailedReason, failure));
       }
     });
+    // The admin channel is served in service mode only, and a name another
+    // process holds is a notice, not a reason to stop (design D5).
+    FirewallReconciler? firewall;
+    AdminServer? admin;
+    final adminListener = config.adminListener;
+    final listener = adminListener;
+    // Requests wait until startup has finished: the channel answering means
+    // the daemon is ready (design D6), though it opens before the firewall
+    // step so that step knows who holds the channel.
+    final started = Completer<void>();
+    var anotherDaemonHoldsChannel = false;
+    if (security != null && listener != null) {
+      final service = AdminService(
+        security: security,
+        roots: roots,
+        instances: manager,
+        apiPort: () => config.apiPort,
+        status: () => {
+          'admin_channel': 'ok',
+          'mode': 'service',
+          'data_dir': dataDirectory.path,
+          'version': daemonVersion,
+          'executable': Platform.resolvedExecutable,
+          'service_accounts_ok': accountsOk,
+          'api_port_rule': firewall?.apiRuleStatus ?? 'not_managed',
+        },
+        hostAddresses: config.hostAddresses,
+      );
+      final server = AdminServer(listener(), (request) async {
+        // A request that waits longer than the client does would run after
+        // the client was told it failed: refuse it instead.
+        await started.future.timeout(
+          config.adminStartupWait,
+          onTimeout: () => throw YaguraException(
+            'daemon_starting',
+            'the daemon is still starting; nothing was done. Run the '
+                'command again in a moment',
+          ),
+        );
+        return service.handle(request);
+      });
+      try {
+        await server.start();
+        admin = server;
+      } on YaguraException catch (e) {
+        notices.add(StartupNotice(e.reason, e.message));
+        // A name another process holds is no reason to leave the group
+        // unmanaged unless that process is a Yagura daemon.
+        anotherDaemonHoldsChannel =
+            e.reason == 'admin_channel_squatted' &&
+            await _holderIsYaguraDaemon(config.adminProbe);
+      }
+    }
+
     // Design D11: in service mode the owned rules follow the instances, from
     // the first start on; an unusable firewall is a notice and a health flag.
-    FirewallReconciler? firewall;
-    if (config.serviceMode && config.firewall != null) {
+    // A host runs one service and it manages the group `Yagura`. The one
+    // exception is a daemon that finds a trusted Yagura daemon on the admin
+    // channel: that one manages it, and this daemon runs no reconciler.
+    if (config.serviceMode &&
+        config.firewall != null &&
+        anotherDaemonHoldsChannel) {
+      await degraded('firewall', () {
+        throw YaguraException(
+          'firewall_unavailable',
+          'this daemon does not manage the firewall rules: another Yagura '
+              'daemon holds the admin channel and manages the group Yagura',
+        );
+      });
+    } else if (config.serviceMode && config.firewall != null) {
       firewall = FirewallReconciler(
         backend: config.firewall!,
         desired: manager.desiredFirewallRules,
@@ -524,36 +601,7 @@ class Daemon {
     await degraded('log_tailing', logSync.syncAll);
     logSync.listen();
     manager.autostartInstances();
-
-    // The admin channel is served in service mode only, and a name another
-    // process holds is a notice, not a reason to stop (design D5).
-    AdminServer? admin;
-    final listener = config.adminListener;
-    if (security != null && listener != null) {
-      final service = AdminService(
-        security: security,
-        roots: roots,
-        instances: manager,
-        apiPort: () => config.apiPort,
-        status: () => {
-          'admin_channel': 'ok',
-          'mode': 'service',
-          'data_dir': dataDirectory.path,
-          'version': daemonVersion,
-          'executable': Platform.resolvedExecutable,
-          'service_accounts_ok': accountsOk,
-          'api_port_rule': firewall?.apiRuleStatus ?? 'not_managed',
-        },
-        hostAddresses: config.hostAddresses,
-      );
-      final server = AdminServer(listener(), service.handle);
-      try {
-        await server.start();
-        admin = server;
-      } on YaguraException catch (e) {
-        notices.add(StartupNotice(e.reason, e.message));
-      }
-    }
+    started.complete();
 
     return Daemon._(
       dataDirectory: dataDirectory,
@@ -577,6 +625,22 @@ class Daemon {
       steam: config.steam,
       logSync: logSync,
     );
+  }
+
+  /// Whether a trusted Yagura daemon answers on the admin channel [probe]
+  /// reaches (the same check `yagurad service` makes): a connection that the
+  /// connector accepts is one to a LocalSystem server.
+  static Future<bool> _holderIsYaguraDaemon(
+    AdminConnector Function()? probe,
+  ) async {
+    if (probe == null) return false;
+    try {
+      final connection = await probe().connect();
+      await connection.close();
+      return true;
+    } on YaguraException {
+      return false;
+    }
   }
 
   /// Runs a fatal step; a failure carries the step in `details['step']`.

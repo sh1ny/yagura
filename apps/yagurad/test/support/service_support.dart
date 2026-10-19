@@ -61,6 +61,9 @@ class FakeServiceControl implements ServiceControl {
   ServiceStatus status(String serviceName) =>
       services[serviceName] ?? ServiceStatus.notInstalled;
 
+  @override
+  Future<List<String>> yaguraServices() async => services.keys.toList();
+
   void _call(String name, InstallLayout layout) {
     calls.add(name);
     if (failing.remove(name)) {
@@ -202,6 +205,10 @@ class InstallerRig {
   };
   var polls = 0;
 
+  /// Whether another service's daemon holds the admin channel: `status`
+  /// answers even while this service is not running.
+  bool foreignDaemon = false;
+
   /// Answers other admin commands.
   FutureOr<Map<String, Object?>> Function(
     String command,
@@ -236,7 +243,18 @@ class InstallerRig {
     bundle: bundle,
     admin: (command, [args = const {}]) async {
       adminCalls.add(command);
-      if (command == 'status') return status(polls++);
+      if (command == 'status') {
+        // The channel has one name: nothing answers unless this service runs
+        // or another one holds it.
+        if (!foreignDaemon &&
+            control.status(layout.serviceName) != ServiceStatus.running) {
+          throw YaguraException(
+            'daemon_not_running',
+            'nothing serves the pipe',
+          );
+        }
+        return status(polls++);
+      }
       return other(command, args);
     },
     out: out,

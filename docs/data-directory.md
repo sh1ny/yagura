@@ -95,7 +95,8 @@ Instances live under `<data>\instances` unless an administrator adds another roo
 | `admin_channel_squatted` | (Service startup notice) another process served the name first, so the service has no admin channel. Stop that process and restart the service |
 | `admin_channel_busy` | All 4 slots stayed busy for 5 seconds. Run the command again |
 | `admin_connection_closed` | The service closed the channel before the exchange ended |
-| `admin_request_timeout` | The service waited 5 seconds for a request and dropped the connection |
+| `admin_request_timeout` | The service waited 5 seconds for a request and dropped the connection, or the CLI waited 5 seconds for the reply. Nothing is queued behind it: a command that failed this way is run again by you |
+| `daemon_starting` | The service is up but has not finished starting (its first firewall reconcile and the other startup steps). It waited about 3 seconds, did nothing and refused the request. Run the command again in a moment |
 | `admin_request_invalid` | The request was not a command the service knows, or an argument was malformed (for example a bad `--address`) |
 | `admin_api_unsupported` | The CLI and the service speak different versions of the channel (`admin_api`). Use the CLI that came with the service |
 | `admin_reply_invalid` | The reply was not a valid result or reason |

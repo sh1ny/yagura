@@ -26,7 +26,7 @@ usage: yagurad service install [--bind <address:port>] [--data-dir <path>]
        yagurad service configure --bind <address:port>
        yagurad service uninstall [--purge-accounts]
        yagurad service status
-options for every subcommand (to run a second service beside the first):
+options for every subcommand (for the test rig; a host runs one service):
        [--service-name <name>] [--install-dir <path>]''';
 
 const _exitFailure = 1;

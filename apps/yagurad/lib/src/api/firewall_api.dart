@@ -52,10 +52,20 @@ class FirewallApi extends pb.FirewallServiceBase with GuardedService {
           name: name,
           instanceId: parsed?.instanceId ?? '',
           portName: parsed?.portName ?? '',
-          port: want?.port ?? int.tryParse(have?.port ?? '') ?? 0,
-          protocol: want?.protocol ?? have?.protocol ?? '',
+          // What the firewall holds, when it holds the rule; else what is
+          // wanted.
+          port: int.tryParse(have?.port ?? '') ?? want?.port ?? 0,
+          protocol: have?.protocol ?? want?.protocol ?? '',
           managed: parsed != null,
           present: have != null,
+          // An unmanaged rule is nothing to change; an owned one is in step
+          // when it exists as wanted.
+          inStep:
+              parsed == null ||
+              (want != null &&
+                  have != null &&
+                  have.protocol == want.protocol &&
+                  have.port == '${want.port}'),
         ),
       );
     }

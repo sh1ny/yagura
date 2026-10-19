@@ -14,13 +14,17 @@ import '../../test/support/firewall_elevated_support.dart';
 
 // The reconcile script of design D11 against the real Windows Firewall. These
 // rows create, change and delete rules, so they run only in the manual
-// `elevated` workflow, never on a developer's desktop. Each row names its
-// rules after an instance id of its own and removes exactly those.
+// `elevated` workflow, on the runner, never on a developer's desktop or any
+// host with Yagura installed. Each row names its rules after an instance id of
+// its own, prunes only the rules under that id (`scope`), and removes exactly
+// those when it ends; the rules of a daemon or an admin on the host are not
+// reconciled away.
 
 // The runner's temp folder belongs to its administrator, as the data
 // directory belongs to SYSTEM and Administrators in the service.
-final backend = PowerShellFirewall(
+PowerShellFirewall backendFor(String id) => PowerShellFirewall(
   directory: p.join(Directory.systemTemp.path, 'yagurad_firewall_requests'),
+  scope: 'Yagura/$id/',
 );
 const _timeout = Duration(seconds: 60);
 
@@ -58,6 +62,7 @@ void printScript(String run, Map<String, Object?> diagnostics) {
 void main() {
   test('admins_own_rule_untouched', tags: ['elevated'], () async {
     final id = ownRules(freshInstanceId());
+    final backend = backendFor(id);
     final manual = freshRuleName('Valheim manual');
     await createRule(manual, port: 2456);
     final before = await describeRule(manual);
@@ -82,6 +87,7 @@ void main() {
 
   test('foreign_rule_inside_the_group', tags: ['elevated'], () async {
     final id = ownRules(freshInstanceId());
+    final backend = backendFor(id);
     final handmade = freshRuleName('Yagura handmade');
     await createRule(handmade, group: 'Yagura', port: 2456);
     // A rule whose name differs from an owned one only in case: the firewall
@@ -112,6 +118,7 @@ void main() {
 
   test('rule_deleted_by_hand', tags: ['elevated'], () async {
     final id = ownRules(freshInstanceId());
+    final backend = backendFor(id);
     List<DesiredRule> wanted() => [desired(id, 'game', 2456)];
     final first = FirewallReconciler(
       backend: backend,
@@ -149,6 +156,7 @@ void main() {
 
   test('a_run_changes_a_port_and_a_protocol', tags: ['elevated'], () async {
     final id = ownRules(freshInstanceId());
+    final backend = backendFor(id);
     final udp = ruleOf(id, 'game', 'udp');
     final tcp = ruleOf(id, 'game', 'tcp');
     await backend.reconcile([desired(id, 'game', 2456)], timeout: _timeout);
@@ -161,11 +169,12 @@ void main() {
     expect(await describeRule(udp), '$udp|Yagura|True|Inbound|Allow|UDP|2466');
 
     // The protocol is part of the rule's name (D11), so changing it is the
-    // old rule going and a new one coming.
+    // old rule going and a new one coming; the script creates before it
+    // deletes (D11).
     final switched = await backend.reconcile([
       desired(id, 'game', 2466, protocol: 'tcp'),
     ], timeout: _timeout);
-    expect(switched.changes.map((c) => '$c'), ['deleted $udp', 'created $tcp']);
+    expect(switched.changes.map((c) => '$c'), ['created $tcp', 'deleted $udp']);
     expect(await describeRule(udp), isNull);
     expect(await describeRule(tcp), '$tcp|Yagura|True|Inbound|Allow|TCP|2466');
   });
@@ -175,6 +184,7 @@ void main() {
     tags: ['elevated'],
     () async {
       final id = ownRules(freshInstanceId());
+      final backend = backendFor(id);
       final handmade = freshRuleName('Yagura handmade');
       await createRule(handmade, group: 'Yagura', port: 2456);
       await backend.reconcile(
@@ -206,6 +216,7 @@ void main() {
   test('reconcile_300_rules_timing', tags: ['elevated'], () async {
     const long = Duration(minutes: 8);
     final id = freshInstanceId();
+    final backend = backendFor(id);
     List<DesiredRule> all() => [
       for (var i = 0; i < 300; i++)
         desired(id, 'p${i.toString().padLeft(3, '0')}', 20000 + i),

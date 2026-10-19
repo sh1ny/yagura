@@ -8,8 +8,8 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagurad/src/firewall/firewall_backend.dart';
 import 'package:yagurad/src/firewall/firewall_script.dart';
-import 'package:yagurad/src/firewall/powershell_firewall.dart';
 import 'package:yagurad/src/firewall/rule_names.dart';
+import 'package:yagurad/src/firewall/powershell_firewall.dart';
 
 // The reconcile script of design D11 against stand-ins for the firewall
 // cmdlets, in Windows PowerShell. Nothing here reads or writes the firewall of
@@ -29,6 +29,7 @@ function Get-Service {
 }
 function Get-NetFirewallRule {
   [CmdletBinding()] param($Group)
+  Add-Content -Path "$log.groups" -Value "group $Group"
   if ($state.Count -eq 0) {
     $record = New-Object System.Management.Automation.ErrorRecord (New-Object System.Exception 'No MSFT_NetFirewallRule objects found'), 'CmdletizationQuery_NotFound_Group', 'ObjectNotFound', $Group
     $PSCmdlet.WriteError($record)
@@ -102,6 +103,7 @@ class ScriptRun {
     this.exitCode,
     this.stderr, {
     this.filterCalls = const [],
+    this.groups = const [],
   });
 
   final Map<String, Object?> answer;
@@ -112,6 +114,9 @@ class ScriptRun {
   /// How the stand-in port filter cmdlet was asked, one entry per call:
   /// all, piped (with a count) or alone (with a rule name).
   final List<String> filterCalls;
+
+  /// The groups the stand-in `Get-NetFirewallRule` was asked for.
+  final List<String> groups;
 
   List<Map<String, Object?>> get changes => [
     for (final c in answer['changes']! as List) c as Map<String, Object?>,
@@ -142,13 +147,7 @@ Future<ScriptRun> runScript(
     ..writeAsStringSync(_harness);
   final log = File(p.join(dir.path, 'effects.log'))..writeAsStringSync('');
   final requestFile = File(p.join(dir.path, 'request.json'))
-    ..writeAsStringSync(
-      jsonEncode({
-        'group': firewallGroup,
-        'owned': ownedRuleNamePattern,
-        ...request,
-      }),
-    );
+    ..writeAsStringSync(jsonEncode(request));
   final process = await Process.start(
     p.join(
       Platform.environment['SystemRoot'] ?? r'C:\Windows',
@@ -188,6 +187,9 @@ Future<ScriptRun> runScript(
     log.readAsLinesSync().where((l) => l.isNotEmpty).toList(),
     code,
     await err,
+    groups: File('${log.path}.groups').existsSync()
+        ? File('${log.path}.groups').readAsLinesSync()
+        : const [],
     filterCalls: File('${log.path}.filters').existsSync()
         ? File('${log.path}.filters')
               .readAsLinesSync()
@@ -385,11 +387,79 @@ void main() {
       'Yagura/handmade',
       'yagura/inst-0123456789ab/lower/udp',
     ]);
+    // Creates and updates first, deletes last: a run stopped at its limit has
+    // deleted the least.
     expect(run.log, [
-      'remove $_b',
       'new Yagura/daemon/api/tcp TCP 7443 Yagura Inbound Allow Any True',
       'set $_a UDP 2466',
+      'remove $_b',
     ]);
+  });
+
+  test('a_request_cannot_change_the_group_or_the_pattern', () async {
+    final run = await runScript(
+      dir,
+      {
+        'mode': 'reconcile',
+        'desired': <Object?>[],
+        // The only guards on what the script may touch are in its text.
+        'group': 'Other',
+        'owned': '.*',
+      },
+      rules: [rule(_a, 'UDP', '2456'), rule('Yagura/handmade', 'UDP', '9999')],
+    );
+
+    expect(run.exitCode, 0, reason: run.stderr);
+    expect(run.groups, ['group Yagura']);
+    expect(run.actions, {_a: 'deleted'});
+    expect(run.log, ['remove $_a']);
+    expect(run.answer['unmanaged'], ['Yagura/handmade']);
+
+    final removal = await runScript(
+      dir,
+      {
+        'mode': 'remove',
+        'names': ['Yagura/handmade'],
+        'owned': '',
+      },
+      rules: [rule('Yagura/handmade', 'UDP', '9999')],
+    );
+    expect(removal.actions, {'Yagura/handmade': 'failed'});
+    expect(removal.log, isEmpty);
+  });
+
+  test('the_script_text_holds_the_group_and_the_pattern', () {
+    expect(firewallScript, contains("\$group = 'Yagura'"));
+    expect(firewallScript, contains(ownedRuleNamePattern));
+    expect(firewallScript, isNot(contains('__GROUP__')));
+    expect(firewallScript, isNot(contains('__OWNED__')));
+  });
+
+  test('a_prune_scope_limits_what_a_reconcile_deletes', () async {
+    final run = await runScript(
+      dir,
+      {
+        'mode': 'reconcile',
+        'desired': <Object?>[],
+        'scope': 'Yagura/inst-0123456789ab/game/',
+      },
+      rules: [rule(_a, 'UDP', '2456'), rule(_b, 'UDP', '2457')],
+    );
+
+    expect(run.exitCode, 0, reason: run.stderr);
+    expect(run.actions, {_a: 'deleted'});
+    expect(run.log, ['remove $_a']);
+  });
+
+  test('a_scope_outside_the_group_fails_the_run', () async {
+    final run = await runScript(
+      dir,
+      {'mode': 'reconcile', 'desired': <Object?>[], 'scope': 'Other/'},
+      rules: [rule(_a, 'UDP', '2456')],
+    );
+
+    expect(run.answer['error'], contains('scope'));
+    expect(run.log, isEmpty);
   });
 
   test('a_rule_that_matches_is_not_touched', () async {

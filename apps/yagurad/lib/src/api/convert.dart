@@ -131,6 +131,12 @@ Map<String, int> portOverrides(Iterable<pb.Port> ports) => {
   for (final port in ports) port.name: port.number,
 };
 
+/// The `exposed` flag of each port the caller sent; the manager honors it
+/// for `rcon` ports only.
+Map<String, bool> portExposure(Iterable<pb.Port> ports) => {
+  for (final port in ports) port.name: port.exposed,
+};
+
 // ---- operations -------------------------------------------------------------
 
 pb.OperationStatus operationStatusToPb(

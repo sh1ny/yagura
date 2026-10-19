@@ -1,3 +1,5 @@
+import 'rule_names.dart';
+
 /// The PowerShell script of one firewall run (design D11): it reads the rules
 /// of the `Yagura` group with their port filters and, in the same run, applies
 /// what the request asks for. One script per reconcile keeps the cost to one
@@ -10,10 +12,11 @@
 ///
 /// ```
 /// { "mode": "list" | "reconcile" | "remove",
-///   "group": "Yagura", "owned": "<name pattern>",
 ///   "desired": [ { "name", "protocol", "port" } ],   // reconcile
 ///   "prune": true,                                    // reconcile: delete the
 ///                                                     // owned rest (default)
+///   "scope": "Yagura/",                               // reconcile: narrows the
+///                                                     // deletes (optional)
 ///   "names": [ "..." ] }                              // remove
 /// ```
 ///
@@ -30,9 +33,17 @@
 /// A rule is touched only when its name matches `owned` (`-cmatch`, so the
 /// match is case-sensitive) and it is in the group, and the lookups of names
 /// are ordinal, so a rule named `yagura/...` is never taken for `Yagura/...`.
-/// The script never exits: it ends by writing the answer, and tests run it
-/// against stand-ins for the cmdlets.
-const firewallScript = r'''
+/// The group and the name pattern are part of the script text, not of the
+/// request: they are code, and a request file can neither widen nor empty
+/// them. The request may only narrow what a reconcile deletes, with `scope`, a
+/// name prefix under `Yagura/` (the daemon uses `Yagura/`; the elevated tests
+/// use the prefix of their own instance). The script never exits: it ends by
+/// writing the answer, and tests run it against stand-ins for the cmdlets.
+final firewallScript = _template
+    .replaceAll('__GROUP__', firewallGroup)
+    .replaceAll('__OWNED__', ownedRuleNamePattern);
+
+const _template = r'''
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::Error.WriteLine('yagura-firewall: started')
@@ -77,8 +88,17 @@ try {
     throw 'the request file is a link'
   }
   $request = [System.IO.File]::ReadAllText($path, (New-Object System.Text.UTF8Encoding($false))) | ConvertFrom-Json
-  $group = [string]$request.group
-  $owned = [string]$request.owned
+  $group = '__GROUP__'
+  $owned = '__OWNED__'
+  if ([string]::IsNullOrEmpty($group) -or [string]::IsNullOrEmpty($owned)) {
+    throw 'the script has no group or name pattern'
+  }
+  # What a reconcile may delete: owned names under this prefix.
+  $scope = $group + '/'
+  if (-not [string]::IsNullOrEmpty([string]$request.scope)) { $scope = [string]$request.scope }
+  if (-not $scope.StartsWith($group + '/', [System.StringComparison]::Ordinal)) {
+    throw 'the prune scope is not under the group'
+  }
   Phase 'read_request'
 
   # The cmdlets can answer from the policy store while the service is down;
@@ -216,22 +236,6 @@ try {
     $wanted = New-Names
     foreach ($rule in @($request.desired)) { $wanted[[string]$rule.name] = $rule }
 
-    # Owned rules that nothing wants any more (the install of the service adds
-    # its one rule without judging the rest).
-    $prune = $request.prune -ne $false
-    foreach ($name in @($actual.Keys | Sort-Object)) {
-      if ($prune -and ($name -cmatch $owned) -and -not $wanted.ContainsKey($name)) {
-        try {
-          Remove-NetFirewallRule -Name $name
-          Record $name 'deleted' ''
-        }
-        catch {
-          Record $name 'failed' (Plain $_.Exception.Message)
-        }
-      }
-    }
-    Phase 'deletes'
-
     foreach ($name in @($wanted.Keys | Sort-Object)) {
       $rule = $wanted[$name]
       $protocol = ([string]$rule.protocol).ToLowerInvariant()
@@ -266,6 +270,23 @@ try {
       }
     }
     Phase 'sets_and_creates'
+
+    # Owned rules that nothing wants any more (the install of the service adds
+    # its one rule without judging the rest).
+    $prune = $request.prune -ne $false
+    foreach ($name in @($actual.Keys | Sort-Object)) {
+      if ($prune -and ($name -cmatch $owned) -and $name.StartsWith($scope, [System.StringComparison]::Ordinal) -and -not $wanted.ContainsKey($name)) {
+        try {
+          Remove-NetFirewallRule -Name $name
+          Record $name 'deleted' ''
+        }
+        catch {
+          Record $name 'failed' (Plain $_.Exception.Message)
+        }
+      }
+    }
+
+    Phase 'deletes'
     Send @{ changes = @($changes); unmanaged = @($unmanaged) }
   }
 }

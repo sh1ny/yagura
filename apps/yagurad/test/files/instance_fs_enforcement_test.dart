@@ -26,6 +26,9 @@ const _allowed = <String, String>{
   'firewall/powershell_firewall.dart':
       'the request files for PowerShell in <data>/tmp or the install folder tmp, '
       'no instance path',
+  'service/service_control.dart':
+      'the WinSW configuration beside a registered service wrapper, no '
+      'instance path',
   'host/data_directory.dart': 'the data directory itself',
   'host/database.dart': 'the database backup in the data directory',
   'plugins/plugin_registry.dart': 'the plugin folders in the data directory',

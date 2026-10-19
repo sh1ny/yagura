@@ -182,4 +182,24 @@ void main() {
     expect((await running).ok, isFalse);
     firewall.gate!.complete();
   });
+
+  test('no_second_script_starts_while_a_timed_out_one_still_ends', () async {
+    // The hung script outlives its timeout by 400 ms (the process is being
+    // killed): the next run, queued behind it, must wait for it to end.
+    reconciler = make(timeout: const Duration(milliseconds: 200));
+    firewall.gate = Completer<void>();
+    firewall.killDelay = const Duration(milliseconds: 400);
+    final first = reconciler.request();
+    final queued = reconciler.request();
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    // The first has timed out and is being killed; a new request still waits.
+    firewall.gate = null;
+
+    final results = await Future.wait([first, queued]);
+
+    expect(results.first.ok, isFalse);
+    expect(results.last.ok, isTrue);
+    expect(firewall.maxConcurrent, 1);
+    expect(firewall.calls, ['reconcile', 'reconcile']);
+  });
 }

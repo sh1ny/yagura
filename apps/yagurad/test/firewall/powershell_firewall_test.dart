@@ -42,12 +42,12 @@ void main() {
   test('the_request_is_a_file_and_stdin_is_not_used', () async {
     final backend = stub(
       r'''$r = [System.IO.File]::ReadAllText($env:YAGURA_FIREWALL_REQUEST) | ConvertFrom-Json; '''
-      r'''[Console]::Out.Write('{"changes":[{"name":"' + $r.mode + '/' + $r.group + '","action":"created"}],"unmanaged":[]}')''',
+      r'''[Console]::Out.Write('{"changes":[{"name":"' + $r.mode + '/' + $r.scope + '","action":"created"}],"unmanaged":[]}')''',
     );
 
     final outcome = await backend.reconcile(const [], timeout: _timeout);
 
-    expect(outcome.changes.single.name, 'reconcile/Yagura');
+    expect(outcome.changes.single.name, 'reconcile/Yagura/');
   });
 
   test('a_request_directory_that_cannot_be_made_is_unavailable', () async {

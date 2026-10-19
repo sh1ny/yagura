@@ -44,8 +44,10 @@ class ReconcileResult {
 /// Reconciles are single-flight: while one runs, further requests share one
 /// pending run that starts when it ends, so a burst of changes costs two
 /// scripts at most. The desired rules are read when a run starts, never
-/// stored. A run that fails or times out deletes nothing and marks the
-/// instances it concerns degraded until a later run succeeds.
+/// stored. A run that fails marks the instances it concerns degraded until a
+/// later run succeeds. A run that is stopped at its limit may have applied part
+/// of its changes (the script applies creates and updates before deletes); the
+/// next run completes them.
 class FirewallReconciler {
   FirewallReconciler({
     required this.backend,
@@ -123,6 +125,9 @@ class FirewallReconciler {
     _pending = null;
   }
 
+  /// What a backend gets beyond its [timeout] to end its script and return.
+  static const _backendGrace = Duration(seconds: 15);
+
   static const _closedMessage = 'the daemon is stopping';
 
   Future<ReconcileResult> _begin() {
@@ -160,10 +165,14 @@ class FirewallReconciler {
         for (final rule in wanted)
           if (rule.owner != daemonRuleOwner) rule.name,
       };
+      // The backend owns the timeout: it counts from its own start, ends the
+      // script at the limit and returns once that script has ended. The run is
+      // over only then, so the next never overlaps it. The longer bound here
+      // is for a backend that ignores its timeout.
       final outcome = await backend
           .reconcile(wanted, timeout: timeout)
           .timeout(
-            timeout,
+            timeout + _backendGrace,
             onTimeout: () => throw FirewallUnavailable(_unanswered(timeout)),
           );
       final known = _known!;

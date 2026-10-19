@@ -396,13 +396,21 @@ class InstanceManager {
     final settings = _validated(manifest, request.settings);
 
     var ports = record.ports;
-    if (request.ports case final overrides?) {
+    if (request.ports != null || request.exposure != null) {
       final current = {
         for (final port in record.ports)
           if (manifest.ports.any((d) => d.name == port.name && !d.isDerived))
             port.name: port.number,
       };
-      ports = _resolvePorts(manifest, {...current, ...overrides});
+      ports = _resolvePorts(
+        manifest,
+        {...current, ...?request.ports},
+        exposure: {
+          for (final port in record.ports)
+            if (port.purpose == PortPurpose.rcon) port.name: port.exposed,
+          ...?request.exposure,
+        },
+      );
     }
     _checkPorts(record.name, ports, excluding: record.id);
 
@@ -584,8 +592,9 @@ class InstanceManager {
 
   List<PortAssignment> _resolvePorts(
     PluginManifest manifest,
-    Map<String, int> overrides,
-  ) {
+    Map<String, int> overrides, {
+    Map<String, bool> exposure = const {},
+  }) {
     final Map<String, int> numbers;
     try {
       numbers = resolvePorts(manifest, overrides);
@@ -601,7 +610,9 @@ class InstanceManager {
           number: numbers[decl.name]!,
           protocol: decl.protocol,
           purpose: decl.purpose,
-          exposed: decl.exposed,
+          exposed: decl.purpose == PortPurpose.rcon
+              ? exposure[decl.name] ?? decl.exposed
+              : decl.exposed,
         ),
     ];
   }
@@ -835,7 +846,8 @@ class InstanceManager {
   /// `not_installed`, one per exposed port and protocol (`both` is two), and
   /// the daemon's API port. While a run has not ended the rules follow the
   /// ports it was launched with; otherwise the saved ports. A port of purpose
-  /// `rcon` is exposed only when its declaration says so.
+  /// `rcon` is exposed only when the instance's setting says so
+  /// (`UpdateSettingsRequest.exposure`; a plugin may declare the default).
   List<DesiredRule> desiredFirewallRules() {
     final rules = [
       DesiredRule(

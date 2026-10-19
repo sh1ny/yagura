@@ -530,7 +530,8 @@ class ServiceRig {
     }
     await process.env.closeDaemons();
     // The daemon of the service owned firewall rules (instance ports, its API
-    // port); a row ends without them.
+    // port); a row ends without them. This empties the whole group `Yagura`:
+    // the rig runs only on the elevated workflow's runner.
     try {
       await removeYaguraGroup();
     } on Object catch (e) {

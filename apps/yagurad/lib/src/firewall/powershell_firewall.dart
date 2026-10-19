@@ -24,6 +24,7 @@ class PowerShellFirewall implements FirewallBackend {
   PowerShellFirewall({
     required this.directory,
     this.removeDirectory = false,
+    this.scope = '$firewallGroup/',
     this.executable,
     this.arguments,
     this.prelude,
@@ -36,6 +37,11 @@ class PowerShellFirewall implements FirewallBackend {
   /// Whether [directory] is removed after a run when it is empty (the
   /// installer's, which must leave nothing in the install folder).
   final bool removeDirectory;
+
+  /// The name prefix a reconcile may delete under: the daemon deletes owned
+  /// rules anywhere in the group (`Yagura/`); a test passes the prefix of its
+  /// own instance, so it prunes nothing else on the host.
+  final String scope;
 
   /// `powershell.exe`; defaults to the one in `%SystemRoot%`, not the first
   /// on the path.
@@ -137,17 +143,20 @@ class PowerShellFirewall implements FirewallBackend {
     final input = utf8.encode(
       jsonEncode({
         ...request,
-        'group': firewallGroup,
-        'owned': ownedRuleNamePattern,
+        // The group and the name pattern are in the script, not here.
+        'scope': scope,
       }),
     );
     // The request goes in a file the script reads, not on standard input: a
     // run with a request of a few hundred rules on stdin never started its
     // script in CI. The command line carries only the script, so it stays
     // short however many rules there are.
+    // The limit counts from here, so writing the request and starting
+    // PowerShell are inside it.
+    final deadline = DateTime.now().add(timeout);
     final file = _writeRequest(input);
     try {
-      return await _execute(file.path, timeout);
+      return await _execute(file.path, deadline, timeout);
     } finally {
       _deleteRequest(file);
     }
@@ -214,6 +223,7 @@ class PowerShellFirewall implements FirewallBackend {
 
   Future<Map<String, Object?>> _execute(
     String requestPath,
+    DateTime deadline,
     Duration timeout,
   ) async {
     // -EncodedCommand is UTF-16LE in base64.
@@ -250,14 +260,23 @@ class PowerShellFirewall implements FirewallBackend {
     // Nothing is sent: the host must never wait for input.
     process.stdin.close().ignore();
     var timedOut = false;
+    final left = deadline.difference(DateTime.now());
     final code = await process.exitCode.timeout(
-      timeout,
+      left.isNegative ? Duration.zero : left,
       onTimeout: () {
         timedOut = true;
         process.kill();
         return -1;
       },
     );
+    // A killed process is gone when the call returns, so the next run never
+    // overlaps it.
+    if (timedOut) {
+      await process.exitCode.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => -1,
+      );
+    }
     // The output ends with the process; a child that kept the pipes open
     // does not hold the call.
     await streams.timeout(

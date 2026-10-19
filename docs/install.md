@@ -97,17 +97,15 @@ yagurad service uninstall
 yagurad service uninstall --purge-accounts
 ```
 
-## Running a second service
+## One service per host
 
-Two options on every `service` command name a different service and install folder, for a test machine or a second daemon. Their defaults are the service `yagurad` and `%ProgramFiles%\Yagura`:
+A host runs one Yagura service. It holds the admin channel (a fixed pipe name, so `yagurad pair`, `yagurad status` and the readiness wait have one answer) and it manages the Windows Firewall group `Yagura`. `yagurad service install` under a new name while another Yagura service is registered is refused with `another_service_installed` and changes nothing; installing again under the same name is an install or an upgrade as before.
+
+Two options on every `service` command, `--service-name` and `--install-dir`, exist for the test rig that installs a service under a throwaway name and folder. Their defaults are the service `yagurad` and `%ProgramFiles%\Yagura`. Do not use them to run services side by side; the second install is refused. The rig's form is
 
 ```
 yagurad service install --service-name yagurad-test --install-dir D:\yagura-test
 ```
-
-The two services share one install root unless `--install-dir` differs, and their version folders are told apart by the `.yagura-install` marker. Give each its own `--install-dir` anyway: the wrapper, the configuration and the logs are named after the service, but a second service of the same version cannot reuse a folder the first made.
-
-The admin channel, and so `yagurad pair`, `yagurad status` and the readiness wait, has a fixed name: two services running at the same time cannot both serve it.
 
 The service opens the API port in Windows Firewall at install and closes it at uninstall; a host without a running firewall gets a warning naming the rule (`firewall_unavailable`) and the install still succeeds. See [firewall.md](firewall.md).
 
@@ -120,6 +118,7 @@ Failures print `yagurad: <reason>: <message>` and exit 1.
 | `elevation_required` | The prompt is not elevated |
 | `bundle_invalid` | Not run from an unpacked bundle, or the bundle lacks the pinned WinSW or its template, or its `VERSION` is not a version |
 | `service_exists` | The service is installed at this version or a newer one, or an upgrade was given `--bind` or `--data-dir` |
+| `another_service_installed` | `install` under a new name while another Yagura service is registered on this host (one service per host); nothing was changed |
 | `service_not_installed` | `configure`, `status` or `uninstall` with no service installed |
 | `service_config_invalid` | The installed configuration is not one `yagurad` wrote (also for `uninstall --purge-accounts`, which needs it to know the data directory) |
 | `bind_invalid` | The bind is not `address:port` with a port from 1 to 65535 |
@@ -135,4 +134,4 @@ Failures print `yagurad: <reason>: <message>` and exit 1.
 | `service_accounts` | `yagura-srv` or `yagura-steam` could not be set up (the message names the account and the Windows error); also reported by the running service, which then starts no game server. See [data-directory.md](data-directory.md#service-accounts) |
 | `internal_error` | `--purge-accounts` could not read the database to tell whether game servers run (before the service was stopped nothing was changed; after it, the service is started again), or a file or Windows call failed in a way the other reasons do not name; the message holds the error |
 
-The commands that ask the running daemon (`configure`, `status`, the readiness wait of `install` and the check of `--purge-accounts`) also pass on the reasons of the admin channel: `access_denied`, `admin_channel_untrusted`, `admin_channel_busy`, `admin_request_timeout`, `admin_connection_closed` and `admin_api_unsupported`. [data-directory.md](data-directory.md) explains each.
+The commands that ask the running daemon (`configure`, `status`, the readiness wait of `install` and the check of `--purge-accounts`) also pass on the reasons of the admin channel: `access_denied`, `admin_channel_untrusted`, `admin_channel_busy`, `admin_request_timeout`, `daemon_starting`, `admin_connection_closed` and `admin_api_unsupported`. [data-directory.md](data-directory.md) explains each.

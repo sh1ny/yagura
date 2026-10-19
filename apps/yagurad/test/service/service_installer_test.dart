@@ -291,6 +291,18 @@ void main() {
       expect(rig.output, contains('mode: service'));
     });
 
+    test('the_ready_poll_waits_through_daemon_starting', () async {
+      final rig = InstallerRig();
+      rig.status = (poll) => poll < 2
+          ? throw YaguraException('daemon_starting', 'still starting')
+          : {'mode': 'service', 'api_port': 7443};
+
+      await rig.installer.install();
+
+      expect(rig.adminCalls, ['status', 'status', 'status']);
+      expect(rig.output, contains('mode: service'));
+    });
+
     test('a_daemon_that_never_answers_is_service_not_ready', () async {
       final rig = InstallerRig();
       final started = rig.clock;
@@ -842,6 +854,67 @@ void main() {
       }
       expect(rig.rootExists, isFalse);
     });
+  });
+
+  group('one service per host', () {
+    test('a_second_install_under_another_name_is_refused', () async {
+      final rig = InstallerRig(serviceName: 'yagurad-test');
+      rig.control.services['yagurad'] = ServiceStatus.stopped;
+
+      final e = await failureOf(rig.installer.install);
+
+      expect(e.reason, 'another_service_installed');
+      expect(e.message, contains('yagurad'));
+      expect(rig.control.calls, isEmpty);
+      expect(Directory(rig.layout.root).existsSync(), isFalse);
+    });
+
+    test('installing_the_same_name_again_is_an_upgrade_not_a_second', () async {
+      final rig = InstallerRig();
+      await rig.installer.install();
+
+      // The same name is not "another": the usual same-version answer.
+      final e = await failureOf(rig.installer.install);
+
+      expect(e.reason, 'service_exists');
+    });
+
+    for (final (test: label, folder: folder) in [
+      (
+        test: 'the_services_that_are_ours_are_found_by_their_configuration',
+        folder: 'yagurad_services_',
+      ),
+      (
+        test: 'a_service_in_a_non_ascii_folder_is_found',
+        folder: 'yagurad_dienste_\u00fc\u30b5_',
+      ),
+    ]) {
+      test(label, () {
+        final dir = Directory.systemTemp.createTempSync(folder);
+        addTearDown(() => dir.deleteSync(recursive: true));
+        final layout = InstallLayout(root: dir.path, serviceName: 'yagurad-x');
+        final xml =
+            ServiceConfig(
+              layout: layout,
+              version: '0.1.0',
+              bind: '0.0.0.0:7443',
+            ).render(
+              '<executable>{{executable}}</executable>'
+              '<arguments>{{arguments}}</arguments>',
+            );
+        File(layout.configFile).writeAsStringSync(xml);
+        File(p.join(dir.path, 'other.xml')).writeAsStringSync('<service/>');
+
+        final names = yaguraServiceNames([
+          (name: 'yagurad-x', imagePath: '"${layout.winswExecutable}"'),
+          (name: 'other', imagePath: '"${p.join(dir.path, 'other.exe')}"'),
+          (name: 'Spooler', imagePath: 'C:/Windows/System32/spoolsv.exe'),
+          (name: 'no-image', imagePath: ''),
+        ]);
+
+        expect(names, ['yagurad-x']);
+      });
+    }
   });
 
   group('configure', () {

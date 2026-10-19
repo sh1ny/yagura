@@ -6,9 +6,12 @@ import 'elevated_support.dart';
 
 // Helpers of the firewall `elevated` rows. They create, read and delete rules
 // of the real Windows Firewall, so they run only in the manual `elevated`
-// workflow (.github/workflows/elevated.yml), never on a developer's desktop.
-// Every rule a row creates is named after a random instance id of its own,
-// and the clean-up removes by that name, never the whole group.
+// workflow (.github/workflows/elevated.yml), on the runner, never on a
+// developer's desktop or a host with Yagura installed. Every rule a row creates
+// is named after a random instance id of its own, and the clean-up removes by
+// that name. The rows that run a real service (`removeYaguraGroup`) are the
+// exception: the service's daemon owns rules the row did not name, so they
+// empty the whole group, which only a clean runner can take.
 
 final _random = Random.secure();
 
