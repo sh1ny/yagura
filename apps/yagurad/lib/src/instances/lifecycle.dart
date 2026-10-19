@@ -149,8 +149,11 @@ class Lifecycle {
       _manager.setState(record, InstanceState.stopped);
     } on Object {
       _manager.setState(record, InstanceState.notInstalled);
+      // Rules made while it installed go with the attempt.
+      _manager.firewallChanged();
       rethrow;
     }
+    await _manager.syncFirewall(ctx);
   }
 
   Future<void> update(
@@ -324,6 +327,9 @@ class Lifecycle {
           instanceId: record.id,
           directory: runDirectory,
           at: _manager.clock(),
+          launchedPorts: {
+            for (final port in record.ports) port.name: port.number,
+          },
         );
         // The arguments below are the settings this run uses; an edit made
         // after this point is what a restart is needed for.
@@ -404,6 +410,7 @@ class Lifecycle {
         ..health = health;
       _manager.setState(record, InstanceState.running);
       _manager.watchExit(record, launched);
+      await _manager.syncFirewall(ctx);
     } on Object catch (e) {
       final cancelled = e is OperationCancelled;
       if (server != null && !serverGone) {
@@ -433,6 +440,7 @@ class Lifecycle {
       record.server = null;
       if (!cancelled) record.lastRequestedRunning = false;
       _manager.setState(record, InstanceState.stopped);
+      _manager.firewallChanged();
       rethrow;
     } finally {
       await logWatch?.close();
@@ -512,6 +520,7 @@ class Lifecycle {
       return;
     }
     await _stopRunning(ctx, record, plugin, force: force, clearRequested: true);
+    await _manager.syncFirewall(ctx);
   }
 
   Future<void> restart(OperationContext ctx, String id) async {
@@ -628,6 +637,9 @@ class Lifecycle {
       }
       rethrow;
     }
+    // The instance's rules go with its rows, before the files (which can take
+    // long and are past the point of no return).
+    await _manager.syncFirewall(ctx);
 
     if (deleteFiles) {
       // Past the point of no return: cancellation is no longer honoured.

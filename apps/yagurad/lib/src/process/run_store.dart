@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../host/database.dart';
 import 'process_host.dart';
 
@@ -32,6 +34,7 @@ class RunRecord {
     this.exitCode,
     this.endedAt,
     this.endReason = '',
+    this.launchedPorts = const {},
   });
 
   final String runId;
@@ -53,6 +56,11 @@ class RunRecord {
   final int? exitCode;
   final DateTime? endedAt;
   final String endReason;
+
+  /// The port numbers by name the server was launched with (design D11); the
+  /// firewall rules follow them while the run has not ended. Empty for a run
+  /// recorded before they were kept.
+  final Map<String, int> launchedPorts;
 }
 
 /// SQLite persistence of run records and crash timestamps. The process
@@ -70,16 +78,18 @@ class RunStore {
     required String instanceId,
     required String directory,
     required DateTime at,
+    Map<String, int> launchedPorts = const {},
   }) {
     _database.sqlite.execute(
-      'INSERT INTO runs (run_id, instance_id, directory, state, created_at) '
-      'VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO runs (run_id, instance_id, directory, state, created_at, '
+      'launched_ports) VALUES (?, ?, ?, ?, ?, ?)',
       [
         runId,
         instanceId,
         directory,
         RunState.pending.name,
         at.millisecondsSinceEpoch,
+        jsonEncode(launchedPorts),
       ],
     );
   }
@@ -223,7 +233,23 @@ class RunStore {
       exitCode: row['exit_code'] as int?,
       endedAt: endedAt == null ? null : _time(endedAt),
       endReason: row['end_reason']! as String,
+      launchedPorts: _ports(row['launched_ports']! as String),
     );
+  }
+
+  /// The ports a run was launched with; `{}` for the `[]` older rows hold.
+  static Map<String, int> _ports(String json) {
+    try {
+      if (jsonDecode(json) case final Map<String, Object?> map) {
+        return {
+          for (final MapEntry(:key, :value) in map.entries)
+            if (value is int) key: value,
+        };
+      }
+    } on FormatException {
+      // Unreadable reads as unknown: the saved ports apply.
+    }
+    return const {};
   }
 
   // ---- crashes -------------------------------------------------------------

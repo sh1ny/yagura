@@ -9,6 +9,7 @@ import '../admin/named_pipe.dart';
 import '../api/api_server.dart';
 import '../api/bind_address.dart';
 import '../errors.dart';
+import '../firewall/powershell_firewall.dart';
 import 'admin_commands.dart';
 import 'service_command.dart';
 import '../host/daemon.dart';
@@ -334,6 +335,11 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
             : null,
         instanceAcls: managed
             ? HostInstanceAcls(const WindowsAccountSids())
+            : null,
+        // The requests to PowerShell go under the data directory, which the
+        // service has made writable by SYSTEM and Administrators only.
+        firewall: managed
+            ? PowerShellFirewall(directory: p.join(dataDirectory, 'tmp'))
             : null,
         serviceMode: !dev,
         versionSweeper: dev

@@ -17,13 +17,15 @@ import 'service_support.dart';
 /// secret store joins them on a host without one, and the service accounts
 /// (both of them: `service_accounts` and `steam_account`)
 /// are built only where the daemon manages them (service mode; a development
-/// daemon runs everything as the current user).
+/// daemon runs everything as the current user). The firewall is built where
+/// the daemon reconciles rules (service mode on a host with a firewall).
 List<String> notBuiltComponents({
   required bool secretStore,
   required bool serviceAccounts,
+  required bool firewall,
 }) => [
   if (!secretStore) 'secret_store',
-  'firewall',
+  if (!firewall) 'firewall',
   if (!serviceAccounts) 'service_accounts',
   if (!serviceAccounts) 'steam_account',
 ];
@@ -104,7 +106,9 @@ class SystemApi extends pb.SystemServiceBase with GuardedService {
       notBuilt: notBuiltComponents(
         secretStore: secretStore,
         serviceAccounts: daemon.serviceAccountsManaged,
+        firewall: daemon.firewall != null,
       ),
+      firewallOk: daemon.firewall?.ok ?? false,
       adminChannelOk: daemon.adminChannelOk,
       serviceAccountsOk: daemon.serviceAccountsOk,
       serverCertNotAfter: security == null

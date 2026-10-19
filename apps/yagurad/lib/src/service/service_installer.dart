@@ -5,6 +5,9 @@ import 'package:path/path.dart' as p;
 
 import '../api/bind_address.dart';
 import '../errors.dart';
+import '../firewall/api_port_rule.dart';
+import '../firewall/firewall_backend.dart' show FirewallUnavailable;
+import '../firewall/rule_names.dart' show apiRuleName;
 import '../instances/instance_roots.dart' show administratorsSid;
 import '../platform/acl_inspector.dart';
 import '../platform/acl_writer.dart';
@@ -56,6 +59,7 @@ class ServiceInstaller {
     required this.purger,
     required this.aclWriter,
     required this.inspector,
+    this.apiRule,
     this.readyTimeout = const Duration(seconds: 60),
     this.pollInterval = const Duration(seconds: 1),
     this.delay = _wait,
@@ -83,6 +87,9 @@ class ServiceInstaller {
 
   /// Reads the owner and DACL of the folders above and at the install root.
   final AclInspector inspector;
+
+  /// Creates and removes the API port rule (design D11); null manages none.
+  final ApiPortRule? apiRule;
 
   /// How long to wait for a state change of the service and for the daemon
   /// to answer (the 60 s of design D6).
@@ -119,7 +126,7 @@ class ServiceInstaller {
       return _upgrade(bind: bind, dataDirectory: dataDirectory);
     }
     final bindText = (bind ?? defaultServiceBindText).trim();
-    await _checkBind(bindText);
+    final port = await _checkBind(bindText);
     // The service resolves a relative path against its own directory, and
     // the commands that read the data directory against theirs.
     final data = dataDirectory == null
@@ -159,6 +166,7 @@ class ServiceInstaller {
       }
       rethrow;
     }
+    await _ensureApiRule(port);
     await _start();
     final status = await _waitReady();
     out.writeln(
@@ -329,6 +337,7 @@ class ServiceInstaller {
       }
       await control.uninstall(layout);
     }
+    await _removeApiRule();
     final removal = await _removeFiles();
     out.writeln(
       registered
@@ -372,6 +381,43 @@ class ServiceInstaller {
               'again',
         );
       }
+    }
+  }
+
+  static String _problem(Object e) =>
+      e is FirewallUnavailable ? e.message : '$e';
+
+  /// Creates the API port rule. The service is installed either way: a
+  /// firewall that cannot be used is a warning, and the daemon's reconciler
+  /// creates the rule at a start where it can (design D11).
+  Future<void> _ensureApiRule(int port) async {
+    final rule = apiRule;
+    if (rule == null) return;
+    try {
+      await rule.ensure(port);
+    } on Object catch (e) {
+      out.writeln(
+        'warning: the firewall rule $apiRuleName for port $port is missing '
+        '(firewall_unavailable: ${_problem(e)}). Remote devices cannot reach '
+        'the daemon until the rule exists; the daemon creates it at a start '
+        'where the Windows Firewall works',
+      );
+    }
+  }
+
+  /// Removes the API port rule with the service. Servers and their rules stay
+  /// (design D6).
+  Future<void> _removeApiRule() async {
+    final rule = apiRule;
+    if (rule == null) return;
+    try {
+      await rule.remove();
+    } on Object catch (e) {
+      out.writeln(
+        'warning: the firewall rule $apiRuleName could not be removed '
+        '(firewall_unavailable: ${_problem(e)}); delete it by hand in the '
+        'group Yagura',
+      );
     }
   }
 

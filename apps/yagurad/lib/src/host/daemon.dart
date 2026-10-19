@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:sqlite3/sqlite3.dart' show SqliteException;
 
 import '../errors.dart';
+import '../firewall/firewall_backend.dart';
+import '../firewall/firewall_reconciler.dart';
 import '../admin/admin_server.dart';
 import '../admin/admin_service.dart';
 import '../admin/admin_transport.dart';
@@ -66,6 +68,8 @@ class DaemonConfig {
     this.instanceAcls,
     this.hostAddresses,
     this.versionSweeper,
+    this.firewall,
+    this.firewallTimeout = const Duration(seconds: 30),
     this.logOptions = const LogHubOptions(),
     this.maxRetainedOperationEvents = 2000,
     this.restartDelay = const Duration(seconds: 5),
@@ -138,6 +142,14 @@ class DaemonConfig {
   /// null when the daemon does not run from an installed version.
   final VersionSweeper? versionSweeper;
 
+  /// The Windows Firewall the reconciler drives (design D11); null in
+  /// development mode and where the host has none, which manage no rules.
+  /// Used in service mode only.
+  final FirewallBackend? firewall;
+
+  /// How long one reconcile may take before it fails `firewall_unavailable`.
+  final Duration firewallTimeout;
+
   /// Polling and persist intervals of the log hub.
   final LogHubOptions logOptions;
 
@@ -181,6 +193,7 @@ class Daemon {
     required this.secrets,
     required this.roots,
     required AdminServer? admin,
+    required this.firewall,
     required this.security,
     required this.startedAt,
     required this.serviceAccountsManaged,
@@ -219,6 +232,9 @@ class Daemon {
 
   /// Whether the admin channel is served (`GetHealth.admin_channel_ok`).
   bool get adminChannelOk => _admin?.serving ?? false;
+
+  /// The firewall reconciler; null unless service mode with a firewall.
+  final FirewallReconciler? firewall;
 
   /// Identity, devices, pairing and audit; null unless service mode.
   final DaemonSecurity? security;
@@ -476,6 +492,24 @@ class Daemon {
         notices.add(StartupNotice(aclMigrationFailedReason, failure));
       }
     });
+    // Design D11: in service mode the owned rules follow the instances, from
+    // the first start on; an unusable firewall is a notice and a health flag.
+    FirewallReconciler? firewall;
+    if (config.serviceMode && config.firewall != null) {
+      firewall = FirewallReconciler(
+        backend: config.firewall!,
+        desired: manager.desiredFirewallRules,
+        timeout: config.firewallTimeout,
+        onStatusChanged: manager.firewallStatusChanged,
+      );
+      manager.firewall = firewall;
+      await degraded('firewall', () async {
+        final result = await firewall!.request();
+        if (!result.ok) {
+          throw YaguraException('firewall_unavailable', result.problem);
+        }
+      });
+    }
     await degraded('reconcile', manager.reconcilePlugins);
     await degraded('marked_directories', manager.sweepMarkedDirectories);
     await degraded('snapshots', manager.purgeExpiredSnapshots);
@@ -508,6 +542,7 @@ class Daemon {
           'version': daemonVersion,
           'executable': Platform.resolvedExecutable,
           'service_accounts_ok': accountsOk,
+          'api_port_rule': firewall?.apiRuleStatus ?? 'not_managed',
         },
         hostAddresses: config.hostAddresses,
       );
@@ -534,6 +569,7 @@ class Daemon {
       secrets: secrets,
       roots: roots,
       admin: admin,
+      firewall: firewall,
       security: security,
       startedAt: (config.clock ?? DateTime.now)(),
       serviceAccountsManaged: accounts != null,
@@ -576,6 +612,7 @@ class Daemon {
     if (_closed) return;
     _closed = true;
     await _admin?.close();
+    firewall?.close();
     await _logSync.close();
     await instances.close();
     await logs.close();

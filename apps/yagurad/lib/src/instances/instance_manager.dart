@@ -9,6 +9,9 @@ import 'package:yagura_plugin/yagura_plugin.dart';
 
 import '../errors.dart';
 import '../files/files.dart';
+import '../firewall/firewall_backend.dart';
+import '../firewall/firewall_reconciler.dart';
+import '../firewall/rule_names.dart';
 import '../hooks/hooks.dart';
 import '../host/acl_layout.dart';
 import '../host/data_directory.dart';
@@ -105,6 +108,10 @@ class InstanceManager {
   /// daemon once the log hub exists.
   Future<List<String>> Function(String instanceId, int lines)? logTail;
 
+  /// Keeps the firewall rules in step with the instances (design D11); set by
+  /// the daemon in service mode, null where the daemon manages no rules.
+  FirewallReconciler? firewall;
+
   /// Opens a `log_match` watch on [source] of an instance (set by the daemon
   /// once the log hub exists).
   Future<LogMatchWatch> Function(
@@ -200,6 +207,11 @@ class InstanceManager {
       pid: record.server?.pid ?? 0,
       health: record.health,
       revision: record.revision,
+      firewallStatus: switch (firewall) {
+        null => 'disabled',
+        final f when f.isDegraded(record.id) => 'degraded',
+        _ => 'ok',
+      },
     );
   }
 
@@ -421,6 +433,9 @@ class InstanceManager {
       _applyState(record, InstanceState.stopped);
     }
     _commit(record, revisedFrom: record.revision);
+    // A port change moves the rules of an instance that is not running; one
+    // that runs keeps its launched ports until it is started again.
+    firewallChanged();
     return view(record);
   }
 
@@ -812,6 +827,89 @@ class InstanceManager {
             lifecycle.delete(context, record.id, deleteFiles: deleteFiles),
       ),
     );
+  }
+
+  // ---- firewall (design D11) ----------------------------------------------
+
+  /// The rules the firewall should hold now: for every instance that is not
+  /// `not_installed`, one per exposed port and protocol (`both` is two), and
+  /// the daemon's API port. While a run has not ended the rules follow the
+  /// ports it was launched with; otherwise the saved ports. A port of purpose
+  /// `rcon` is exposed only when its declaration says so.
+  List<DesiredRule> desiredFirewallRules() {
+    final rules = [
+      DesiredRule(
+        owner: daemonRuleOwner,
+        portName: 'api',
+        protocol: 'tcp',
+        port: apiPort,
+      ),
+    ];
+    for (final record in _records.values) {
+      if (record.state == InstanceState.notInstalled) continue;
+      final launched = _launchedPorts(record.id);
+      for (final port in record.ports) {
+        if (!port.exposed) continue;
+        final number = launched?[port.name] ?? port.number;
+        for (final protocol in switch (port.protocol) {
+          PortProtocol.both => const ['tcp', 'udp'],
+          final single => [single.name],
+        }) {
+          rules.add(
+            DesiredRule(
+              owner: record.id,
+              portName: port.name,
+              protocol: protocol,
+              port: number,
+            ),
+          );
+        }
+      }
+    }
+    return rules;
+  }
+
+  /// The ports of the run of [id] that has not ended, if one is recorded.
+  Map<String, int>? _launchedPorts(String id) {
+    final unresolved = runs.unresolvedFor(id);
+    if (unresolved.isEmpty) return null;
+    final ports = unresolved.last.launchedPorts;
+    return ports.isEmpty ? null : ports;
+  }
+
+  /// Announces instances whose firewall status changed (`ok`/`degraded`).
+  void firewallStatusChanged(Set<String> owners) {
+    for (final id in owners) {
+      final record = _records[id];
+      if (record != null) _emitChanged(record);
+    }
+  }
+
+  /// Asks for a reconcile without waiting for it (a settings change, a
+  /// crash).
+  void firewallChanged() {
+    final reconciler = firewall;
+    if (reconciler != null && !_closed) unawaited(reconciler.request());
+  }
+
+  /// Reconciles for an operation and waits, so that the result of the
+  /// operation says `firewall_unavailable` when the rules could not be set
+  /// (at most twice the reconcile timeout). It never fails the operation, and
+  /// a cancelled operation stops waiting.
+  Future<void> syncFirewall(OperationContext ctx) async {
+    final reconciler = firewall;
+    if (reconciler == null || _closed) return;
+    try {
+      final result = await Future.any<ReconcileResult?>([
+        reconciler.requestAndWait(),
+        ctx.cancel.whenCancelled.then((_) => null),
+      ]);
+      if (result == null || result.ok) return;
+      ctx.warn('firewall_unavailable');
+      ctx.log(result.problem);
+    } on Object {
+      // Reported by the health flag; the operation goes on.
+    }
   }
 
   // ---- snapshots ----------------------------------------------------------
@@ -1587,6 +1685,7 @@ class InstanceManager {
       now: now,
     );
     record.server = null;
+    firewallChanged();
     switch (action) {
       case RestartAction.restart:
         setState(record, InstanceState.stopped);

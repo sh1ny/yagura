@@ -12,6 +12,8 @@ import '../platform/acl_inspector.dart';
 import '../platform/acl_writer.dart';
 import '../host/data_directory.dart';
 import '../platform/win32_security.dart';
+import '../firewall/api_port_rule.dart';
+import '../firewall/powershell_firewall.dart';
 import '../service/account_purger.dart';
 import '../service/bundle.dart';
 import '../service/install_layout.dart';
@@ -44,6 +46,7 @@ class ServiceEnvironment {
     this.accountOperations,
     this.aclWriter,
     this.aclInspector,
+    this.apiRule,
     this.environment,
     this.readyTimeout,
     this.pollInterval,
@@ -67,6 +70,11 @@ class ServiceEnvironment {
   /// Reads the security of the install root and its ancestors; defaults to
   /// the Windows one.
   final AclInspector? aclInspector;
+
+  /// Creates and removes the API port rule; defaults to the Windows Firewall
+  /// through PowerShell, except where [control] is replaced (a test), which
+  /// then manages no rule.
+  final ApiPortRule? apiRule;
 
   /// The process environment (`ProgramFiles`).
   final Map<String, String>? environment;
@@ -175,6 +183,18 @@ Future<int> runServiceCommand(
           ),
       aclWriter: service.aclWriter ?? const WindowsAclWriter(),
       inspector: service.aclInspector ?? const WindowsAclInspector(),
+      apiRule:
+          service.apiRule ??
+          (service.control == null
+              ? FirewallApiPortRule(
+                  // The install folder is protected by the install; nothing
+                  // stays in it after the run.
+                  PowerShellFirewall(
+                    directory: p.join(layout.root, 'tmp'),
+                    removeDirectory: true,
+                  ),
+                )
+              : null),
       readyTimeout: service.readyTimeout ?? const Duration(seconds: 60),
       pollInterval: service.pollInterval ?? const Duration(seconds: 1),
       delay: service.delay ?? (d) => Future<void>.delayed(d),

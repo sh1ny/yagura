@@ -10,6 +10,7 @@ import '../errors.dart';
 import '../host/daemon.dart';
 import '../security/auth_gate.dart';
 import '../security/identity.dart';
+import 'firewall_api.dart';
 import 'gated_service.dart';
 import 'instances_api.dart';
 import 'logs_api.dart';
@@ -125,7 +126,12 @@ class ApiServer {
         SteamStub(),
         ModsStub(),
         RconStub(),
-        FirewallStub(),
+        // The stub stays where the daemon manages no rules (a host without a
+        // firewall).
+        if (daemon.firewall != null)
+          FirewallApi(daemon, log)
+        else
+          FirewallStub(),
       ],
       security.gate,
       requestLimit: requestLimit,

@@ -84,6 +84,7 @@ class Instance {
     this.revision = 1,
     this.schemaVersion,
     this.health = InstanceHealth.unspecified,
+    this.firewallStatus = 'disabled',
   });
 
   final String id;
@@ -126,6 +127,11 @@ class Instance {
   /// `unknown` when the instance runs but its health check did not pass
   /// within `start_timeout`; `unspecified` while it is not running.
   final InstanceHealth health;
+
+  /// `ok` when the instance's firewall rules are as wanted, `degraded` after a
+  /// reconcile that failed (until one succeeds), `disabled` where the daemon
+  /// manages no rules (design D11).
+  final String firewallStatus;
 
   /// The configuration revision (design D12): starts at 1 and increments
   /// only on configuration changes, never on state, health, pid or queue
