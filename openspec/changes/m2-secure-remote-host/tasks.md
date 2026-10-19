@@ -267,6 +267,8 @@ Covers: desktop-client (all requirements); daemon-security → Client pins the d
 - [x] 12.5 Remove from `openspec/changes/platform-backlog/` what this change took: groups 10-13 with their test-map rows, design rows D13, D16 and D20, and the M2 parts of its delta specs. Verify: `openspec validate platform-backlog --strict` passes and a search of the backlog finds no M2 requirement left.
 - [ ] 12.6 Run the M2 exit criteria from `openspec/roadmap.md` and record the results in `docs/milestones/m2.md`; the user-verified criteria (fresh host paired in under 5 minutes, service stop and upgrade, two daemons and a conflict) are run and recorded by the user. Verify: each criterion has a result line with evidence, and none is marked passed on the user's behalf.
 
+- [ ] 12.7 Keep `yagura-srv`'s profile loaded while its servers run (D7 amendment): the service-mode process host takes a profile load of its own before each launch and for every server it launches or re-attaches, and unloads it when the last of them has ended, never when it only lets go of a running server. Verify: the profile-hold unit tests pass, and `valheim_saves_on_a_signal_stop_from_the_service` passes in the `elevated` workflow.
+
 ## Workflow follow-up
 
 - This change carries M2 (Secure remote host). After archive, `specwright-roadmap close` walks the exit criteria recorded in `docs/milestones/m2.md`.
