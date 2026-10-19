@@ -90,8 +90,8 @@ As the published contract already says (`docs/protocol.md:93`, `instances.proto:
 ### D6: WinSW service with versioned install directories
 
 - **Choice:** Follows ADR 0012. `yagurad service install` (elevated, running as the admin user) does only what needs no secrets:
-  1. Copies the running bundle into `%ProgramFiles%\Yagura\<version>\`.
-  2. Writes `yagurad.xml` (from the template in `tool/winsw/`) beside the WinSW executable in `%ProgramFiles%\Yagura\`, pointing at `<version>\yagurad.exe run --service --bind <bind>`. The bind defaults to `0.0.0.0:7443` and is set with `--bind`.
+  1. Copies the running bundle (`bin\yagurad.exe` and `lib\` as `dart build cli` lays them out, plus `winsw\`) into `%ProgramFiles%\Yagura\<version>\`.
+  2. Writes `yagurad.xml` (from the template in `tool/winsw/`) beside the WinSW executable in `%ProgramFiles%\Yagura\`, pointing at `<version>\bin\yagurad.exe run --service --bind <bind>`. The bind defaults to `0.0.0.0:7443` and is set with `--bind`.
   3. Registers and starts the service, then polls `status` over the admin pipe (60 s) and prints what it reports: accounts ready, API port rule present or missing, and the `yagurad pair` command to run next.
 
   Everything that touches secrets or ACLs is done by the daemon itself as LocalSystem, on every service-mode start and idempotently: it creates or repairs `yagura-srv` and `yagura-steam` (D7), stores their passwords in its own DPAPI scope, sets the ACLs, and lets the reconciler add the API port rule (D11). A failure there is a degraded startup step reported by `status` and `GetHealth.service_accounts_ok`, and launches fail `launch_logon_failed` until it is fixed.
