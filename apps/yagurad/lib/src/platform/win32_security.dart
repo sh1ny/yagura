@@ -722,6 +722,79 @@ _descriptorToString = _advapi
       )
     >('ConvertSecurityDescriptorToStringSecurityDescriptorW');
 
+final DynamicLibrary _user32 = DynamicLibrary.open('user32.dll');
+
+final int Function(int, Pointer<Uint32>, Pointer<Void>, int, Pointer<Uint32>)
+_getUserObjectSecurity = _user32
+    .lookupFunction<
+      Int32 Function(
+        IntPtr,
+        Pointer<Uint32>,
+        Pointer<Void>,
+        Uint32,
+        Pointer<Uint32>,
+      ),
+      int Function(int, Pointer<Uint32>, Pointer<Void>, int, Pointer<Uint32>)
+    >('GetUserObjectSecurity');
+
+/// The owner of the window station or desktop [handle] (opened with
+/// `READ_CONTROL`) as SDDL (`O:SY`), for reading with `parseSecurity`.
+String userObjectOwnerSddl(int handle) {
+  final information = calloc<Uint32>()..value = Win32.ownerSecurityInformation;
+  final needed = calloc<Uint32>();
+  try {
+    _getUserObjectSecurity(handle, information, nullptr, 0, needed);
+    final size = needed.value;
+    if (size == 0) throw _failed('GetUserObjectSecurity');
+    final descriptor = calloc<Uint8>(size);
+    final text = calloc<Pointer<Utf16>>();
+    try {
+      final read = callReadingError(
+        () => _getUserObjectSecurity(
+          handle,
+          information,
+          descriptor.cast(),
+          size,
+          needed,
+        ),
+        (r) => r == 0,
+      );
+      if (read.value == 0) {
+        throw Win32Error('GetUserObjectSecurity', read.error);
+      }
+      final converted = callReadingError(
+        () => _descriptorToString(
+          descriptor.cast(),
+          Win32.sddlRevision1,
+          Win32.ownerSecurityInformation,
+          text,
+          nullptr,
+        ),
+        (r) => r == 0,
+      );
+      if (converted.value == 0) {
+        throw Win32Error(
+          'ConvertSecurityDescriptorToStringSecurityDescriptorW',
+          converted.error,
+        );
+      }
+      try {
+        return text.value.toDartString();
+      } finally {
+        Win32.instance.localFree(text.value.cast());
+      }
+    } finally {
+      calloc
+        ..free(descriptor)
+        ..free(text);
+    }
+  } finally {
+    calloc
+      ..free(information)
+      ..free(needed);
+  }
+}
+
 /// The owner and the DACL of the kernel object [handle] (opened with
 /// `READ_CONTROL`) as SDDL, for reading with `parseSecurity`.
 String securityDescriptorSddl(int handle) {

@@ -132,6 +132,7 @@ class WindowsProcessHost implements ProcessHost {
       request.runDirectory,
       if (credentials != null) '--as-account',
     ], environment: request.env);
+    final launcher = identityOfPid(helper.pid);
     if (credentials != null) {
       // The password goes by standard input: arguments and the environment
       // are readable by other processes.
@@ -149,6 +150,24 @@ class WindowsProcessHost implements ProcessHost {
       code = await helper.exitCode.timeout(launcherTimeout);
     } on TimeoutException {
       helper.kill();
+      // The launcher may have started the relay before it was killed. The
+      // operating system says which process that is (its child), and the
+      // launch is abandoned like any other: the relay is told to end, ends a
+      // server it started, and is terminated if it does not settle. Without
+      // an answer the cancel file alone keeps a relay that has not passed its
+      // last check from keeping a server.
+      try {
+        final relay = launcher == null
+            ? null
+            : verifier.relayStartedBy(launcher, executable: helperExecutable);
+        if (relay == null) {
+          files.writeCancel();
+        } else {
+          await abandonLaunch(files, relay);
+        }
+      } on Object {
+        // The launch fails either way.
+      }
       throw YaguraException(
         'launch_failed',
         'the launcher did not finish within ${launcherTimeout.inSeconds} s',
@@ -218,7 +237,7 @@ class WindowsProcessHost implements ProcessHost {
         if (DateTime.now().isAfter(deadline)) {
           // The relay may still start the server: end the launch first, so a
           // failed Start leaves no server behind.
-          await _abandon(files, launched);
+          await abandonLaunch(files, launched);
           throw YaguraException(
             'launch_failed',
             'the relay did not report the server of ${request.executable} '
@@ -277,17 +296,24 @@ class WindowsProcessHost implements ProcessHost {
   /// (or to end one it starts), and a server it already recorded is
   /// terminated here; returns once the relay has settled, or after
   /// [abandonTimeout].
-  Future<void> _abandon(RunFiles files, ProcessIdentity? launched) async {
+  Future<void> abandonLaunch(RunFiles files, ProcessIdentity? launched) async {
     files.writeCancel();
     final deadline = DateTime.now().add(abandonTimeout);
     ProcessIdentity? ended;
     while (true) {
       final relay = files.readRelay();
       final relayId = launched ?? relay?.relay;
-      if (relay?.server case final server? when server.pid != ended?.pid) {
-        ended = server;
-        // terminate ends only a process that runs as the account.
-        await terminate(server);
+      if (relay?.server case final claimed? when claimed.pid != ended?.pid) {
+        ended = claimed;
+        // relay.json is the account's to write: only a server the launched
+        // relay really started (or that relay's own child) is ended, never
+        // whatever the file names (design D9).
+        final verified = switch (verifier.verify(claimed, launched)) {
+          ServerVerified(:final server) => server,
+          ServerFoundByFallback(:final server) => server,
+          ServerGone() || RecordRejected() => null,
+        };
+        if (verified != null) await terminate(verified);
       }
       if (files.readExitCode() != null || files.readError() != null) return;
       if (relayId != null && !await isAlive(relayId)) return;
@@ -418,7 +444,7 @@ class WindowsProcessHost implements ProcessHost {
 
   @override
   Future<RunningServer?> reattach(
-    ProcessIdentity identity, {
+    ProcessIdentity? identity, {
     ProcessIdentity? relay,
     String runDirectory = '',
   }) async {

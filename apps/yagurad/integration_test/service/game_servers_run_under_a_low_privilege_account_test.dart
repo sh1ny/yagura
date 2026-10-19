@@ -5,10 +5,12 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagura_proto/yagura_proto.dart' as pb;
 import 'package:yagurad/src/platform/win32_service.dart';
 
 import '../../test/support/account_support.dart';
 import '../../test/support/process_support.dart';
+import '../../test/support/service_client.dart';
 import '../../test/support/service_rig.dart';
 
 // host-service, "Game servers run under a low-privilege account" (design D7,
@@ -47,13 +49,9 @@ void main() {
   test('instance_created_before_the_service', tags: ['elevated'], () async {
     // Made by a dev daemon, as the current user, before the service existed.
     final rig = await ServiceRig.create(instances: 2);
-    final directories = [
-      for (final row in queryDatabase(
-        rig.data,
-        'SELECT directory FROM instances',
-      ))
-        row['directory']! as String,
-    ];
+    await rig.seedFakeSteamCmd();
+    final rows = queryDatabase(rig.data, 'SELECT id, directory FROM instances');
+    final directories = [for (final row in rows) row['directory']! as String];
     expect(directories, hasLength(2));
 
     await rig.install();
@@ -82,6 +80,19 @@ void main() {
     }
     final layouts = queryDatabase(rig.data, 'SELECT acl_layout FROM instances');
     expect(layouts.map((r) => r['acl_layout']), everyElement(1));
+
+    // The first update of an instance the dev daemon made runs SteamCMD as
+    // `yagura-steam` on it: no access denied, and what it writes is the steam
+    // account's. The running server is stopped and started again around it.
+    final client = await ServiceClient.pair(rig);
+    final id = rows.first['id']! as String;
+    await client.succeeded(
+      await client.instances.update(pb.LifecycleRequest(instanceId: id)),
+      timeout: _firstLogon,
+    );
+    final written = File(p.join(directories.first, 'server', 'app_896660.bin'));
+    expect(written.existsSync(), isTrue);
+    expect(await ownerOf(written.path), steam);
   });
 
   test('logon_fails', tags: ['elevated'], () async {

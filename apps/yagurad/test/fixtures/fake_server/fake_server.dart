@@ -12,8 +12,13 @@
 //   --ready-delay-ms <n> wait before printing the ready line
 //   --save-ms <n>        time Ctrl+C handling takes before it exits (default
 //                        200); ctrlc.txt is written when Ctrl+C arrives
+//
+// On Windows it also writes the window station and desktop it runs on
+// (`Station\Desktop`) to `desktop.txt` next to its executable, if it can.
 import 'dart:async';
 import 'dart:io';
+
+import '../desktop_name.dart';
 
 Future<void> main(List<String> args) async {
   String? stateDir;
@@ -54,6 +59,14 @@ Future<void> main(List<String> args) async {
     File('$stateDir/pid.txt').writeAsStringSync('$pid');
     File('$stateDir/cwd.txt').writeAsStringSync(Directory.current.path);
     File('$stateDir/args.txt').writeAsStringSync(args.join('\n'));
+  }
+  if (currentDesktopName() case final desktop?) {
+    try {
+      File('${File(Platform.resolvedExecutable).parent.path}/desktop.txt')
+          .writeAsStringSync(desktop);
+    } on Object {
+      // A folder it cannot write to: nothing to record.
+    }
   }
   say('fake_server starting pid=$pid');
 

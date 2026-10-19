@@ -273,6 +273,7 @@ class Lifecycle {
     final plugin = _manager.requirePlugin(record);
     final manifest = plugin.manifest;
     _manager.requireSecrets(record);
+    _manager.requireAclLayout(record);
     _manager.cancelRestart(record.id);
     // Start leaves a crash loop and resets the restart counter.
     if (record.state == InstanceState.error) {

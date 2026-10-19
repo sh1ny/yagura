@@ -404,10 +404,13 @@ class SteamCmdService implements SteamService {
         workingDirectory: directory,
         environment: environment,
       );
-    } on Object {
+    } on Object catch (e) {
       // SteamCMD cannot be started: the installation is broken, so the next
-      // run builds it again (ADR 0014).
-      _remembered.markNotReady(installation);
+      // run builds it again (ADR 0014). An account that cannot be logged on
+      // says nothing about the installation.
+      if (e is! YaguraException || e.reason != 'launch_logon_failed') {
+        _remembered.markNotReady(installation);
+      }
       rethrow;
     }
 

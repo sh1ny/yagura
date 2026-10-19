@@ -170,7 +170,7 @@ void main() {
       );
       expect(
         health.notBuilt,
-        unorderedEquals(['firewall', 'service_accounts']),
+        unorderedEquals(['firewall', 'service_accounts', 'steam_account']),
       );
       expect(health.secretStoreOk, isTrue);
       expect(health.adminChannelOk, isFalse);

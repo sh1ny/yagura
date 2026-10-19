@@ -58,6 +58,40 @@ class _Data {
 
 void main() {
   group('the data directory walk', () {
+    test('a file with several names is treated like a link', () {
+      final data = _Data.create();
+      data.backend.hardLinks['steamcmd/win/steamcmd.exe'] = 2;
+
+      expect(
+        () => walkDataDirectory(
+          data.fs,
+          serverSid: server,
+          steamSid: steam,
+          complete: true,
+        ),
+        throwsA(
+          isA<AclLinkFound>()
+              .having((e) => e.path, 'path', 'steamcmd/win/steamcmd.exe')
+              .having((e) => e.hardLinks, 'hardLinks', isTrue)
+              .having((e) => e.kind, 'kind', contains('several names')),
+        ),
+      );
+    });
+
+    test('a top level file with several names is treated like a link', () {
+      final data = _Data.create();
+      data.backend.hardLinks['yagura.db'] = 2;
+
+      expect(
+        () => walkDataDirectory(data.fs, complete: false),
+        throwsA(
+          isA<AclLinkFound>()
+              .having((e) => e.path, 'path', 'yagura.db')
+              .having((e) => e.hardLinks, 'hardLinks', isTrue),
+        ),
+      );
+    });
+
     test('sets the explicit DACLs and the inherited entries', () {
       final data = _Data.create();
 

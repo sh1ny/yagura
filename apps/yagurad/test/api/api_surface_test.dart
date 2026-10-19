@@ -57,7 +57,7 @@ void main() {
       expect(health.secretStoreOk, isTrue);
       expect(
         health.notBuilt,
-        unorderedEquals(['firewall', 'service_accounts']),
+        unorderedEquals(['firewall', 'service_accounts', 'steam_account']),
       );
       expect(health.leakedHookWorkers, 0);
       expect(health.hooksDegraded, isFalse);

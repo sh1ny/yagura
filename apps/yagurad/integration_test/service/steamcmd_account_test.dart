@@ -61,13 +61,25 @@ void main() {
   });
 
   test('steamcmd_separated_from_game_servers', tags: ['elevated'], () async {
-    final (rig, client, instance) = await _start();
+    // An instance the dev daemon made, running as the game server account
+    // when the service comes up, and the fake SteamCMD to update it with.
+    final rig = await ServiceRig.create(instances: 1);
+    await rig.seedFakeSteamCmd();
+    final row = queryDatabase(
+      rig.data,
+      'SELECT id, directory FROM instances',
+    ).single;
+    final directory = row['directory']! as String;
+    await rig.install();
+    await rig.whenServersAttached(1, timeout: _firstLogon);
+    final client = await ServiceClient.pair(rig);
     await client.succeeded(
-      await client.instances.install(
-        pb.LifecycleRequest(instanceId: instance.id),
+      await client.instances.update(
+        pb.LifecycleRequest(instanceId: row['id']! as String),
       ),
       timeout: _firstLogon,
     );
+    await rig.whenServersAttached(1, timeout: _firstLogon);
     final srv = (await accountSid('yagura-srv'))!;
     final steam = (await accountSid('yagura-steam'))!;
 
@@ -85,10 +97,21 @@ void main() {
     // The two accounts are different principals, and what SteamCMD wrote is
     // not owned by the game server account.
     expect(srv, isNot(steam));
-    final written = File(
-      p.join(instance.directory, 'server', 'app_896660.bin'),
-    );
-    expect(await ownerOf(written.path), isNot(srv));
+    final written = File(p.join(directory, 'server', 'app_896660.bin'));
+    expect(await ownerOf(written.path), steam);
+
+    // The window station and desktop of design D7 as the processes saw them
+    // (the fixtures write the names they ran on): SteamCMD and the running
+    // game server are on different desktops, so neither can hook or message
+    // the other's windows.
+    final steamDesktop = File(
+      p.join(rig.data, 'steamcmd', 'anonymous', 'desktop.txt'),
+    ).readAsStringSync();
+    final serverDesktop = File(p.join(directory, 'server', 'desktop.txt'))
+        .readAsStringSync();
+    expect(steamDesktop, r'YaguraSteam\Default');
+    expect(serverDesktop, r'YaguraSrv\Default');
+    expect(steamDesktop, isNot(serverDesktop));
   });
 
   test(

@@ -65,7 +65,7 @@ class _LaunchThenHang implements ProcessHost {
 
   @override
   Future<RunningServer?> reattach(
-    ProcessIdentity identity, {
+    ProcessIdentity? identity, {
     ProcessIdentity? relay,
     String runDirectory = '',
   }) => inner.reattach(identity, relay: relay, runDirectory: runDirectory);
@@ -311,6 +311,49 @@ void main() {
         contains('lost_while_daemon_down'),
       );
       expect(runState(env, instance.id), 'ended');
+    });
+
+    test('a_pending_run_whose_relay_file_is_gone_finds_the_relays_child', () async {
+      // Design D9: "the daemon looks for the verified relay's child running as
+      // the account. If it finds one, that child is the server". The daemon
+      // died after the launcher reported the relay and before the server was
+      // recorded, and relay.json has since been deleted: the server must not
+      // be left running while the instance shows stopped.
+      final env = TestEnv();
+      env.installValheim();
+      final first = await env.start();
+      final instance = await createInstalled(first);
+      await env.kill(first);
+      final runDirectory = RunFiles.directoryFor(instance.directory, 'run-1');
+      Directory(runDirectory).createSync(recursive: true);
+      editDatabase(
+        env,
+        'INSERT INTO runs (run_id, instance_id, directory, state, created_at, '
+        'relay_pid, relay_created, relay_executable) '
+        "VALUES ('run-1', ?, ?, 'pending', 1, 777, 5, 'relay.exe')",
+        [instance.id, runDirectory],
+      );
+      editDatabase(
+        env,
+        "UPDATE instances SET state = 'starting' WHERE id = ?",
+        [instance.id],
+      );
+      final server = FakeServer(4242, 'valheim_server.exe');
+      env.process.survivors.add(server);
+      env.process.relayChildren[777] = server;
+
+      final second = await env.start(
+        pendingRunWait: const Duration(milliseconds: 100),
+      );
+
+      final after = second.instances.get(instance.id);
+      expect(after.state, InstanceState.running);
+      expect(after.pid, 4242);
+      expect(runState(env, instance.id), 'running');
+      expect(
+        second.instances.recoveryNotices.map((n) => n.kind),
+        contains('run_record_rejected'),
+      );
     });
 
     test('a_pending_run_without_a_server_is_lost', () async {

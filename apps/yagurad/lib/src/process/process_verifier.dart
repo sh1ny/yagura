@@ -183,6 +183,25 @@ class ProcessVerifier {
     return const ServerGone();
   }
 
+  /// The relay a launcher started: its earliest child that runs as the
+  /// account, was created after it and runs [executable] (the relay is the
+  /// daemon's own executable in `relay` mode), or null. The answer comes from
+  /// the operating system, never from a run file.
+  ProcessIdentity? relayStartedBy(
+    ProcessIdentity launcher, {
+    required String executable,
+  }) {
+    ProcessIdentity? best;
+    for (final pid in table.childrenOf(launcher.pid)) {
+      final identity = table.identityOf(pid);
+      if (identity == null || identity.created <= launcher.created) continue;
+      if (!sameExecutable(identity.executable, executable)) continue;
+      if (!runsAsAccount(pid)) continue;
+      if (best == null || identity.created < best.created) best = identity;
+    }
+    return best;
+  }
+
   /// The earliest child of [relay] that runs as the account and was created
   /// after it, or null.
   ProcessIdentity? _childOf(ProcessIdentity relay) {

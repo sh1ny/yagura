@@ -425,7 +425,13 @@ class _JobProcess implements SteamProcess {
 /// isolate must not spend.
 class _AccountJobProcess implements SteamProcess {
   _AccountJobProcess._(this.pid, this._job, int pipeRead, this._exit) {
-    _exit.whenComplete(() => _exited = true);
+    // This isolate owns the job handle: it is closed here, in the same turn
+    // that marks the process exited, so [kill] can never reach a closed (or
+    // reused) handle value.
+    _exit.whenComplete(() {
+      _exited = true;
+      Win32.instance.closeHandle(_job);
+    });
     final output = ReceivePort();
     final decoder = const Utf8Decoder(allowMalformed: true)
         .startChunkedConversion(_LineSink(_lines));
@@ -451,7 +457,7 @@ class _AccountJobProcess implements SteamProcess {
     final password = account.password();
     if (password == null) {
       throw YaguraException(
-        'steamcmd_unavailable',
+        'launch_logon_failed',
         'SteamCMD cannot start: the account ${account.name} has no stored '
             'password yet',
       );
@@ -466,7 +472,7 @@ class _AccountJobProcess implements SteamProcess {
         port.close();
       } else if (!started.isCompleted) {
         started.complete(list);
-        if (list.first == 'failed') port.close();
+        if (list.first != 'started') port.close();
       }
     });
     await Isolate.spawn(
@@ -481,6 +487,14 @@ class _AccountJobProcess implements SteamProcess {
       ),
     );
     final result = await started.future;
+    if (result.first == 'logon_failed') {
+      // The account is the problem, not SteamCMD: the reason a game server's
+      // logon failure has too (design D10).
+      throw YaguraException(
+        'launch_logon_failed',
+        'the account ${account.name} could not be logged on: ${result[1]}',
+      );
+    }
     if (result.first == 'failed') {
       throw YaguraException(
         'steamcmd_unavailable',
@@ -621,7 +635,7 @@ void _runAsAccount(_AccountRequest request) {
       if (handle != 0 && handle != Win32.invalidHandle) win.closeHandle(handle);
     }
     session?.close();
-    request.port.send(<Object?>['failed', '$e']);
+    request.port.send(<Object?>[launchFailureKind(e), '$e']);
   } finally {
     for (final pointer in allocated) {
       calloc.free(pointer);
@@ -632,9 +646,18 @@ void _runAsAccount(_AccountRequest request) {
   // The profile is unloaded once SteamCMD and its job are gone (ADR 0015).
   session!.close();
   win.closeHandle(process);
-  win.closeHandle(job);
+  // The job handle is closed by the isolate that may terminate it.
   request.port.send(<Object?>['exit', code]);
 }
+
+/// The kind of message the worker sends for [error]: `logon_failed` for a
+/// failure of the account (the logon steps), `failed` for anything else,
+/// including the creation of the process, which a missing or quarantined
+/// `steamcmd.exe` fails whatever the account (ADR 0014 rebuilds then).
+String launchFailureKind(Object error) =>
+    error is LogonFailure && error.stage == LogonStage.account
+    ? 'logon_failed'
+    : 'failed';
 
 /// Collects decoded text into whole lines (`\n`, `\r\n` or a lone `\r`, which
 /// SteamCMD uses to redraw a progress line).

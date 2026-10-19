@@ -15,6 +15,7 @@ import 'service_support.dart';
 
 /// Components this daemon version does not build yet (design D7, D11). The
 /// secret store joins them on a host without one, and the service accounts
+/// (both of them: `service_accounts` and `steam_account`)
 /// are built only where the daemon manages them (service mode; a development
 /// daemon runs everything as the current user).
 List<String> notBuiltComponents({
@@ -24,6 +25,7 @@ List<String> notBuiltComponents({
   if (!secretStore) 'secret_store',
   'firewall',
   if (!serviceAccounts) 'service_accounts',
+  if (!serviceAccounts) 'steam_account',
 ];
 
 /// The `System` service: `GetInfo`, `GetHealth` and `ListAudit`.

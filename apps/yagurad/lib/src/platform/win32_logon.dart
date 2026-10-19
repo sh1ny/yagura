@@ -3,6 +3,7 @@ import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 
 import 'win32.dart';
+import '../service/install_root_security.dart' show parseSecurity;
 import 'win32_security.dart';
 
 /// The shared logon module (design D7, D10, ADR 0015): logs a service account
@@ -251,9 +252,28 @@ const _winstaAllAccess = 0x37F;
 const _desktopAll = 0x01FF;
 const _genericAll = 0x10000000;
 
+/// Which part of starting a process as a service account failed.
+enum LogonStage {
+  /// The account itself: lookup, logon, profile, environment, window station
+  /// and desktop. The account is the problem (`launch_logon_failed`).
+  account,
+
+  /// Creating the process: a missing, quarantined or broken image fails here
+  /// whatever the account.
+  process,
+}
+
 /// A logon, profile load or process start of a service account failed.
 class LogonFailure implements Exception {
-  const LogonFailure(this.account, this.call, this.error);
+  const LogonFailure(
+    this.account,
+    this.call,
+    this.error, {
+    this.stage = LogonStage.account,
+  });
+
+  /// What failed; see [LogonStage].
+  final LogonStage stage;
 
   final String account;
 
@@ -265,6 +285,22 @@ class LogonFailure implements Exception {
 
   @override
   String toString() => '$call for $account failed with error $error';
+}
+
+/// The owner of a window station or desktop that is neither SYSTEM,
+/// Administrators nor [accountSid] (the account the object is for), from the
+/// owner's SDDL (`O:SY`); null when it is one of them. `CreateWindowStationW`
+/// and `CreateDesktopW` open an object of that name that already exists, and
+/// its owner keeps `WRITE_DAC` whatever DACL is set, so an object another
+/// account created first is not adopted. The account itself has full access
+/// already, so owning its own object grants it nothing new.
+String? untrustedWindowObjectOwner(String ownerSddl, String accountSid) {
+  final owner = parseSecurity(ownerSddl).ownerSid;
+  if (owner == 'S-1-5-18' || owner == 'S-1-5-32-544') return null;
+  if (owner != null && owner.toLowerCase() == accountSid.toLowerCase()) {
+    return null;
+  }
+  return owner ?? 'nobody';
 }
 
 /// The window station and desktop of a service account: `YaguraSrv\Default`
@@ -462,7 +498,12 @@ class AccountSession {
         attributes = calloc<Uint8>(listSize.value).cast();
         if (_initializeProcThreadAttributeList(attributes, 1, 0, listSize) ==
             0) {
-          throw LogonFailure(account, 'InitializeProcThreadAttributeList', 0);
+          throw LogonFailure(
+            account,
+            'InitializeProcThreadAttributeList',
+            0,
+            stage: LogonStage.process,
+          );
         }
         if (_updateProcThreadAttribute(
               attributes,
@@ -474,7 +515,12 @@ class AccountSession {
               nullptr,
             ) ==
             0) {
-          throw LogonFailure(account, 'UpdateProcThreadAttribute', 0);
+          throw LogonFailure(
+            account,
+            'UpdateProcThreadAttribute',
+            0,
+            stage: LogonStage.process,
+          );
         }
         (startup + 104).cast<Pointer<Void>>().value = attributes;
         creation |= _extendedStartupInfoPresent;
@@ -502,7 +548,12 @@ class AccountSession {
         (r) => r == 0,
       );
       if (created.value == 0) {
-        throw LogonFailure(account, 'CreateProcessAsUserW', created.error);
+        throw LogonFailure(
+          account,
+          'CreateProcessAsUserW',
+          created.error,
+          stage: LogonStage.process,
+        );
       }
       return StartedProcess(
         pid: (processInfo + 16).cast<Uint32>().value,
@@ -566,8 +617,7 @@ class StartedProcess {
   String sid,
   String station,
 ) {
-  final sddl = 'D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;$sid)';
-  return withSecurityAttributes(sddl, (attributes) {
+  return withSecurityAttributes(windowObjectSddl(sid), (attributes) {
     final descriptor = (attributes.cast<Uint8>() + 8)
         .cast<Pointer<Void>>()
         .value;
@@ -592,6 +642,7 @@ class StartedProcess {
           Win32.instance.getLastError(),
         );
       }
+      _requireTrustedOwner(account, sid, 'station', winsta);
       if (_setUserObjectSecurity(winsta, information, descriptor) == 0) {
         throw LogonFailure(
           account,
@@ -612,6 +663,7 @@ class StartedProcess {
       final error = desk == 0 ? Win32.instance.getLastError() : 0;
       _setProcessWindowStation(previous);
       if (desk == 0) throw LogonFailure(account, 'CreateDesktopW', error);
+      _requireTrustedOwner(account, sid, 'desktop', desk);
       if (_setUserObjectSecurity(desk, information, descriptor) == 0) {
         throw LogonFailure(
           account,
@@ -632,6 +684,42 @@ class StartedProcess {
         ..free(desktopName);
     }
   });
+}
+
+/// The DACL of a service account's window station or desktop: full access
+/// for SYSTEM, Administrators and the account. Narrower rights fail process
+/// initialisation (`0xC0000142`); the account owning its own object is
+/// harmless (see [untrustedWindowObjectOwner]).
+String windowObjectSddl(String sid) =>
+    'D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;$sid)';
+
+/// `ERROR_INVALID_OWNER`.
+const _errorInvalidOwner = 1307;
+
+/// Refuses a station or desktop that SYSTEM, Administrators or the account
+/// itself do not own: it existed already and was made by someone else.
+void _requireTrustedOwner(
+  String account,
+  String accountSid,
+  String kind,
+  int handle,
+) {
+  final String owner;
+  try {
+    final untrusted = untrustedWindowObjectOwner(
+      userObjectOwnerSddl(handle),
+      accountSid,
+    );
+    if (untrusted == null) return;
+    owner = untrusted;
+  } on Win32Error catch (e) {
+    throw LogonFailure(account, 'GetUserObjectSecurity($kind)', e.code);
+  }
+  throw LogonFailure(
+    account,
+    'the window $kind is owned by $owner, not SYSTEM, Administrators or $account',
+    _errorInvalidOwner,
+  );
 }
 
 int _loadProfile(String account, int token) {

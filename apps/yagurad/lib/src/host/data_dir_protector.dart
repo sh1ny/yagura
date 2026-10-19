@@ -107,7 +107,8 @@ class AclDataDirProtector implements DataDirProtector {
     } on AclLinkFound catch (e) {
       throw dataDirNotProtected(
         fs.absolute(e.path),
-        'it is a link or junction (reparse point)',
+        'it is ${e.kind}${e.hardLinks ? '; remove the other names '
+                  '(fsutil hardlink list)' : ''}',
       );
     } on YaguraException catch (e) {
       throw dataDirNotProtected(root, e.message);

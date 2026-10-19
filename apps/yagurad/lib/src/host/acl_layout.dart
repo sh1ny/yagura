@@ -85,9 +85,28 @@ String inheritedDacl({
       '${[for (final e in extra) '(A;$flags;${e.mask};;;${e.sid})'].join()}';
 }
 
+/// Whether a walk must treat [entry] as a link: a reparse point, or a file
+/// with more than one name (setting its DACL would change the other name's
+/// target too).
+bool _isLinkLike(ConfinedEntry entry) =>
+    entry.isLink || (!entry.isDirectory && entry.links != 1);
+
 /// A link met by a walk.
 class AclLinkFound implements Exception {
-  const AclLinkFound(this.path);
+  const AclLinkFound(this.path, {this.hardLinks = false});
+
+  /// The walk's [entry] at [path], which [_isLinkLike] found.
+  factory AclLinkFound.of(String path, ConfinedEntry entry) =>
+      AclLinkFound(path, hardLinks: !entry.isLink);
+
+  /// Whether it is a file with several names (hard links) rather than a
+  /// symbolic link or junction: it looks like any file to an administrator.
+  final bool hardLinks;
+
+  /// How to name it in a message.
+  String get kind => hardLinks
+      ? 'a file with several names (hard links)'
+      : 'a link or junction (reparse point)';
 
   /// Relative to the walked root.
   final String path;
@@ -98,8 +117,8 @@ class AclLinkFound implements Exception {
 
 /// Writes the inherited entries on everything below [directory] (relative to
 /// the root of [fs]; `''` is the root), one handle at a time and without
-/// following links, with owner Administrators. A link met anywhere throws
-/// [AclLinkFound] for the first one, and nothing under it is touched.
+/// following links, with owner Administrators. A link (or a file with several names) met
+/// anywhere throws [AclLinkFound] for the first one, and nothing under it is touched.
 void inheritBelow(
   ConfinedFs fs,
   String directory,
@@ -108,7 +127,7 @@ void inheritBelow(
 }) {
   for (final child in fs.list(directory)) {
     final path = directory.isEmpty ? child.name : '$directory/${child.name}';
-    if (child.isLink) throw AclLinkFound(path);
+    if (_isLinkLike(child)) throw AclLinkFound.of(path, child);
     fs.setSecurity(
       path,
       inheritedDacl(directory: child.isDirectory, extra: extra),
@@ -172,7 +191,7 @@ bool walkDataDirectory(
   }
 
   for (final child in fs.list('')) {
-    if (child.isLink) throw AclLinkFound(child.name);
+    if (_isLinkLike(child)) throw AclLinkFound.of(child.name, child);
     final name = child.name;
     final lower = name.toLowerCase();
     if (child.isDirectory && lower == 'instances') {

@@ -122,16 +122,24 @@ class FakeProcessHost implements ProcessHost {
         : StoppedBy.graceful;
   }
 
+  /// The server of each relay (by relay PID) that a re-attach without a
+  /// recorded server finds as the verified relay's child (design D9).
+  final relayChildren = <int, FakeServer>{};
+
   /// When set, a re-attach fails `run_record_rejected` naming this relay
   /// PID: the run record does not match a verified process (design D9).
   int? rejectedRelayPid;
 
   @override
   Future<RunningServer?> reattach(
-    ProcessIdentity identity, {
+    ProcessIdentity? identity, {
     ProcessIdentity? relay,
     String runDirectory = '',
   }) async {
+    if (identity == null) {
+      final child = relay == null ? null : relayChildren[relay.pid];
+      return child?..recordRejected = true;
+    }
     if (rejectedRelayPid case final pid?) {
       throw YaguraException(
         'run_record_rejected',

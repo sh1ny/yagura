@@ -250,7 +250,10 @@ class Daemon {
     final DataDirectory dataDirectory;
     try {
       dataDirectory = _fatal('data_directory', () {
-        return DataDirectory.prepare(config.dataDirectory);
+        return DataDirectory.prepare(
+          config.dataDirectory,
+          probe: protector == null,
+        );
       });
     } on Object {
       held?.close();
@@ -275,6 +278,7 @@ class Daemon {
             held.close();
           }
           protector.walk(dataDirectory.path, complete: false);
+          dataDirectory.checkWritable();
         });
       } on Object {
         lock.release();

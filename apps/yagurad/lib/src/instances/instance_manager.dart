@@ -264,7 +264,7 @@ class InstanceManager {
         if (e is AclLinkFound) {
           throw confinedViolation(
             e.path,
-            'a link or junction in the new instance directory',
+            '${e.kind} in the new instance directory',
           );
         }
         rethrow;
@@ -309,25 +309,53 @@ class InstanceManager {
     final failed = <String>[];
     for (final record in _records.values.toList()) {
       if (store.aclLayout(record.id) >= currentAclLayout) continue;
-      try {
-        final reached = writer.apply(record.directory);
-        if (reached != 0) store.setAclLayout(record.id, reached);
-      } on Object catch (e) {
-        final path = e is AclLinkFound
-            ? InstanceFs(record.directory).absolute(e.path)
-            : record.directory;
-        final message = e is AclLinkFound
-            ? 'instance "${record.name}": $path is a link or junction; remove '
-                  'it so the instance can be given its permissions'
-            : 'instance "${record.name}": its permissions could not be set: '
-                  '${e is YaguraException ? e.message : e}';
-        record.warning = message;
-        store.save(record);
+      if (_migrateAcls(writer, record) case final message?) {
         _recoveryNotice(record, aclMigrationFailedReason, message);
         failed.add(message);
       }
     }
     return failed;
+  }
+
+  /// Gives [record] its permissions; returns why it could not (and keeps that
+  /// as the instance's warning), or null.
+  String? _migrateAcls(InstanceAcls writer, InstanceRecord record) {
+    try {
+      final reached = writer.apply(record.directory);
+      if (reached != 0) store.setAclLayout(record.id, reached);
+      return null;
+    } on Object catch (e) {
+      final path = e is AclLinkFound
+          ? InstanceFs(record.directory).absolute(e.path)
+          : record.directory;
+      final message = e is AclLinkFound
+          ? 'instance "${record.name}": $path is ${e.kind}; remove '
+                '${e.hardLinks ? 'the other names (fsutil hardlink list)' : 'it'}'
+                ' so the instance can be given its permissions'
+          : 'instance "${record.name}": its permissions could not be set: '
+                '${e is YaguraException ? e.message : e}';
+      record.warning = message;
+      store.save(record);
+      return message;
+    }
+  }
+
+  /// Refuses a launch of an instance whose permissions are not in place (design
+  /// D6: "that instance's launches fail until the link is removed"). The
+  /// migration is tried again first, so removing the link is enough; a
+  /// development daemon (no ACL writer) has nothing to check.
+  void requireAclLayout(InstanceRecord record) {
+    final writer = acls;
+    if (writer == null || store.aclLayout(record.id) >= currentAclLayout) {
+      return;
+    }
+    final message = _migrateAcls(writer, record);
+    if (message == null) return;
+    throw YaguraException(
+      aclMigrationFailedReason,
+      message,
+      details: {'instanceId': record.id},
+    );
   }
 
   // ---- settings -----------------------------------------------------------
@@ -1439,7 +1467,18 @@ class InstanceManager {
         await Future<void>.delayed(const Duration(milliseconds: 50));
       }
     }
-    if (serverId == null) return null;
+    if (serverId == null) {
+      // No recorded server. The daemon's own record of the relay (the file can
+      // be rewritten by the game-server account) still names the relay, and
+      // the relay's child running as the account is the server (design D9): a
+      // live server is not left untracked.
+      if (run.relay == null) return null;
+      return processHost.reattach(
+        null,
+        relay: run.relay,
+        runDirectory: run.directory,
+      );
+    }
     return processHost.reattach(
       serverId,
       relay: relayId,

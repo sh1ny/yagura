@@ -5,7 +5,11 @@ import 'package:test/test.dart';
 import 'package:yagurad/src/errors.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/host/daemon.dart';
+import 'package:yagurad/src/host/data_dir_lock.dart';
+import 'package:yagurad/src/platform/win32_lock_file.dart';
 import 'package:yagurad/src/host/acl_layout.dart';
+import 'package:yagurad/src/instances/instance.dart';
+import 'package:yagurad/src/operations/operations.dart';
 import 'package:yagurad/src/platform/acl_writer.dart';
 
 import '../support/acl_support.dart';
@@ -139,6 +143,100 @@ void main() {
       },
     );
 
+    // The lock file is opened before the DACL is set, so a Users process could
+    // plant a link there: the service must neither follow it nor write to it.
+    test('a link in place of the lock file stops the service start', () async {
+      final env = TestEnv();
+      final data = Directory(env.data)..createSync(recursive: true);
+      final target = File(p.join(env.root.path, 'victim.txt'))
+        ..writeAsStringSync('precious');
+      try {
+        Link(p.join(data.path, 'yagurad.lock')).createSync(target.path);
+      } on FileSystemException {
+        markTestSkipped('this host cannot create symbolic links');
+        return;
+      }
+
+      await expectLater(
+        _startService(env, protector: FakeDataDirProtector()),
+        failsWith('data_dir_not_protected', messageHas: ['yagurad.lock']),
+      );
+
+      expect(target.readAsStringSync(), 'precious');
+    });
+
+    test('a lock file with several names stops the service start', () async {
+      final env = TestEnv();
+      final data = Directory(env.data)..createSync(recursive: true);
+      final other = File(p.join(env.root.path, 'other.txt'))
+        ..writeAsStringSync('precious');
+      final made = await Process.run('cmd', [
+        '/c',
+        'mklink',
+        '/H',
+        p.join(data.path, 'yagurad.lock'),
+        other.path,
+      ]);
+      expect(made.exitCode, 0, reason: '${made.stdout}${made.stderr}');
+
+      await expectLater(
+        _startService(env, protector: FakeDataDirProtector()),
+        failsWith('data_dir_not_protected', messageHas: ['hard links']),
+      );
+
+      expect(other.readAsStringSync(), 'precious');
+    }, skip: Platform.isWindows ? false : 'hard link by cmd needs Windows');
+
+    // A lock file that cannot be opened is not a protection failure: the
+    // directory is unusable (host-service, "Data directory not writable").
+    test(
+      'a lock file that cannot be opened fails data_dir_unwritable',
+      () async {
+        final env = TestEnv();
+        // A directory in place of the file: CreateFileW fails with an error.
+        Directory(p.join(env.data, 'yagurad.lock')).createSync(recursive: true);
+
+        await expectLater(
+          _startService(env, protector: FakeDataDirProtector()),
+          failsWith(
+            'data_dir_unwritable',
+            messageHas: ['yagurad.lock', 'CreateFileW failed with error'],
+            details: {'step': 'data_directory_lock'},
+          ),
+        );
+      },
+      skip: Platform.isWindows ? false : 'the Windows lock file',
+    );
+
+    test('a lock file call that fails names the file and the error', () {
+      final error = DataDirLock.lockFileUnusable(
+        r'C:\data\yagurad.lock',
+        const LockFileFailed('WriteFile', 112),
+      );
+
+      expect(error.reason, 'data_dir_unwritable');
+      expect(error.message, contains('WriteFile failed with error 112'));
+      expect(error.message, contains('yagurad.lock'));
+      expect(error.details['error'], 112);
+    });
+
+    // host-service, "Data directory not writable": the probe runs in service
+    // mode too, once the directory is protected.
+    test('an unwritable data directory fails data_dir_unwritable', () async {
+      final env = TestEnv();
+      // A directory where the probe file goes: writing it fails.
+      Directory(p.join(env.data, '.write-test')).createSync(recursive: true);
+      final protector = FakeDataDirProtector();
+
+      await expectLater(
+        _startService(env, protector: protector),
+        failsWith('data_dir_unwritable', messageHas: [env.data]),
+      );
+
+      // After the protection, not before it.
+      expect(protector.events, containsAllInOrder(['open', 'protect']));
+    });
+
     test('a failed owner or DACL write stops the start', () async {
       final env = TestEnv();
       final protector = FakeDataDirProtector()
@@ -230,6 +328,29 @@ void main() {
       expect(acls.applied, [older.directory], reason: 'once');
     });
 
+    test('a file with several names is named as such in the warning', () async {
+      final env = TestEnv()..installValheim();
+      final dev = await env.start();
+      final older = await createValheim(dev);
+      await env.closeDaemons();
+      final acls = FakeInstanceAcls()
+        ..failing[older.directory] = const AclLinkFound(
+          'Saved/world.db',
+          hardLinks: true,
+        );
+
+      final daemon = await _startService(
+        env,
+        acls: acls,
+        accounts: FakeServiceAccounts(),
+      );
+
+      expect(
+        daemon.instances.get(older.id).warning,
+        allOf(contains('several names'), contains('fsutil hardlink list')),
+      );
+    });
+
     test('a link leaves the layout unchanged and raises a warning', () async {
       final env = TestEnv()..installValheim();
       final dev = await env.start();
@@ -266,6 +387,41 @@ void main() {
       acls.failing.clear();
       await _startService(env, acls: acls, accounts: FakeServiceAccounts());
       expect(acls.applied, hasLength(2));
+      expect(_layoutOf(env, older.id), currentAclLayout);
+    });
+
+    test('launches of an instance that could not be migrated are refused, '
+        'and work once the link is gone', () async {
+      // Design D6 and the failure table: "that instance's launches fail until
+      // the link is removed". The tree is half migrated, so a server started
+      // on it could fail on files it cannot reach or run with entries every
+      // local user can read.
+      final env = TestEnv()..installValheim();
+      final dev = await env.start();
+      final older = await createInstalled(dev);
+      await env.closeDaemons();
+      final acls = FakeInstanceAcls()
+        ..failing[older.directory] = const AclLinkFound('Saved/link');
+      final daemon = await _startService(
+        env,
+        acls: acls,
+        accounts: FakeServiceAccounts(),
+      );
+
+      final refused = await runStart(daemon, older.id);
+
+      expect(refused.status, OperationStatus.failed);
+      expect(refused.resultReason, 'acl_migration_failed');
+      expect(refused.resultMessage, contains('link'));
+      expect(daemon.instances.get(older.id).state, InstanceState.stopped);
+
+      // The admin removes the link: the next Start migrates and launches,
+      // without a service restart.
+      acls.failing.clear();
+      final started = await runStart(daemon, older.id);
+
+      expect(started.resultReason, isEmpty, reason: started.resultMessage);
+      expect(daemon.instances.get(older.id).state, InstanceState.running);
       expect(_layoutOf(env, older.id), currentAclLayout);
     });
   });

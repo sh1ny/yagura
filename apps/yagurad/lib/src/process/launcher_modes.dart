@@ -101,6 +101,18 @@ Future<int> runLaunchMode(
   }
 }
 
+/// The launcher's exit code for [failure]: only the logon steps are a logon
+/// failure (`launch_logon_failed`); a failure to create the process once the
+/// logon succeeded is a failed launch (design D7).
+int launcherExitFor(LogonFailure failure) =>
+    failure.stage == LogonStage.account ? helperLogonFailed : helperFailed;
+
+/// What the launcher tells the daemon on standard error about [failure].
+String launcherFailureText(LogonFailure failure) =>
+    failure.stage == LogonStage.account
+    ? 'logon_failed: ${failure.call} ${failure.error}'
+    : 'launch failed: ${failure.call} failed with error ${failure.error}';
+
 /// Starts the relay as the game-server account through the logon module
 /// (design D7): logon, profile, environment, `CreateProcessAsUserW` on
 /// `YaguraSrv\Default`. The profile load is balanced by `UnloadUserProfile`
@@ -148,7 +160,9 @@ Future<int> _launchAsAccount(
     // fails it (spike S2 waited for the child too).
     final settled = await _relaySettled(
       started.process,
-      RunFiles(runDirectory),
+      // Read through the instance's confinement: this process is LocalSystem,
+      // and the run directory is the game-server account's to rearrange.
+      RunFiles.forRun(runDirectory),
       const Duration(seconds: 30),
     );
     win32
@@ -170,8 +184,8 @@ Future<int> _launchAsAccount(
     );
     return helperOk;
   } on LogonFailure catch (e) {
-    err.writeln('logon_failed: ${e.call} ${e.error}');
-    return helperLogonFailed;
+    err.writeln(launcherFailureText(e));
+    return launcherExitFor(e);
   } on Object catch (e, stack) {
     err.writeln('launch failed: $e\n$stack');
     return helperFailed;

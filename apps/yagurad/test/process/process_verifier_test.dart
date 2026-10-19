@@ -159,4 +159,69 @@ void main() {
 
     expect(_verifier(table).runsAsAccount(100), isTrue);
   });
+
+  // A launcher the daemon killed on its timeout may have started the relay;
+  // the OS says which process that is, relay.json does not.
+  group('the relay of a killed launcher', () {
+    const yagurad = r'C:\y\yagurad.exe';
+    FakeProcessTable launcherAnd(int relayParent, {String? user}) =>
+        FakeProcessTable()
+          ..add(50, user: other, parent: 1, created: 5, executable: yagurad)
+          ..add(
+            100,
+            user: user ?? account,
+            parent: relayParent,
+            created: 10,
+            executable: yagurad,
+          );
+
+    test('is its child running as the account from the same executable', () {
+      final table = launcherAnd(50);
+
+      final relay = _verifier(table)
+          .relayStartedBy(table.processes[50]!.identity, executable: yagurad);
+
+      expect(relay?.pid, 100);
+    });
+
+    test('is not a process of another parent, user or executable', () {
+      final stranger = launcherAnd(1);
+      final wrongUser = launcherAnd(50, user: other);
+      final wrongImage = launcherAnd(50);
+
+      expect(
+        _verifier(
+          stranger,
+        ).relayStartedBy(stranger.processes[50]!.identity, executable: yagurad),
+        isNull,
+      );
+      expect(
+        _verifier(wrongUser).relayStartedBy(
+          wrongUser.processes[50]!.identity,
+          executable: yagurad,
+        ),
+        isNull,
+      );
+      expect(
+        _verifier(wrongImage).relayStartedBy(
+          wrongImage.processes[50]!.identity,
+          executable: r'C:\y\other.exe',
+        ),
+        isNull,
+      );
+    });
+
+    test('is not a process created before the launcher', () {
+      // A reused launcher PID: the "child" is older than the launcher.
+      final table = FakeProcessTable()
+        ..add(50, user: other, parent: 1, created: 50, executable: yagurad)
+        ..add(100, user: account, parent: 50, created: 10, executable: yagurad);
+
+      expect(
+        _verifier(table)
+            .relayStartedBy(table.processes[50]!.identity, executable: yagurad),
+        isNull,
+      );
+    });
+  });
 }

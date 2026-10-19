@@ -137,13 +137,16 @@ abstract interface class ProcessHost {
   Future<StoppedBy> stop(RunningServer server, StopPlan plan);
 
   /// The running server with [identity], or null when no live process has
-  /// exactly that PID, executable and start time. [runDirectory] holds the
+  /// exactly that PID, executable and start time. With no [identity] (the run
+  /// never recorded its server, or its file is gone) the verified [relay]'s
+  /// own child running as the account is the server, returned with
+  /// [RunningServer.recordRejected] set; null when there is none. [runDirectory] holds the
   /// run's `exit.json`, which gives the exit code of a process that is not
   /// this daemon's child. Throws `YaguraException('run_record_rejected')`
   /// when the record names a process that is not a verified server and no
   /// verified relay has a server of its own (design D9).
   Future<RunningServer?> reattach(
-    ProcessIdentity identity, {
+    ProcessIdentity? identity, {
     ProcessIdentity? relay,
     String runDirectory = '',
   });
