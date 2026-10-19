@@ -23,40 +23,54 @@ final pairingString = RegExp(
 void main() {
   // The real thing: the service account serves the pipe, an elevated
   // administrator reaches it, and a standard user is refused by its ACL.
-  test('administrator_requests_a_pairing_code', tags: ['elevated'], () async {
-    final tools = await processTools();
-    final daemon = await SystemDaemon.start(tools);
+  test(
+    'administrator_requests_a_pairing_code',
+    tags: ['elevated'],
+    // The first start of a daemon under SYSTEM can take a while.
+    timeout: const Timeout(Duration(minutes: 4)),
+    () async {
+      final tools = await processTools();
+      final daemon = await SystemDaemon.start(tools);
 
-    final result = await runYaguradExe(tools, ['pair']);
+      final result = await runYaguradExe(tools, ['pair']);
 
-    expect(result.exitCode, 0, reason: '${result.stderr}');
-    final match = pairingString.firstMatch(result.stdout as String);
-    expect(match, isNotNull, reason: '${result.stdout}');
-    expect(match![3], hasLength(10));
-    expect(daemon.dataDir.existsSync(), isTrue);
-  });
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+      final match = pairingString.firstMatch(result.stdout as String);
+      expect(match, isNotNull, reason: '${result.stdout}');
+      expect(match![3], hasLength(10));
+      expect(daemon.dataDir.existsSync(), isTrue);
+    },
+  );
 
-  test('non_administrator', tags: ['elevated'], () async {
-    final tools = await processTools();
-    await SystemDaemon.start(tools);
-    final user = StandardUser.create();
-    // The user must be able to run the executable.
-    Process.runSync('icacls', [
-      p.dirname(p.dirname(tools.yagurad)),
-      '/grant',
-      '*S-1-5-32-545:(OI)(CI)RX',
-    ]);
+  test(
+    'non_administrator',
+    tags: ['elevated'],
+    // The first start of a daemon under SYSTEM can take a while.
+    timeout: const Timeout(Duration(minutes: 4)),
+    () async {
+      final tools = await processTools();
+      await SystemDaemon.start(tools);
+      final user = await StandardUser.create();
+      // The user must be able to run the executable.
+      await runCommand('icacls', [
+        p.dirname(p.dirname(tools.yagurad)),
+        '/grant',
+        '*S-1-5-32-545:(OI)(CI)RX',
+      ]);
 
-    final denied = await user.run(tools.yagurad, ['pair']);
+      final denied = await user.run(tools.yagurad, ['pair']);
 
-    expect(denied.exitCode, isNot(0));
-    expect(denied.err, contains('access_denied'));
-    expect(denied.out, isNot(contains('yagura://')));
-    // No code was issued by the refused call: the next one is the first.
-    final admin = await runYaguradExe(tools, ['pair']);
-    expect(admin.exitCode, 0, reason: '${admin.stderr}');
-    expect(admin.stdout as String, matches(pairingString));
-  });
+      final shown =
+          'exit ${denied.exitCode}\nstdout: ${denied.out}\nstderr: ${denied.err}';
+      expect(denied.exitCode, isNot(0), reason: shown);
+      expect(denied.err, contains('access_denied'), reason: shown);
+      expect(denied.out, isNot(contains('yagura://')));
+      // No code was issued by the refused call: the next one is the first.
+      final admin = await runYaguradExe(tools, ['pair']);
+      expect(admin.exitCode, 0, reason: '${admin.stderr}');
+      expect(admin.stdout as String, matches(pairingString));
+    },
+  );
 
   // A process that is not the LocalSystem daemon serves the name: the real
   // check (the server's token user) runs, unprivileged, against this very

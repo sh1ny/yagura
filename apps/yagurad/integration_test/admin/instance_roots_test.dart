@@ -9,6 +9,8 @@ import 'package:yagura_proto/yagura_proto.dart' as pb;
 import 'package:yagurad/src/api/reflection.dart';
 import 'package:yagurad/src/instances/instance_roots.dart';
 import 'package:yagurad/src/platform/acl_writer.dart';
+import 'package:yagurad/src/platform/win32_paths.dart';
+import 'package:yagurad/src/platform/win32_security.dart';
 
 import '../../test/support/admin_support.dart';
 import '../../test/support/daemon_support.dart';
@@ -472,7 +474,7 @@ void main() {
         directory.close();
       }
 
-      final acl = Process.runSync('icacls', [root.path]).stdout as String;
+      final acl = (await runCommand('icacls', [root.path])).stdout as String;
       expect(acl, contains(r'BUILTIN\Administrators:(OI)(CI)(F)'));
       expect(acl, contains(r'NT AUTHORITY\SYSTEM:(OI)(CI)(F)'));
       expect(
@@ -481,8 +483,26 @@ void main() {
         reason: 'protected: nothing inherited',
       );
       expect(acl, isNot(contains(r'BUILTIN\Users')));
-      final owner = powershell('(Get-Acl -LiteralPath "${root.path}").Owner');
-      expect((owner.stdout as String).trim(), r'BUILTIN\Administrators');
+      // The owner, read back from the directory's own security descriptor.
+      final opened = openDirectoryForProtection(root.path);
+      final String ownerSid;
+      try {
+        ownerSid = pipeOwnerSid(opened.handle);
+      } finally {
+        opened.close();
+      }
+      // PowerShell's reading is only a diagnosis: its output was empty in the
+      // first elevated run, which the SID read below settles.
+      final shell = await powershell(
+        '(Get-Acl -LiteralPath "${root.path}").Owner',
+      );
+      expect(
+        ownerSid,
+        administratorsSid,
+        reason:
+            'powershell: ${shell.stdout} ${shell.stderr}\n'
+            'icacls: $acl',
+      );
     },
   );
 }

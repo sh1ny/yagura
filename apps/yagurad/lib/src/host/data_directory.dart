@@ -49,3 +49,13 @@ class DataDirectory {
     return directory;
   }
 }
+
+/// The data directory when `--data-dir` is not given: `%ProgramData%\Yagura`
+/// on Windows, `/var/lib/yagura` elsewhere.
+String defaultDataDirectory() {
+  if (Platform.isWindows) {
+    final base = Platform.environment['ProgramData'] ?? r'C:\ProgramData';
+    return p.join(base, 'Yagura');
+  }
+  return '/var/lib/yagura';
+}

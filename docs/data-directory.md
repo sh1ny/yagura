@@ -78,6 +78,7 @@ Instances live under `<data>\instances` unless an administrator adds another roo
 | `admin_api_unsupported` | The CLI and the service speak different versions of the channel (`admin_api`). Use the CLI that came with the service |
 | `admin_reply_invalid` | The reply was not a valid result or reason |
 | `message_too_large` | A message was over 64 KiB |
+| `port_conflict` | (Asked by `yagurad service configure`, see [install.md](install.md)) an instance uses the port proposed for the API; the message names it |
 | `address_required` | The machine has no non-loopback IPv4 address; pass `--address` |
 | `device_not_found` | No active device has that name or id |
 | `device_ambiguous` | Several devices have that name; the message lists their ids, pass one |

@@ -626,3 +626,48 @@ bool administratorsAreDenyOnly() {
       ..free(length);
   }
 }
+
+/// Whether this process's token is elevated (`TokenElevation`): an
+/// administrator that has elevated, or LocalSystem. A standard user, and an
+/// administrator in a prompt that has not been elevated, are not.
+bool isElevated() {
+  const tokenElevation = 20;
+  final win32 = Win32.instance;
+  final token = calloc<IntPtr>();
+  final elevation = calloc<Uint32>();
+  final length = calloc<Uint32>();
+  try {
+    final open = callReadingError(
+      () => win32.openProcessToken(
+        win32.getCurrentProcess(),
+        Win32.tokenQuery,
+        token,
+      ),
+      (r) => r == 0,
+    );
+    if (open.value == 0) throw Win32Error('OpenProcessToken', open.error);
+    try {
+      final query = callReadingError(
+        () => win32.getTokenInformation(
+          token.value,
+          tokenElevation,
+          elevation.cast(),
+          4,
+          length,
+        ),
+        (r) => r == 0,
+      );
+      if (query.value == 0) {
+        throw Win32Error('GetTokenInformation', query.error);
+      }
+      return elevation.value != 0;
+    } finally {
+      win32.closeHandle(token.value);
+    }
+  } finally {
+    calloc
+      ..free(token)
+      ..free(elevation)
+      ..free(length);
+  }
+}

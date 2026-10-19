@@ -1,3 +1,6 @@
+@Timeout(Duration(minutes: 3))
+library;
+
 import 'dart:convert';
 import 'dart:io';
 
@@ -18,7 +21,7 @@ void main() {
     final before = Map.of(rig.runningServers());
     expect(before, hasLength(2));
 
-    rig.restart();
+    await rig.restart();
 
     await rig.eventuallyHolds(
       () => rig.serviceState == serviceRunning,
@@ -78,7 +81,7 @@ void main() {
     final victim = before.entries.first;
     final survivor = before.entries.last;
 
-    rig.stopService();
+    await rig.stopService();
     await rig.eventuallyHolds(
       () => rig.serviceState == serviceStopped,
       reason: 'the service to stop',
@@ -103,7 +106,7 @@ void main() {
       exitFile.readAsStringSync(),
     ) as Map<String, Object?>)['exit_code'];
 
-    rig.startService();
+    await rig.startService();
 
     await rig.eventuallyHolds(
       () => rig.serviceState == serviceRunning,

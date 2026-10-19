@@ -10,12 +10,16 @@ import '../api/api_server.dart';
 import '../api/bind_address.dart';
 import '../errors.dart';
 import 'admin_commands.dart';
+import 'service_command.dart';
 import '../host/daemon.dart';
+import '../host/data_directory.dart';
 import '../host/secret_store.dart';
 import '../platform/win32_security.dart';
 import '../process/launcher_modes.dart';
 import '../platform/acl_writer.dart';
 import '../process/process.dart';
+import '../service/install_layout.dart';
+import '../service/version_sweeper.dart';
 import '../steam/steamcmd_service.dart';
 
 /// The warning dev mode prints (`daemon-security` spec).
@@ -44,6 +48,7 @@ class CliEnvironment {
     this.secretProtector,
     this.adminConnector,
     this.adminListener,
+    this.service = const ServiceEnvironment(),
   });
 
   final StringSink out;
@@ -73,6 +78,9 @@ class CliEnvironment {
   /// Opens the admin channel of a service-mode daemon; defaults to the admin
   /// pipe on Windows. A seam for tests.
   final AdminListener Function()? adminListener;
+
+  /// The machine parts of `service install|...`; a seam for tests.
+  final ServiceEnvironment service;
 }
 
 /// Runs the `yagurad` command line. Returns the process exit code.
@@ -80,7 +88,8 @@ Future<int> runCli(List<String> arguments, CliEnvironment env) async {
   if (arguments.isEmpty || arguments.first.startsWith('-')) {
     env.err.writeln(
       'usage: yagurad run [--console] [--dev | --service] [--bind host:port] '
-      '[--data-dir path]',
+      '[--data-dir path]\n'
+      '       yagurad service install|configure|uninstall|status',
     );
     return exitUsage;
   }
@@ -90,12 +99,38 @@ Future<int> runCli(List<String> arguments, CliEnvironment env) async {
       return _run(arguments.skip(1).toList(), env);
     case 'launch' || 'relay' || 'signal':
       return _helper(mode, arguments.skip(1).toList(), env);
+    case 'service':
+      return _service(arguments.skip(1).toList(), env);
     case 'pair' || 'devices' || 'status' || 'roots':
       return _host(mode, arguments.skip(1).toList(), env);
     default:
       env.err.writeln('yagurad: unknown mode "$mode"');
       return exitUsage;
   }
+}
+
+Future<int> _service(List<String> arguments, CliEnvironment env) {
+  if (env.service.control == null && !Platform.isWindows) {
+    env.err.writeln(
+      'yagurad: the "service" command needs Windows (the Linux path is M5)',
+    );
+    return Future.value(exitUsage);
+  }
+  return runServiceCommand(
+    arguments,
+    out: env.out,
+    err: env.err,
+    adminConnector: env.adminConnector,
+    service: env.service,
+  );
+}
+
+/// The version sweeper of a daemon that runs from an installed version
+/// directory; null for a dev build.
+VersionSweeper? _versionSweeper() {
+  final installed = InstallLayout.containing(Platform.resolvedExecutable);
+  if (installed == null) return null;
+  return VersionSweeper(layout: installed.$1, currentVersion: installed.$2);
 }
 
 /// The host commands (design D5): they reach the running service over the
@@ -221,7 +256,7 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
     return _fail(env, e);
   }
 
-  final dataDirectory = (args['data-dir'] as String?) ?? _defaultDataDir();
+  final dataDirectory = (args['data-dir'] as String?) ?? defaultDataDirectory();
   final Daemon daemon;
   try {
     daemon = await Daemon.start(
@@ -231,6 +266,7 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
         processHost: env.processHost,
         steam: SteamCmdService(steamcmdRoot: p.join(dataDirectory, 'steamcmd')),
         serviceMode: !dev,
+        versionSweeper: dev ? null : _versionSweeper(),
         secretProtector: env.secretProtector,
         adminListener: dev
             ? null
@@ -306,15 +342,6 @@ bool _runsAsLocalSystem() {
 int _fail(CliEnvironment env, YaguraException error) {
   env.err.writeln('yagurad: ${error.reason}: ${error.message}');
   return exitFailure;
-}
-
-/// The data directory from host-service "Data directory layout".
-String _defaultDataDir() {
-  if (Platform.isWindows) {
-    final base = Platform.environment['ProgramData'] ?? r'C:\ProgramData';
-    return p.join(base, 'Yagura');
-  }
-  return '/var/lib/yagura';
 }
 
 Future<void> _signal() {

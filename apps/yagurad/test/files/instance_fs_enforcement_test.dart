@@ -48,6 +48,15 @@ const _allowed = <String, String>{
       'relay.json and exit.json, written by the '
       'relay process',
   'logs/capture_writer.dart': 'the stdout capture written by the relay',
+  // The service installer works on the install directory and the bundle, and
+  // the purge on the database in the data directory: no instance path.
+  'cli/service_command.dart': 'the installed service configuration',
+  'service/account_purger.dart': 'the database in the data directory',
+  'service/bundle.dart': 'the unpacked bundle being installed',
+  'service/service_installer.dart':
+      'the install directory (program files), the bundle and the WinSW'
+      ' configuration',
+  'service/version_sweeper.dart': 'version folders in the install directory',
 };
 
 List<File> _sources() => [

@@ -1,3 +1,6 @@
+@Timeout(Duration(minutes: 3))
+library;
+
 import 'dart:io';
 import 'dart:math';
 
@@ -27,7 +30,7 @@ void main() {
     // The service exists, starts automatically, runs as LocalSystem and runs
     // by the time the command returns.
     expect(rig.serviceState, serviceRunning);
-    final query = powershell(
+    final query = await powershell(
       "\$s = Get-CimInstance Win32_Service -Filter \"Name='${rig.name}'\"; "
       "'{0}|{1}|{2}' -f \$s.StartMode, \$s.StartName, \$s.State",
     );
@@ -35,7 +38,9 @@ void main() {
     // The command printed what the administrator does next, and that works.
     final out = '${install.stdout}';
     expect(out, contains('yagurad pair'));
-    final pair = await Process.run(rig.bundleExecutable, ['pair']);
+    final pair = await runCommand(rig.bundleExecutable, [
+      'pair',
+    ], timeout: const Duration(seconds: 30));
     expect(pair.exitCode, 0, reason: '${pair.stderr}');
     expect('${pair.stdout}', matches(_pairingString));
 
@@ -53,7 +58,7 @@ void main() {
       '127.0.0.1:$other',
     ]);
     expect(configure.exitCode, 0, reason: '${configure.stderr}');
-    rig.restart();
+    await rig.restart();
     await rig.eventuallyHolds(
       () => rig.serviceState == serviceRunning,
       reason: 'the service to run again',
@@ -66,7 +71,17 @@ void main() {
     final uninstall = await rig.service(['uninstall', '--purge-accounts']);
     expect(uninstall.exitCode, 0, reason: '${uninstall.stderr}');
     expect(rig.serviceState, isNull);
-    expect(Directory(rig.installRoot).existsSync(), isFalse);
+    final left = Directory(rig.installRoot).existsSync()
+        ? Directory(rig.installRoot)
+              .listSync(recursive: true)
+              .map((e) => e.path)
+              .join('\n')
+        : '';
+    expect(
+      Directory(rig.installRoot).existsSync(),
+      isFalse,
+      reason: 'left in the install folder:\n$left',
+    );
     expect(
       Directory(rig.data).existsSync(),
       isTrue,

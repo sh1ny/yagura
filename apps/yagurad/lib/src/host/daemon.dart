@@ -19,6 +19,7 @@ import '../operations/operations.dart';
 import '../platform/acl_writer.dart';
 import '../plugins/plugin_registry.dart';
 import '../process/process.dart';
+import '../service/version_sweeper.dart';
 import '../snapshots/snapshots.dart';
 import '../steam/steam.dart';
 import '../version.dart';
@@ -57,6 +58,7 @@ class DaemonConfig {
     this.aclWriter,
     this.accountSids,
     this.hostAddresses,
+    this.versionSweeper,
     this.logOptions = const LogHubOptions(),
     this.maxRetainedOperationEvents = 2000,
     this.restartDelay = const Duration(seconds: 5),
@@ -111,6 +113,10 @@ class DaemonConfig {
 
   /// The addresses `yagurad pair` picks from; defaults to the host's.
   final Future<List<InternetAddress>> Function()? hostAddresses;
+
+  /// Deletes the install's version directories no run needs (design D6);
+  /// null when the daemon does not run from an installed version.
+  final VersionSweeper? versionSweeper;
 
   /// Polling and persist intervals of the log hub.
   final LogHubOptions logOptions;
@@ -296,6 +302,7 @@ class Daemon {
       accounts: config.accountSids,
       clock: config.clock,
     );
+    final runStore = RunStore(database);
     final InstanceManager manager;
     try {
       manager = InstanceManager(
@@ -318,7 +325,7 @@ class Daemon {
               root: dataDirectory.snapshotsPath,
               clock: config.clock,
             ),
-        runs: RunStore(database),
+        runs: runStore,
         healthEvaluator: HealthEvaluator(
           pollInterval: config.healthPollInterval,
           settle: config.processHealthSettle,
@@ -361,6 +368,14 @@ class Daemon {
       return [for (final e in logs.backlog(id, lines: lines).entries) e.text];
     };
     await degraded('recovery', manager.recover);
+    // After the recovery has ended the runs whose relay is gone: what is
+    // left names the versions still in use.
+    if (config.versionSweeper case final sweeper?) {
+      await degraded(
+        'version_directories',
+        () => sweeper.sweep(runStore.unresolved()),
+      );
+    }
     await degraded('reconcile', manager.reconcilePlugins);
     await degraded('marked_directories', manager.sweepMarkedDirectories);
     await degraded('snapshots', manager.purgeExpiredSnapshots);
@@ -391,6 +406,7 @@ class Daemon {
           'mode': 'service',
           'data_dir': dataDirectory.path,
           'version': daemonVersion,
+          'executable': Platform.resolvedExecutable,
         },
         hostAddresses: config.hostAddresses,
       );

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import '../errors.dart';
+import '../instances/instance.dart';
 import '../instances/instance_manager.dart';
 import '../instances/instance_roots.dart';
 import '../security/devices.dart';
@@ -49,6 +50,8 @@ class AdminService {
         return _audited('devices.revoke', target, () => _revoke(target));
       case 'status':
         return _status();
+      case 'ports.check':
+        return _checkPort(args['port']);
       case 'roots.list':
         return _roots();
       case 'roots.add':
@@ -226,7 +229,48 @@ class AdminService {
     'api_port': apiPort(),
     'devices': security.devices.activeCount,
     'instances': instances.list().length,
+    // Whoever uninstalls the service and its accounts needs these stopped.
+    'running_servers': [
+      for (final i in instances.list())
+        if (_serverStates.contains(i.state)) i.name,
+    ],
   };
+
+  static const _serverStates = {
+    InstanceState.running,
+    InstanceState.starting,
+    InstanceState.stopping,
+    InstanceState.updating,
+  };
+
+  /// `service configure` asks whether [port] can be the API port: no
+  /// instance may use it (the daemon applies the same rule to its own port).
+  Map<String, Object?> _checkPort(Object? port) {
+    if (port is! int || port < 1 || port > 65535) {
+      throw YaguraException(
+        'admin_request_invalid',
+        'the argument "port" wants a number from 1 to 65535',
+      );
+    }
+    for (final instance in instances.list()) {
+      for (final used in instance.ports) {
+        if (used.number == port) {
+          throw YaguraException(
+            'port_conflict',
+            'port ${used.name} of "${instance.name}" uses $port, so it '
+                'cannot be the API port',
+            details: {
+              'port': port,
+              'conflictingInstance': instance.name,
+              'conflictingInstanceId': instance.id,
+              'conflictingPortName': used.name,
+            },
+          );
+        }
+      }
+    }
+    return {};
+  }
 
   static Future<List<InternetAddress>> _interfaces() async => [
     for (final i in await NetworkInterface.list(type: InternetAddressType.IPv4))

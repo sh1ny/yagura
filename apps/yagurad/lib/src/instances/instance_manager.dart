@@ -1217,10 +1217,17 @@ class InstanceManager {
         record.lastRequestedRunning = false;
       }
       setState(record, InstanceState.stopped);
+      // A server that exited while the daemon was down left its exit code in
+      // the relay's exit record; _endLostRun stored it in the run.
+      final exitCode = runs.all(record.id).lastOrNull?.exitCode;
       _recoveryNotice(
         record,
         'lost_while_daemon_down',
-        'the server was not re-attached after the daemon restarted',
+        exitCode == null
+            ? 'the server was not re-attached after the daemon restarted'
+            : 'the server exited with code $exitCode while the daemon was '
+                  'down',
+        exitCode: exitCode ?? 0,
       );
       return;
     }
@@ -1290,7 +1297,16 @@ class InstanceManager {
         // Best effort: the run is over either way.
       }
     }
-    runs.markEnded(run.runId, at: clock(), reason: 'lost');
+    // A server that exited while the daemon was down: the relay recorded how.
+    final exitCode = run.directory.isEmpty
+        ? null
+        : RunFiles(run.directory).readExitCode();
+    runs.markEnded(
+      run.runId,
+      at: clock(),
+      reason: exitCode == null ? 'lost' : 'exited_while_daemon_down',
+      exitCode: exitCode,
+    );
   }
 
   /// Waits out the rest of the grace period of a stop that was requested
@@ -1467,8 +1483,13 @@ class InstanceManager {
     }());
   }
 
-  void _recoveryNotice(InstanceRecord record, String kind, String message) {
-    final notice = InstanceNotice(record.id, kind, message);
+  void _recoveryNotice(
+    InstanceRecord record,
+    String kind,
+    String message, {
+    int exitCode = 0,
+  }) {
+    final notice = InstanceNotice(record.id, kind, message, exitCode: exitCode);
     _recoveryNotices.add(notice);
     if (!_events.isClosed) _events.add(notice);
   }

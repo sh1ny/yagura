@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/instances/instance.dart';
@@ -117,6 +119,57 @@ void main() {
       final done = await runStop(second, instance.id);
       expect(done.resultReason, 'stopped_by:graceful');
       expect(File(rig.stateFile(instance, 'saved.txt')).existsSync(), isTrue);
+    },
+    tags: ['windows'],
+    skip: windowsOnly,
+  );
+
+  test(
+    'server_exit_while_the_daemon_is_down_keeps_its_exit_code',
+    () async {
+      final rig = await ProcessRig.create();
+      final first = await rig.start();
+      final instance = await rig.createRunning(first);
+      final pid = instance.pid;
+      await rig.env.kill(first);
+      // The server ends while nobody supervises it; the relay records how.
+      Process.killPid(pid);
+      final exitFile = File(
+        p.join(runDirectories(instance).single.path, 'exit.json'),
+      );
+      for (var i = 0; i < 100 && !exitFile.existsSync(); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      expect(
+        exitFile.existsSync(),
+        isTrue,
+        reason: 'the relay records the exit',
+      );
+      final recorded =
+          (jsonDecode(exitFile.readAsStringSync()) as Map)['exit_code'] as int;
+
+      final second = await rig.start();
+
+      final db = sqlite3.open(
+        p.join(rig.env.data, 'yagura.db'),
+        mode: OpenMode.readOnly,
+      );
+      try {
+        final run = db
+            .select(
+              'SELECT exit_code, end_reason FROM runs ORDER BY created_at, rowid',
+            )
+            .first;
+        expect(run['exit_code'], recorded);
+        expect(run['end_reason'], 'exited_while_daemon_down');
+      } finally {
+        db.close();
+      }
+      final lost = second.instances.recoveryNotices.singleWhere(
+        (n) => n.kind == 'lost_while_daemon_down',
+      );
+      expect(lost.exitCode, recorded);
+      expect(lost.message, contains('exited with code $recorded'));
     },
     tags: ['windows'],
     skip: windowsOnly,

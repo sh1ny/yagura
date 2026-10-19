@@ -366,6 +366,8 @@ void main() {
       File(p.join(rig.layout.logDirectory, 'wrapper.log'))
         ..createSync(recursive: true)
         ..writeAsStringSync('log');
+      File(p.join(rig.layout.root, 'yagurad.wrapper.log'))
+          .writeAsStringSync('w');
       rig.control.calls.clear();
       rig.out.clear();
 
@@ -379,6 +381,8 @@ void main() {
         Directory(rig.layout.versionDirectory('0.1.0')).existsSync(),
         isFalse,
       );
+      // The wrapper's logs go too, and with them the install folder.
+      expect(rig.rootExists, isFalse);
       expect(File(p.join(data.path, 'yagura.db')).existsSync(), isTrue);
       expect(rig.purger.calls, 0);
       expect(rig.output, contains('data directory'));
