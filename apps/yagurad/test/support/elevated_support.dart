@@ -22,7 +22,9 @@ import 'process_support.dart';
 
 final _random = Random.secure();
 
-String _suffix() => _random.nextInt(1 << 30).toRadixString(16);
+/// Always eight hex digits, so names and passwords built from it have a
+/// fixed length.
+String _suffix() => _random.nextInt(1 << 30).toRadixString(16).padLeft(8, '0');
 
 /// The default limit of one external command.
 const commandTimeout = Duration(seconds: 90);

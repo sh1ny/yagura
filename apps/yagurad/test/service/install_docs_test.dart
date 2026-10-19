@@ -10,7 +10,19 @@ const installDoc = '../../docs/install.md';
 const _sources = ['lib/src/service', 'lib/src/cli/service_command.dart'];
 
 /// Reasons these commands relay from other components.
-const _relayed = ['elevation_required', 'port_conflict', 'bind_invalid'];
+const _relayed = [
+  'elevation_required',
+  'port_conflict',
+  'bind_invalid',
+  // The admin channel (data-directory.md) as `configure`, `status`, the
+  // readiness wait and the purge probe see it.
+  'access_denied',
+  'admin_channel_untrusted',
+  'admin_channel_busy',
+  'admin_request_timeout',
+  'admin_connection_closed',
+  'admin_api_unsupported',
+];
 
 final _emitter = RegExp(r"YaguraException\(\s*'([a-z][a-z0-9_]*)'");
 

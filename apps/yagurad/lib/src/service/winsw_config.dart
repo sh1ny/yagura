@@ -37,7 +37,10 @@ class ServiceConfig {
   String get arguments {
     final data = dataDirectory;
     return 'run --service --bind $bind'
-        '${data == null ? '' : ' --data-dir "${_trimSeparator(data)}"'}';
+        '${data == null ? '' : ' --data-dir "${_quote(data)}"'}'
+        // The daemon needs its own name to tell its version directories from
+        // those of another service in the same install root.
+        '${serviceName == defaultServiceName ? '' : ' --service-name $serviceName'}';
   }
 
   ServiceConfig withVersion(String version) => ServiceConfig(
@@ -107,7 +110,7 @@ class ServiceConfig {
     final bind = RegExp(r'--bind\s+(\S+)').firstMatch(arguments)?[1];
     if (installed == null || bind == null) return null;
     final data =
-        RegExp(r'--data-dir\s+"([^"]*)"').firstMatch(arguments)?[1] ??
+        _unquote(RegExp(r'--data-dir\s+"([^"]*)"').firstMatch(arguments)?[1]) ??
         RegExp(r'--data-dir\s+([^\s"]+)').firstMatch(arguments)?[1];
     return ServiceConfig(
       layout: layout,
@@ -121,6 +124,17 @@ class ServiceConfig {
     final match = RegExp('<$name>(.*?)</$name>', dotAll: true).firstMatch(xml);
     return match == null ? null : _unescape(match[1]!.trim());
   }
+
+  /// [path] as it goes between quotes on a Windows command line: a run of
+  /// backslashes before the closing quote is doubled (`"D:\\"` is `D:\`).
+  static String _quote(String path) =>
+      _trimSeparator(path)
+          .replaceFirstMapped(RegExp(r'\\+$'), (m) => m[0]! * 2);
+
+  static String? _unquote(String? quoted) => quoted?.replaceFirstMapped(
+    RegExp(r'\\+$'),
+    (m) => m[0]!.substring(0, m[0]!.length ~/ 2),
+  );
 
   static String _trimSeparator(String path) {
     final normal = p.normalize(path);

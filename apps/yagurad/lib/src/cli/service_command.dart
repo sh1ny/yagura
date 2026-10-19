@@ -8,6 +8,8 @@ import '../admin/admin_client.dart';
 import '../admin/admin_transport.dart';
 import '../admin/named_pipe.dart';
 import '../errors.dart';
+import '../platform/acl_inspector.dart';
+import '../platform/acl_writer.dart';
 import '../host/data_directory.dart';
 import '../platform/win32_security.dart';
 import '../service/account_purger.dart';
@@ -39,6 +41,9 @@ class ServiceEnvironment {
     this.admin,
     this.servers,
     this.purger,
+    this.accountOperations,
+    this.aclWriter,
+    this.aclInspector,
     this.environment,
     this.readyTimeout,
     this.pollInterval,
@@ -52,6 +57,16 @@ class ServiceEnvironment {
   final AdminCall? admin;
   final ServerProbe? servers;
   final AccountPurger? purger;
+
+  /// The account calls of the real purger, when [purger] is not given.
+  final AccountOperations? accountOperations;
+
+  /// Protects the install root; defaults to the Windows writer.
+  final AclWriter? aclWriter;
+
+  /// Reads the security of the install root and its ancestors; defaults to
+  /// the Windows one.
+  final AclInspector? aclInspector;
 
   /// The process environment (`ProgramFiles`).
   final Map<String, String>? environment;
@@ -151,7 +166,15 @@ Future<int> runServiceCommand(
             status: () => admin('status'),
             dataDirectory: dataDirectory,
           ),
-      purger: service.purger ?? HostAccountPurger(dataDirectory: dataDirectory),
+      purger:
+          service.purger ??
+          HostAccountPurger(
+            dataDirectory: defaultDataDirectory,
+            operations:
+                service.accountOperations ?? const WindowsAccountOperations(),
+          ),
+      aclWriter: service.aclWriter ?? const WindowsAclWriter(),
+      inspector: service.aclInspector ?? const WindowsAclInspector(),
       readyTimeout: service.readyTimeout ?? const Duration(seconds: 60),
       pollInterval: service.pollInterval ?? const Duration(seconds: 1),
       delay: service.delay ?? (d) => Future<void>.delayed(d),
@@ -175,6 +198,14 @@ Future<int> runServiceCommand(
     return 0;
   } on YaguraException catch (e) {
     err.writeln('yagurad: ${e.reason}: ${e.message}');
+    return _exitFailure;
+  } on FileSystemException catch (e) {
+    err.writeln(
+      'yagurad: internal_error: ${e.message}${e.path == null ? '' : ' (${e.path})'}',
+    );
+    return _exitFailure;
+  } on Win32Error catch (e) {
+    err.writeln('yagurad: internal_error: $e');
     return _exitFailure;
   }
 }

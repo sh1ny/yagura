@@ -18,6 +18,7 @@ InstallLayout _installRoot() {
     File(layout.executable(v))
       ..createSync(recursive: true)
       ..writeAsStringSync(v);
+    layout.markVersionDirectory(v);
   }
   return layout;
 }

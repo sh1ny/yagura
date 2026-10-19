@@ -184,6 +184,21 @@ void main() {
     }
   });
 
+  test('the service name of a second service is a known option', () async {
+    // A service other than the default passes `--service-name` (design D6).
+    final cli = RunningCli([
+      '--service',
+      '--service-name',
+      'yagurad-b',
+      '--bind',
+      '127.0.0.1:0',
+    ], isLocalSystem: () => false);
+
+    expect(await cli.exit, isNonZero);
+    expect(cli.errors, contains('service_mode_required'));
+    expect(cli.errors, isNot(contains('--service-name')));
+  });
+
   test('--dev with --service is a usage error', () async {
     final cli = RunningCli(['--dev', '--service', '--bind', '127.0.0.1:0']);
 

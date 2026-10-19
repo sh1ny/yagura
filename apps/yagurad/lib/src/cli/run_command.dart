@@ -127,10 +127,14 @@ Future<int> _service(List<String> arguments, CliEnvironment env) {
 
 /// The version sweeper of a daemon that runs from an installed version
 /// directory; null for a dev build.
-VersionSweeper? _versionSweeper() {
+VersionSweeper? _versionSweeper(String? serviceName) {
   final installed = InstallLayout.containing(Platform.resolvedExecutable);
   if (installed == null) return null;
-  return VersionSweeper(layout: installed.$1, currentVersion: installed.$2);
+  // The service passes its name when it is not the default one.
+  final layout = serviceName == null
+      ? installed.$1
+      : InstallLayout(root: installed.$1.root, serviceName: serviceName);
+  return VersionSweeper(layout: layout, currentVersion: installed.$2);
 }
 
 /// The host commands (design D5): they reach the running service over the
@@ -210,7 +214,9 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
       help: 'Serve mutual TLS; needs the LocalSystem account.',
     )
     ..addOption('bind')
-    ..addOption('data-dir');
+    ..addOption('data-dir')
+    // What a service other than the default one passes (design D6).
+    ..addOption('service-name');
   final ArgResults args;
   try {
     args = parser.parse(arguments);
@@ -266,7 +272,9 @@ Future<int> _run(List<String> arguments, CliEnvironment env) async {
         processHost: env.processHost,
         steam: SteamCmdService(steamcmdRoot: p.join(dataDirectory, 'steamcmd')),
         serviceMode: !dev,
-        versionSweeper: dev ? null : _versionSweeper(),
+        versionSweeper: dev
+            ? null
+            : _versionSweeper(args['service-name'] as String?),
         secretProtector: env.secretProtector,
         adminListener: dev
             ? null

@@ -56,6 +56,8 @@ const _allowed = <String, String>{
   'service/service_installer.dart':
       'the install directory (program files), the bundle and the WinSW'
       ' configuration',
+  'service/install_layout.dart':
+      'the marker file inside a version folder of the install directory',
   'service/version_sweeper.dart': 'version folders in the install directory',
 };
 

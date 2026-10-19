@@ -75,7 +75,10 @@ class Bundle {
     }
   }
 
-  /// Copies the bundle, without `winsw/`, to [destination].
+  /// Copies the bundle, without `winsw/`, to [destination]. A file that is
+  /// already there with the bundle's content is left alone (it may be an
+  /// executable that a running process holds); one that differs is replaced.
+  /// Nothing is deleted.
   void copyTo(String destination) {
     final base = Directory(root);
     for (final entity in base.listSync(recursive: true, followLinks: false)) {
@@ -86,9 +89,18 @@ class Bundle {
         Directory(target).createSync(recursive: true);
       } else if (entity is File) {
         Directory(p.dirname(target)).createSync(recursive: true);
+        if (File(target).existsSync() && _sameContent(entity, File(target))) {
+          continue;
+        }
         entity.copySync(target);
       }
     }
+  }
+
+  static bool _sameContent(File a, File b) {
+    if (a.lengthSync() != b.lengthSync()) return false;
+    return sha256.convert(a.readAsBytesSync()) ==
+        sha256.convert(b.readAsBytesSync());
   }
 
   String readTemplate() => File(winswTemplate).readAsStringSync();

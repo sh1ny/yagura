@@ -1,4 +1,5 @@
 import 'dart:ffi';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -466,10 +467,24 @@ _lookupAccountName = _advapi
       )
     >('LookupAccountNameW');
 
-/// The string SID of the local account [account], or null when there is no
-/// such account.
+/// [account] as the local machine names it (`BOX\yagura-srv`; `.\` when the
+/// machine name is not known), so that a lookup searches the local accounts
+/// and never the domain the machine has joined.
+String qualifyLocalAccount(String account, String? computerName) =>
+    '${computerName == null || computerName.isEmpty ? '.' : computerName}'
+    '\\$account';
+
+/// `SidTypeUser` of `SID_NAME_USE`.
+const _sidTypeUser = 1;
+
+/// The string SID of the local user account [account], or null when there is
+/// no such user (a group, a domain account or an alias of the same name is
+/// not one).
 String? lookupAccountSid(String account) {
-  final name = account.toNativeUtf16();
+  final name = qualifyLocalAccount(
+    account,
+    Platform.environment['COMPUTERNAME'],
+  ).toNativeUtf16();
   final sidSize = calloc<Uint32>();
   final domainSize = calloc<Uint32>();
   final use = calloc<Uint32>();
@@ -499,6 +514,7 @@ String? lookupAccountSid(String account) {
           0) {
         return null;
       }
+      if (use.value != _sidTypeUser) return null;
       return _sidString(sid.cast());
     } finally {
       calloc
@@ -669,5 +685,89 @@ bool isElevated() {
       ..free(token)
       ..free(elevation)
       ..free(length);
+  }
+}
+
+final int Function(
+  Pointer<Void>,
+  int,
+  int,
+  Pointer<Pointer<Utf16>>,
+  Pointer<Uint32>,
+)
+_descriptorToString = _advapi
+    .lookupFunction<
+      Int32 Function(
+        Pointer<Void>,
+        Uint32,
+        Uint32,
+        Pointer<Pointer<Utf16>>,
+        Pointer<Uint32>,
+      ),
+      int Function(
+        Pointer<Void>,
+        int,
+        int,
+        Pointer<Pointer<Utf16>>,
+        Pointer<Uint32>,
+      )
+    >('ConvertSecurityDescriptorToStringSecurityDescriptorW');
+
+/// The owner and the DACL of the kernel object [handle] (opened with
+/// `READ_CONTROL`) as SDDL, for reading with `parseSecurity`.
+String securityDescriptorSddl(int handle) {
+  final win32 = Win32.instance;
+  const information =
+      Win32.ownerSecurityInformation | Win32.daclSecurityInformation;
+  final needed = calloc<Uint32>();
+  try {
+    // The first call only reports the size the descriptor needs.
+    win32.getKernelObjectSecurity(handle, information, nullptr, 0, needed);
+    final size = needed.value;
+    if (size == 0) throw _failed('GetKernelObjectSecurity');
+    final descriptor = calloc<Uint8>(size);
+    final text = calloc<Pointer<Utf16>>();
+    try {
+      final read = callReadingError(
+        () => win32.getKernelObjectSecurity(
+          handle,
+          information,
+          descriptor.cast(),
+          size,
+          needed,
+        ),
+        (r) => r == 0,
+      );
+      if (read.value == 0) {
+        throw Win32Error('GetKernelObjectSecurity', read.error);
+      }
+      final converted = callReadingError(
+        () => _descriptorToString(
+          descriptor.cast(),
+          Win32.sddlRevision1,
+          information,
+          text,
+          nullptr,
+        ),
+        (r) => r == 0,
+      );
+      if (converted.value == 0) {
+        throw Win32Error(
+          'ConvertSecurityDescriptorToStringSecurityDescriptorW',
+          converted.error,
+        );
+      }
+      try {
+        return text.value.toDartString();
+      } finally {
+        win32.localFree(text.value.cast());
+      }
+    } finally {
+      calloc
+        ..free(descriptor)
+        ..free(text);
+    }
+  } finally {
+    calloc.free(needed);
   }
 }

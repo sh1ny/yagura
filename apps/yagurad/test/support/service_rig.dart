@@ -42,7 +42,15 @@ class ServiceRig {
   final servers = <String, int>{};
 
   ProcessTools get tools => process.tools;
-  String get installRoot => p.join(work.path, 'install');
+
+  /// Where the install folder goes. Not under the temp folder, which a user
+  /// owns: the install refuses a folder below one (ADR 0015), so the rig uses
+  /// `%ProgramData%`, whose folders an elevated session owns as
+  /// Administrators.
+  late final String installRoot = p.join(_installBase.path, 'install');
+  late final Directory _installBase = Directory(
+    p.join(Platform.environment['ProgramData']!, 'yagurad-test', name),
+  )..createSync(recursive: true);
   String get data => process.env.data;
   String get bundleExecutable => p.join(bundleDirectory, 'bin', 'yagurad.exe');
 
@@ -78,6 +86,7 @@ class ServiceRig {
       port,
     );
     addTearDown(rig._cleanup);
+    expect(Directory(rig.installRoot).parent.existsSync(), isTrue);
     rig.bundleDirectory = rig.assembleBundle(p.join(rig.work.path, 'bundle'));
     await rig._seed(instances);
     return rig;
@@ -351,6 +360,7 @@ class ServiceRig {
     for (var i = 0; i < 20; i++) {
       try {
         if (work.existsSync()) work.deleteSync(recursive: true);
+        if (_installBase.existsSync()) _installBase.deleteSync(recursive: true);
         return;
       } on FileSystemException {
         await Future<void>.delayed(const Duration(milliseconds: 250));

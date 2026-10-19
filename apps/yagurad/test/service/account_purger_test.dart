@@ -174,6 +174,33 @@ void main() {
       expect(_secretIds(data), contains(serviceAccountSecretId('yagura-srv')));
     });
 
+    test('the_directory_it_is_told_wins_over_the_default', () async {
+      final data = _dataDirectory();
+
+      final outcomes = await HostAccountPurger(
+        dataDirectory: () => throw StateError('the default is not the one'),
+        operations: _FakeAccounts({'yagura-srv': 'S-1-5-21-1'}),
+      ).purge(dataDirectory: data.path);
+
+      expect(outcomes.every((o) => o.removed), isTrue);
+      // The rows of the directory it was told, not of the default one.
+      expect(_secretIds(data), ['daemon-ca']);
+    });
+
+    test('rows_that_cannot_be_deleted_keep_the_account_reported', () async {
+      final data = Directory.systemTemp.createTempSync('yagurad_purge_');
+      addTearDown(() => data.deleteSync(recursive: true));
+      File(p.join(data.path, 'yagura.db')).writeAsStringSync('not a database');
+
+      final outcomes = await HostAccountPurger(
+        dataDirectory: () => data.path,
+        operations: _FakeAccounts({'yagura-srv': 'S-1-5-21-1'}),
+      ).purge();
+
+      expect(outcomes.every((o) => !o.removed), isTrue);
+      expect(outcomes.first.reason, isNotEmpty);
+    });
+
     test('no_database_is_no_rows_to_delete', () async {
       final empty = Directory.systemTemp.createTempSync('yagurad_purge_');
       addTearDown(() => empty.deleteSync(recursive: true));
@@ -259,6 +286,35 @@ void main() {
         expect(names, ['Friends']);
       },
     );
+
+    test('a_pending_run_counts_when_its_relay_is_alive', () async {
+      final data = _dataDirectory();
+      final db = YaguraDatabase.open(p.join(data.path, 'yagura.db'));
+      try {
+        for (final (id, state, relay, server) in [
+          ('a', 'pending', 500, 0),
+          ('b', 'pending', 0, 0),
+          ('c', 'pending', 600, 0),
+        ]) {
+          db.sqlite.execute(
+            'INSERT INTO runs (run_id, instance_id, directory, state, '
+            'relay_pid, server_pid, created_at) VALUES (?, ?, ?, ?, ?, ?, 1)',
+            [id, 'i1', 'd', state, relay, server],
+          );
+        }
+      } finally {
+        db.close();
+      }
+
+      final names = await HostServerProbe(
+        status: () async =>
+            throw YaguraException('daemon_not_running', 'nothing serves'),
+        dataDirectory: () => data.path,
+        isRunning: (pid) => pid == 500,
+      ).runningServers();
+
+      expect(names, ['Friends']);
+    });
 
     test('without_a_database_no_server_runs', () async {
       final empty = Directory.systemTemp.createTempSync('yagurad_purge_');

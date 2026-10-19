@@ -38,7 +38,9 @@ abstract interface class ServerProbe {
 
 /// Deletes the service accounts, their profiles and their secret rows.
 abstract interface class AccountPurger {
-  Future<List<PurgeOutcome>> purge();
+  /// Deletes the accounts; the secret rows go from the database in
+  /// [dataDirectory], which is the one the service was configured with.
+  Future<List<PurgeOutcome>> purge({String? dataDirectory});
 }
 
 /// The account calls of the purge; the real ones need administrator rights,
@@ -85,12 +87,13 @@ class HostAccountPurger implements AccountPurger {
     this.accounts = serviceAccountNames,
   });
 
+  /// The data directory when [purge] is not told one.
   final String Function() dataDirectory;
   final AccountOperations operations;
   final List<String> accounts;
 
   @override
-  Future<List<PurgeOutcome>> purge() async {
+  Future<List<PurgeOutcome>> purge({String? dataDirectory}) async {
     final outcomes = <PurgeOutcome>[];
     final removed = <String>[];
     for (final account in accounts) {
@@ -121,7 +124,10 @@ class HostAccountPurger implements AccountPurger {
       }
       removed.add(account);
     }
-    final rowsFailed = _deleteSecretRows(removed);
+    final rowsFailed = _deleteSecretRows(
+      removed,
+      dataDirectory ?? this.dataDirectory(),
+    );
     for (final account in removed) {
       outcomes.add(
         rowsFailed == null
@@ -133,9 +139,9 @@ class HostAccountPurger implements AccountPurger {
   }
 
   /// Deletes the secret rows of [removed]; returns why it could not, or null.
-  String? _deleteSecretRows(List<String> removed) {
+  String? _deleteSecretRows(List<String> removed, String directory) {
     if (removed.isEmpty) return null;
-    final database = p.join(dataDirectory(), 'yagura.db');
+    final database = p.join(directory, 'yagura.db');
     if (!File(database).existsSync()) return null;
     final Database db;
     try {
@@ -202,10 +208,14 @@ class HostServerProbe implements ServerProbe {
     }
     try {
       return [
+        // A run that is running holds its server; a pending one that has a
+        // relay may be about to start one.
         for (final row in db.select(
-          'SELECT i.name AS name, r.server_pid AS pid FROM runs r '
+          "SELECT i.name AS name, CASE r.state WHEN 'running' "
+          'THEN r.server_pid ELSE r.relay_pid END AS pid FROM runs r '
           'JOIN instances i ON i.id = r.instance_id '
-          "WHERE r.state = 'running'",
+          "WHERE r.state = 'running' OR (r.state = 'pending' AND "
+          'r.relay_pid > 0)',
         ))
           if (isRunning(row['pid']! as int)) '${row['name']}',
       ];

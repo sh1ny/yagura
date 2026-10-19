@@ -93,4 +93,32 @@ void main() {
     expect(after, isNot(contains('(I)')), reason: 'protected: no inheritance');
     expect(file.readAsStringSync(), 'x');
   });
+
+  group('local account lookups', () {
+    test('a_plain_name_is_qualified_with_the_machine', () {
+      expect(qualifyLocalAccount('yagura-srv', 'BOX'), r'BOX\yagura-srv');
+      expect(qualifyLocalAccount('yagura-srv', null), r'.\yagura-srv');
+      expect(qualifyLocalAccount('yagura-srv', ''), r'.\yagura-srv');
+    });
+
+    test('an_account_that_does_not_exist_is_null', () {
+      expect(lookupAccountSid('yagura-no-such-account-xyz'), isNull);
+    });
+
+    test('a_local_user_resolves_to_a_machine_sid', () {
+      // The built-in Administrator exists on every machine (unless renamed).
+      final sid = lookupAccountSid('Administrator');
+      if (sid == null) {
+        markTestSkipped('the built-in Administrator account is renamed');
+        return;
+      }
+      expect(sid, matches(RegExp(r'^S-1-5-21-(\d+-){3}500$')));
+    });
+
+    test('a_group_is_not_a_user', () {
+      // `BOX\Administrators` is a local group: only a user is an account the
+      // purge may delete the profile of.
+      expect(lookupAccountSid('Administrators'), isNull);
+    });
+  });
 }

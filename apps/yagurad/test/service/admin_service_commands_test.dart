@@ -1,6 +1,7 @@
 @Tags(['windows'])
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -62,5 +63,22 @@ void main() {
     final status = await client.call('status');
     expect(status['running_servers'], ['Friends']);
     expect(status['executable'], Platform.resolvedExecutable);
+  });
+
+  test('status_lists_an_instance_that_is_installing', () async {
+    final env = TestEnv()..installValheim();
+    final h = await AdminHarness.start(env);
+    final client = AdminClient(h.connector());
+    final instance = await createValheim(h.daemon, name: 'Fresh');
+    final hold = env.steam.hold = Completer<void>(); // the download never ends
+    addTearDown(() {
+      if (!hold.isCompleted) hold.complete();
+    });
+    h.daemon.instances.install(instance.id);
+    await env.steam.reachedDownload.future;
+
+    final status = await client.call('status');
+
+    expect(status['running_servers'], ['Fresh']);
   });
 }

@@ -62,6 +62,39 @@ void main() {
       );
     });
 
+    test('a_drive_root_does_not_escape_the_closing_quote', () {
+      final config = _config(data: r'D:\');
+
+      // The backslash before the quote is doubled, as the command line
+      // parser of Windows wants.
+      expect(
+        config.arguments,
+        r'run --service --bind 0.0.0.0:7443 --data-dir "D:\\"',
+      );
+      final read = ServiceConfig.parse(config.render(_template), _layout)!;
+      expect(read.dataDirectory, r'D:\');
+    });
+
+    test('a_second_service_tells_the_daemon_its_name', () {
+      const layout = InstallLayout(root: r'C:	', serviceName: 'yagurad-t1');
+      final config = ServiceConfig(
+        layout: layout,
+        version: '0.1.0',
+        bind: '0.0.0.0:7443',
+      );
+
+      expect(
+        config.arguments,
+        'run --service --bind 0.0.0.0:7443 --service-name yagurad-t1',
+      );
+      expect(
+        ServiceConfig.parse(config.render(_template), layout)!.bind,
+        '0.0.0.0:7443',
+      );
+      // The default service says nothing: older configurations stay valid.
+      expect(_config().arguments, isNot(contains('--service-name')));
+    });
+
     test('escapes_xml_in_every_value', () {
       final xml = _config(data: r'D:\A&B <x>').render(_template);
 

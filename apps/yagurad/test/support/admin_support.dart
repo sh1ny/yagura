@@ -7,11 +7,20 @@ import 'package:yagurad/src/admin/admin_transport.dart';
 import 'package:yagurad/src/admin/named_pipe.dart';
 import 'package:yagurad/src/cli/run_command.dart';
 import 'package:yagurad/src/host/daemon.dart';
+import 'package:path/path.dart' as p;
 import 'package:yagurad/src/platform/acl_writer.dart';
 import 'package:yagurad/src/platform/win32_security.dart';
 
 import 'daemon_support.dart';
 import 'secret_support.dart';
+
+/// What a folder under `%ProgramFiles%` looks like to the installer: owned by
+/// SYSTEM, nobody else may change it.
+const trustedFolderSddl = 'O:SYD:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)';
+
+/// A folder a standard user made: owned by it, full control for it.
+const userFolderSddl =
+    'O:S-1-5-21-1-2-3-1001D:(A;OICI;FA;;;S-1-5-21-1-2-3-1001)';
 
 /// One call of [FakeAclWriter].
 class AclCall {
@@ -32,14 +41,78 @@ class AclCall {
 class FakeAclWriter implements AclWriter {
   final calls = <AclCall>[];
 
+  /// The last write to each path (lower case); unlike [calls] it is never
+  /// cleared, as the DACL of a folder is not.
+  final written = <String, AclCall>{};
+
+  void record(AclCall call) {
+    calls.add(call);
+    written[call.path.toLowerCase()] = call;
+  }
+
+  /// Folders made by [create].
+  final created = <String>[];
+
+  /// Answers for [security] and the inspector, by path; checked first.
+  final overrides = <String, EntrySecurity>{};
+
+  static String _key(String path) => p.normalize(path).toLowerCase();
+
+  /// What a path's owner and DACL are: [overrides], else what was last
+  /// written to it, else a folder only the administrators can change.
+  EntrySecurity securityOf(String path) {
+    final key = _key(path);
+    for (final entry in overrides.entries) {
+      if (_key(entry.key) == key) return entry.value;
+    }
+    if (FileSystemEntity.typeSync(path, followLinks: false) ==
+        FileSystemEntityType.notFound) {
+      throw PathRefused(path, 'does not exist');
+    }
+    final resolved = _key(Directory(path).resolveSymbolicLinksSync());
+    if (written[resolved] case final call?) {
+      final owner = call.ownerSid == null ? '' : 'O:BA';
+      return EntrySecurity(isLink: false, sddl: '$owner${call.sddl}');
+    }
+    return const EntrySecurity(isLink: false, sddl: trustedFolderSddl);
+  }
+
+  /// Thrown by [create] instead of making the folder when set.
+  Object? createFailure;
+
+  @override
+  ProtectedDirectory create(
+    String path,
+    String dacl, {
+    required String ownerSid,
+  }) {
+    if (createFailure ?? failure case final error?) throw error;
+    if (FileSystemEntity.typeSync(path, followLinks: false) !=
+        FileSystemEntityType.notFound) {
+      throw PathExists(path);
+    }
+    Directory(path).createSync();
+    created.add(path);
+    final real = Directory(path).resolveSymbolicLinksSync();
+    record(AclCall(real, dacl, ownerSid));
+    return _FakeDirectory(this, real);
+  }
+
   /// Thrown by every write when set.
   Object? failure;
 
   @override
   ProtectedDirectory open(String path) {
-    if (FileSystemEntity.typeSync(path, followLinks: false) !=
-        FileSystemEntityType.directory) {
-      throw Exception('$path is not an existing directory (or is a link)');
+    // As the real writer: a link, a missing path or a file is refused.
+    switch (FileSystemEntity.typeSync(path, followLinks: false)) {
+      case FileSystemEntityType.directory:
+        break;
+      case FileSystemEntityType.notFound:
+        throw PathRefused(path, 'it does not exist');
+      case FileSystemEntityType.link:
+        throw PathRefused(path, 'it is a link, not a directory');
+      default:
+        throw PathRefused(path, 'it is not a directory');
     }
     return _FakeDirectory(this, Directory(path).resolveSymbolicLinksSync());
   }
@@ -54,9 +127,12 @@ class _FakeDirectory implements ProtectedDirectory {
   final String path;
 
   @override
+  EntrySecurity security() => _writer.securityOf(path);
+
+  @override
   void writeDacl(String sddl, {String? ownerSid}) {
     if (_writer.failure case final error?) throw error;
-    _writer.calls.add(AclCall(path, sddl, ownerSid));
+    _writer.record(AclCall(path, sddl, ownerSid));
   }
 
   @override
@@ -71,6 +147,13 @@ class OpeningAclWriter extends FakeAclWriter {
     final real = const WindowsAclWriter().open(path);
     return _RecordingDirectory(this, real);
   }
+
+  @override
+  ProtectedDirectory create(
+    String path,
+    String dacl, {
+    required String ownerSid,
+  }) => throw UnsupportedError('the opening writer does not create');
 }
 
 class _RecordingDirectory implements ProtectedDirectory {
@@ -83,9 +166,12 @@ class _RecordingDirectory implements ProtectedDirectory {
   String get path => _real.path;
 
   @override
+  EntrySecurity security() => _real.security();
+
+  @override
   void writeDacl(String sddl, {String? ownerSid}) {
     if (_writer.failure case final error?) throw error;
-    _writer.calls.add(AclCall(path, sddl, ownerSid));
+    _writer.record(AclCall(path, sddl, ownerSid));
   }
 
   @override

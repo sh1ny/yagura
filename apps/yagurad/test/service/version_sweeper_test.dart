@@ -8,7 +8,8 @@ import 'package:yagurad/src/service/install_layout.dart';
 import 'package:yagurad/src/service/version_sweeper.dart';
 
 /// An install root with the given version directories (each holding a
-/// `bin\yagurad.exe`) and some directories that are not versions.
+/// `bin\yagurad.exe` and the marker of the install that made it) and some
+/// directories that are not versions.
 class _Root {
   _Root(List<String> versions) {
     root = Directory.systemTemp.createTempSync('yagurad_versions_');
@@ -20,6 +21,7 @@ class _Root {
       File(layout.executable(v))
         ..createSync(recursive: true)
         ..writeAsStringSync(v);
+      layout.markVersionDirectory(v);
     }
     for (final other in ['logs', 'backup', 'v1']) {
       Directory(p.join(root.path, other)).createSync();
@@ -130,6 +132,38 @@ void main() {
     expect(attempts, unorderedEquals(['0.1.0', '0.2.0']));
     expect(deleted, ['0.2.0']);
     expect(r.has('0.1.0'), isTrue, reason: 'tried again at the next start');
+  });
+
+  test('leaves_directories_of_another_service_and_unmarked_ones', () {
+    final r = _Root(['0.1.0', '0.2.0', '0.3.0']);
+    // 0.1.0 belongs to a second service that shares the root.
+    File(r.layout.markerFile('0.1.0')).writeAsStringSync('yagurad-b');
+    // 0.2.0 is another product's folder that looks like a version.
+    File(r.layout.markerFile('0.2.0')).deleteSync();
+    Directory(p.join(r.root.path, '7.7.7')).createSync();
+
+    final deleted = VersionSweeper(
+      layout: r.layout,
+      currentVersion: '0.3.0',
+    ).sweep(const []);
+
+    expect(deleted, isEmpty);
+    expect(r.has('0.1.0'), isTrue);
+    expect(r.has('0.2.0'), isTrue);
+    expect(r.has('7.7.7'), isTrue);
+  });
+
+  test('deletes_the_marked_directories_of_its_own_service_by_name', () {
+    final r = _Root(['0.1.0', '0.2.0']);
+    final b = InstallLayout(root: r.root.path, serviceName: 'yagurad-b');
+    File(b.markerFile('0.1.0')).writeAsStringSync('yagurad-b');
+
+    final deleted = VersionSweeper(
+      layout: b,
+      currentVersion: '0.2.0',
+    ).sweep(const []);
+
+    expect(deleted, ['0.1.0']);
   });
 
   test('a_missing_install_root_is_nothing_to_do', () {

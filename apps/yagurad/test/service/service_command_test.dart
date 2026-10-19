@@ -4,24 +4,41 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagurad/src/cli/run_command.dart';
 import 'package:yagurad/src/cli/service_command.dart';
+import 'package:yagurad/src/host/database.dart';
+import 'package:yagurad/src/platform/win32_security.dart';
+import 'package:yagurad/src/service/account_purger.dart';
 import 'package:yagurad/src/service/bundle.dart';
+import 'package:yagurad/src/service/install_layout.dart';
+import 'package:yagurad/src/service/service_control.dart';
 
+import '../support/admin_support.dart';
 import '../support/service_support.dart';
 
 /// `yagurad service ...` through `runCli`, over the fakes of the installer.
 class _Cli {
-  _Cli({this.elevated = true, bool withBundle = true})
-    : temp = Directory.systemTemp.createTempSync() {
+  _Cli({
+    this.elevated = true,
+    bool withBundle = true,
+    FakeServiceControl? control,
+  }) : temp = Directory.systemTemp.createTempSync(),
+       control = control ?? FakeServiceControl() {
     addTearDown(() => temp.deleteSync(recursive: true));
     bundle = withBundle ? makeBundle('0.1.0', parent: temp) : null;
+    Directory(p.join(temp.path, 'Program Files')).createSync();
   }
 
   final Directory temp;
   late final Bundle? bundle;
   final bool elevated;
-  final control = FakeServiceControl();
+
+  /// Runs the real purger over [accounts] instead of the fake one.
+  bool useRealPurger = false;
+  final FakeServiceControl control;
   final servers = FakeServers();
   final purger = FakePurger();
+  final accounts = _FakeAccounts();
+  final acl = FakeAclWriter();
+  late final inspector = FakeAclInspector(acl);
   var clock = DateTime.utc(2026, 1, 1);
 
   String get installDir => p.join(temp.path, 'Program Files', 'Yagura');
@@ -46,7 +63,10 @@ class _Cli {
             'api_port': 7443,
           },
           servers: servers,
-          purger: purger,
+          purger: useRealPurger ? null : purger,
+          accountOperations: accounts,
+          aclWriter: acl,
+          aclInspector: inspector,
           environment: {'ProgramFiles': p.join(temp.path, 'Program Files')},
           delay: (d) async => clock = clock.add(d),
           now: () => clock,
@@ -54,6 +74,45 @@ class _Cli {
       ),
     );
     return (code: code, out: '$out', err: '$err');
+  }
+}
+
+/// Accounts in memory; the real calls need administrator rights.
+class _FakeAccounts implements AccountOperations {
+  final deletedAccounts = <String>[];
+
+  @override
+  String? sidOf(String account) => 'S-1-5-21-1-2-3-${account.length}';
+
+  @override
+  int deleteProfile(String sid) => 0;
+
+  @override
+  int deleteAccount(String account) {
+    deletedAccounts.add(account);
+    return 0;
+  }
+}
+
+/// A control that fails the way the machine does.
+class _BrokenControl extends FakeServiceControl {
+  _BrokenControl(this.error);
+
+  final Object error;
+
+  @override
+  ServiceStatus status(String serviceName) => throw error;
+}
+
+List<String> _secretIds(String data) {
+  final db = YaguraDatabase.open(p.join(data, 'yagura.db'));
+  try {
+    return [
+      for (final row in db.sqlite.select('SELECT id FROM secrets ORDER BY id'))
+        row['id']! as String,
+    ];
+  } finally {
+    db.close();
   }
 }
 
@@ -167,5 +226,80 @@ void main() {
     expect(result.code, 0, reason: result.err);
     expect(File(p.join(dir, 'yagurad-test.xml')).existsSync(), isTrue);
     expect(cli.control.services, {'yagurad-test': anything});
+  });
+
+  test(
+    'purge_accounts_deletes_the_rows_of_the_data_directory_in_use',
+    () async {
+      final cli = _Cli()..useRealPurger = true;
+      final data = Directory(p.join(cli.temp.path, 'yagura data'))
+        ..createSync();
+      final db = YaguraDatabase.open(p.join(data.path, 'yagura.db'));
+      try {
+        for (final id in [
+          serviceAccountSecretId('yagura-srv'),
+          serviceAccountSecretId('yagura-steam'),
+          'daemon-ca',
+        ]) {
+          db.sqlite.execute(
+            "INSERT INTO secrets (id, setting, blob, scope_sid, created_at) "
+            "VALUES (?, '', x'00', 'S-1-5-18', 1)",
+            [id],
+          );
+        }
+      } finally {
+        db.close();
+      }
+      final install = await cli.run(['install', '--data-dir', data.path]);
+      expect(install.code, 0, reason: install.err);
+
+      final result = await cli.run(['uninstall', '--purge-accounts']);
+
+      expect(result.code, 0, reason: result.err);
+      expect(cli.accounts.deletedAccounts, ['yagura-srv', 'yagura-steam']);
+      expect(_secretIds(data.path), ['daemon-ca']);
+      expect(File(p.join(cli.installDir, 'yagurad.xml')).existsSync(), isFalse);
+    },
+  );
+
+  test('a_failed_call_of_the_machine_is_a_reason_and_exit_1', () async {
+    for (final (error, text) in [
+      (Win32Error('OpenSCManagerW', 5), 'OpenSCManagerW'),
+      (const FileSystemException('sharing violation', r'C:\x'), 'sharing'),
+    ]) {
+      final cli = _Cli(control: _BrokenControl(error));
+
+      final result = await cli.run(['status']);
+
+      expect(result.code, 1, reason: '$error');
+      expect(result.err, startsWith('yagurad: internal_error: '));
+      expect(result.err, contains(text));
+    }
+  });
+
+  test('a_service_name_other_than_the_default_reaches_the_daemon', () async {
+    final cli = _Cli();
+
+    final result = await cli.run([
+      'install',
+      '--service-name',
+      'yagurad-b',
+      '--install-dir',
+      cli.installDir,
+    ]);
+
+    expect(result.code, 0, reason: result.err);
+    final xml = File(p.join(cli.installDir, 'yagurad-b.xml'))
+        .readAsStringSync();
+    expect(xml, contains('--service-name yagurad-b'));
+    expect(
+      File(
+        InstallLayout(
+          root: cli.installDir,
+          serviceName: 'yagurad-b',
+        ).markerFile('0.1.0'),
+      ).readAsStringSync(),
+      'yagurad-b',
+    );
   });
 }

@@ -1,7 +1,12 @@
+import 'dart:io';
+
 import 'package:path/path.dart' as p;
 
 /// The service name `yagurad service install` registers.
 const defaultServiceName = 'yagurad';
+
+/// The marker file inside a version directory made by an install.
+const installMarkerName = '.yagura-install';
 
 final _versionName = RegExp(r'^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$');
 
@@ -60,6 +65,59 @@ class InstallLayout {
   String get logDirectory => p.join(root, 'logs');
 
   String versionDirectory(String version) => p.join(root, version);
+
+  /// The file that says a version directory was made by this service's
+  /// install (it holds the service name). The sweeper and uninstall delete
+  /// only version directories that carry it: the install root may be shared
+  /// with another service or hold other software's versioned folders.
+  String markerFile(String version) =>
+      p.join(versionDirectory(version), installMarkerName);
+
+  /// Records that this service's install owns the version directory.
+  void markVersionDirectory(String version) =>
+      File(markerFile(version)).writeAsStringSync(serviceName);
+
+  /// Whether the version directory carries this service's marker.
+  bool ownsVersionDirectory(String version) {
+    final marker = File(markerFile(version));
+    try {
+      return marker.existsSync() &&
+          marker.readAsStringSync().trim() == serviceName;
+    } on FileSystemException {
+      return false;
+    }
+  }
+
+  /// The service named in the marker of the version directory, or null when
+  /// there is no marker.
+  String? markerOwner(String version) {
+    final marker = File(markerFile(version));
+    try {
+      return marker.existsSync() ? marker.readAsStringSync().trim() : null;
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  /// Deletes the version directory. When a file in it cannot be deleted (a
+  /// relay executes from it), the directory stays with its marker, so that it
+  /// is still known to be this service's; the failure is rethrown.
+  void deleteVersionDirectory(String version) {
+    final directory = Directory(versionDirectory(version));
+    try {
+      directory.deleteSync(recursive: true);
+    } on FileSystemException {
+      // The recursive delete may have removed the marker before it failed.
+      if (directory.existsSync() && markerOwner(version) == null) {
+        try {
+          markVersionDirectory(version);
+        } on FileSystemException {
+          // Best effort: without it the directory is left alone for good.
+        }
+      }
+      rethrow;
+    }
+  }
 
   String executable(String version) =>
       p.join(versionDirectory(version), 'bin', 'yagurad.exe');

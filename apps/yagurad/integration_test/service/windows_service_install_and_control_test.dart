@@ -18,6 +18,39 @@ final _pairingString = RegExp(
   r'&ca=sha256:([0-9a-f]{64})&name=(\S+)',
 );
 
+/// `icacls <path>`: the DACL as text.
+Future<String> _icacls(String path) async {
+  final result = await powershell("icacls '$path'");
+  return '${result.stdout}';
+}
+
+/// Checks an `icacls` listing by rights, not by where an entry came from:
+/// SYSTEM and Administrators have full control, Users read and execute, and
+/// no Users or Authenticated Users or Everyone entry can write, delete or
+/// change permissions or owner.
+void _expectProtected(String listing) {
+  const flags = r'(\((OI|CI|IO|NP|I)\))*';
+  void has(String principal, String rights) => expect(
+    RegExp('${RegExp.escape(principal)}:$flags${RegExp.escape('($rights)')}')
+        .hasMatch(listing),
+    isTrue,
+    reason: '$principal $rights in $listing',
+  );
+
+  has(r'NT AUTHORITY\SYSTEM', 'F');
+  has(r'BUILTIN\Administrators', 'F');
+  has(r'BUILTIN\Users', 'RX');
+  final broad = RegExp(r'(Users|Authenticated Users|Everyone):(\([A-Z,]+\))+')
+      .allMatches(listing);
+  for (final m in broad) {
+    expect(
+      RegExp(r'\((F|M|W|WD|AD|WDAC|WO|DC|D|GA|GW)\)').hasMatch(m[0]!),
+      isFalse,
+      reason: '${m[0]} in $listing',
+    );
+  }
+}
+
 void main() {
   // Real service control manager: the rows install a throwaway service
   // (`yagurad-t<random>`) from a bundle in the temp folder, so they run only
@@ -35,6 +68,13 @@ void main() {
       "'{0}|{1}|{2}' -f \$s.StartMode, \$s.StartName, \$s.State",
     );
     expect('${query.stdout}'.trim(), 'Auto|LocalSystem|Running');
+    // The install folder is protected: SYSTEM and Administrators full
+    // control, Users read and execute and nothing more. The rights are what
+    // counts; an entry may be explicit or inherited.
+    final root = await _icacls(rig.installRoot);
+    _expectProtected(root);
+    final wrapper = await _icacls(p.join(rig.installRoot, '${rig.name}.exe'));
+    _expectProtected(wrapper);
     // The command printed what the administrator does next, and that works.
     final out = '${install.stdout}';
     expect(out, contains('yagurad pair'));
@@ -109,6 +149,18 @@ void main() {
       final again = await rig.service(['uninstall']);
       expect(again.exitCode, 1);
       expect('${again.stderr}', contains('service_not_installed'));
+
+      // Installing again, with the servers still running, continues: the
+      // version folder is reused and the new daemon re-attaches to them.
+      await rig.install();
+      await rig.whenServersAttached(2);
+      for (final pid in pids.values) {
+        expect(
+          processAlive(pid),
+          isTrue,
+          reason: 'server $pid after reinstall',
+        );
+      }
     },
   );
 

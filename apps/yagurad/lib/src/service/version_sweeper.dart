@@ -10,20 +10,20 @@ import 'install_layout.dart';
 /// A relay keeps executing the `yagurad.exe` of the version that started it,
 /// so an upgrade leaves the old version directory in place. The daemon
 /// deletes it at startup once no unresolved run record names an executable
-/// inside it.
+/// inside it. It deletes only the directories that carry this service's
+/// install marker.
 class VersionSweeper {
   VersionSweeper({
     required this.layout,
     required this.currentVersion,
     void Function(String path)? delete,
-  }) : delete = delete ?? _deleteTree;
+  }) : delete =
+           delete ??
+           ((path) => layout.deleteVersionDirectory(p.basename(path)));
 
   final InstallLayout layout;
   final String currentVersion;
   final void Function(String path) delete;
-
-  static void _deleteTree(String path) =>
-      Directory(path).deleteSync(recursive: true);
 
   /// Deletes the unused version directories and returns their names.
   /// A directory that cannot be deleted (a file in it is still locked) stays
@@ -43,6 +43,9 @@ class VersionSweeper {
       if (entity is! Directory) continue;
       final name = p.basename(entity.path);
       if (!isVersionName(name) || name == currentVersion) continue;
+      // Only what this service's install made: the root may be shared with
+      // another service or hold other software's versioned folders.
+      if (!layout.ownsVersionDirectory(name)) continue;
       if (inUse.any((exe) => _within(exe, entity.path))) continue;
       try {
         delete(entity.path);

@@ -4,11 +4,17 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagurad/src/errors.dart';
+import 'package:yagurad/src/instances/instance_roots.dart'
+    show administratorsSid;
+import 'package:yagurad/src/platform/acl_inspector.dart';
+import 'package:yagurad/src/platform/acl_writer.dart';
 import 'package:yagurad/src/service/account_purger.dart';
 import 'package:yagurad/src/service/bundle.dart';
 import 'package:yagurad/src/service/install_layout.dart';
 import 'package:yagurad/src/service/service_control.dart';
 import 'package:yagurad/src/service/service_installer.dart';
+
+import 'admin_support.dart';
 
 /// The directory of the WinSW binary and template in the repository, seen
 /// from `apps/yagurad`.
@@ -96,8 +102,22 @@ class FakeServiceControl implements ServiceControl {
 class FakeServers implements ServerProbe {
   List<String> running = [];
 
+  /// Answers given one per call before [running] applies; for a server that
+  /// starts between two looks.
+  final answers = <List<String>>[];
+  var calls = 0;
+
+  /// The calls (counted from 1) that throw instead of answering.
+  final failAt = <int>{};
+
   @override
-  Future<List<String>> runningServers() async => running;
+  Future<List<String>> runningServers() async {
+    calls++;
+    if (failAt.contains(calls)) {
+      throw YaguraException('admin_connection_closed', 'the pipe is closing');
+    }
+    return answers.isEmpty ? running : answers.removeAt(0);
+  }
 }
 
 class FakePurger implements AccountPurger {
@@ -107,10 +127,32 @@ class FakePurger implements AccountPurger {
   ];
   var calls = 0;
 
+  /// The data directory each purge was told to use.
+  final dataDirectories = <String?>[];
+
   @override
-  Future<List<PurgeOutcome>> purge() async {
+  Future<List<PurgeOutcome>> purge({String? dataDirectory}) async {
     calls++;
+    dataDirectories.add(dataDirectory);
     return outcomes;
+  }
+}
+
+/// An ACL inspector over the rig's files: it answers what the fake writer
+/// would (see [FakeAclWriter.securityOf]).
+class FakeAclInspector implements AclInspector {
+  FakeAclInspector(this.writer);
+
+  final FakeAclWriter writer;
+  final inspected = <String>[];
+
+  /// Answers by path; checked first.
+  Map<String, EntrySecurity> get overrides => writer.overrides;
+
+  @override
+  EntrySecurity inspect(String path) {
+    inspected.add(path);
+    return writer.securityOf(path);
   }
 }
 
@@ -130,6 +172,8 @@ class InstallerRig {
       root: p.join(root.path, 'ProgramFiles', 'Yagura'),
       serviceName: serviceName,
     );
+    // The parent of the install root: `Program Files`.
+    Directory(p.dirname(layout.root)).createSync(recursive: true);
     this.bundle = bundle ?? makeBundle(version, parent: root);
     installer = _make();
   }
@@ -141,6 +185,9 @@ class InstallerRig {
   final control = FakeServiceControl();
   final servers = FakeServers();
   final purger = FakePurger();
+  final acl = FakeAclWriter();
+  late final inspector = FakeAclInspector(acl);
+  AclWriter? _aclWriter;
   final out = StringBuffer();
   final adminCalls = <String>[];
   var clock = DateTime.utc(2026, 1, 1);
@@ -164,6 +211,16 @@ class InstallerRig {
 
   late ServiceInstaller installer;
 
+  /// Runs each time the installer waits; a file locked a moment ago can be
+  /// released here.
+  void Function()? onDelay;
+
+  /// Replaces the ACL writer of the installer.
+  set aclWriter(AclWriter writer) {
+    _aclWriter = writer;
+    installer = _make();
+  }
+
   ServiceInstaller _make() => ServiceInstaller(
     layout: layout,
     control: control,
@@ -177,7 +234,12 @@ class InstallerRig {
     isElevated: () => elevated,
     servers: servers,
     purger: purger,
-    delay: (d) async => clock = clock.add(d),
+    aclWriter: _aclWriter ?? acl,
+    inspector: inspector,
+    delay: (d) async {
+      clock = clock.add(d);
+      onDelay?.call();
+    },
     now: () => clock,
   );
 
@@ -186,6 +248,15 @@ class InstallerRig {
   void useBundle(String version) {
     bundle = makeBundle(version, parent: root);
     installer = _make();
+  }
+
+  /// Gives the install root the protection an earlier install of this tool
+  /// leaves on it, as the elevated tool would have.
+  void preprotect() {
+    Directory(layout.root).createSync(recursive: true);
+    acl.open(layout.root)
+      ..writeDacl(installRootDaclSddl, ownerSid: administratorsSid)
+      ..close();
   }
 
   String get serviceName => layout.serviceName;

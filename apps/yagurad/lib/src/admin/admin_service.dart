@@ -229,7 +229,8 @@ class AdminService {
     'api_port': apiPort(),
     'devices': security.devices.activeCount,
     'instances': instances.list().length,
-    // Whoever uninstalls the service and its accounts needs these stopped.
+    // Whoever uninstalls the service and its accounts needs these stopped
+    // (every state in which a process of a service account may run).
     'running_servers': [
       for (final i in instances.list())
         if (_serverStates.contains(i.state)) i.name,
@@ -237,6 +238,7 @@ class AdminService {
   };
 
   static const _serverStates = {
+    InstanceState.installing,
     InstanceState.running,
     InstanceState.starting,
     InstanceState.stopping,

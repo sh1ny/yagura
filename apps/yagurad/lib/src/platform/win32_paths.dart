@@ -5,7 +5,8 @@ import 'package:path/path.dart' as p;
 
 import 'win32.dart';
 import 'win32_files.dart';
-import 'win32_security.dart' show Win32Error;
+import 'win32_security.dart'
+    show Win32Error, securityDescriptorSddl, withSecurityAttributes;
 
 /// A path that cannot be used as asked, with the reason.
 class PathRefused implements Exception {
@@ -18,6 +19,12 @@ class PathRefused implements Exception {
   String toString() => '$path: $why';
 }
 
+/// The folder to create is there already (someone made it first).
+class PathExists extends PathRefused {
+  PathExists(String path) : super(path, 'it already exists');
+}
+
+const _errorAlreadyExists = 183;
 const _readControl = 0x00020000;
 const _writeOwner = 0x00080000;
 const _errorFileNotFound = 2;
@@ -144,6 +151,50 @@ class OpenedDirectory {
   final String path;
 
   void close() => Win32.instance.closeHandle(handle);
+
+  /// The owner and the DACL, read on this handle.
+  EntrySecurity security() => EntrySecurity(
+    isLink: false, // refused when the handle was opened
+    sddl: securityDescriptorSddl(handle),
+  );
+}
+
+final int Function(Pointer<Utf16>, Pointer<Void>) _createDirectory =
+    DynamicLibrary.open('kernel32.dll').lookupFunction<
+      Int32 Function(Pointer<Utf16>, Pointer<Void>),
+      int Function(Pointer<Utf16>, Pointer<Void>)
+    >('CreateDirectoryW');
+
+/// Creates the directory [path] with the security descriptor of [sddl]
+/// (owner, protected DACL) in the same call, so it is protected from the
+/// moment it exists, and returns it opened like [openDirectoryForProtection].
+/// The parent must exist. Throws [PathExists] when something is there
+/// already, and [PathRefused] for any other failure.
+OpenedDirectory createProtectedDirectory(String path, String sddl) {
+  final name = path.toNativeUtf16();
+  try {
+    final created = withSecurityAttributes(
+      sddl,
+      (attributes) => callReadingError(
+        () => _createDirectory(name, attributes),
+        (r) => r == 0,
+      ),
+    );
+    if (created.value == 0) {
+      if (created.error == _errorAlreadyExists) throw PathExists(path);
+      throw PathRefused(
+        path,
+        created.error == 5
+            ? 'access is denied (administrator rights are needed)'
+            : created.error == 1307
+            ? 'the owner cannot be set (error 1307)'
+            : 'it cannot be created (error ${created.error})',
+      );
+    }
+  } finally {
+    calloc.free(name);
+  }
+  return openDirectoryForProtection(path);
 }
 
 /// Opens the directory [path] (absolute, normalised) by handle, for reading
@@ -208,5 +259,57 @@ OpenedDirectory openDirectoryForProtection(String path) {
   } on Object {
     Win32.instance.closeHandle(handle);
     rethrow;
+  }
+}
+
+/// What [inspectEntrySecurity] found.
+class EntrySecurity {
+  const EntrySecurity({required this.isLink, required this.sddl});
+
+  /// The entry is a reparse point (a link or a mount point).
+  final bool isLink;
+
+  /// The owner and the DACL as SDDL.
+  final String sddl;
+}
+
+/// Reads the owner and the DACL of the file or folder at [path] on a handle
+/// opened without following a link at [path] and without asking for more than
+/// the right to read the security (so it works on folders an administrator
+/// does not own, such as `%ProgramFiles%`). Throws [PathRefused] when it
+/// cannot be opened.
+EntrySecurity inspectEntrySecurity(String path) {
+  final opened = _open(
+    path,
+    access:
+        Win32Files.fileReadAttributes | Win32Files.synchronize | _readControl,
+    share: _shareAll,
+    followLink: false,
+  );
+  final handle = opened.handle;
+  if (handle == Win32.invalidHandle) {
+    throw PathRefused(path, switch (opened.error) {
+      _errorFileNotFound || _errorPathNotFound => 'it does not exist',
+      _ => 'it cannot be opened (error ${opened.error})',
+    });
+  }
+  try {
+    final info = calloc<Uint8>(52);
+    try {
+      if (Win32Files.instance.getFileInformationByHandle(handle, info) == 0) {
+        throw PathRefused(path, 'its attributes cannot be read');
+      }
+      final attributes = info.cast<Uint32>().value;
+      return EntrySecurity(
+        isLink: attributes & _attributeReparsePoint != 0,
+        sddl: securityDescriptorSddl(handle),
+      );
+    } on Win32Error catch (e) {
+      throw PathRefused(path, 'its security cannot be read ($e)');
+    } finally {
+      calloc.free(info);
+    }
+  } finally {
+    Win32.instance.closeHandle(handle);
   }
 }
