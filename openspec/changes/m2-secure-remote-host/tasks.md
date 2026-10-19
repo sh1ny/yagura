@@ -246,7 +246,7 @@ Covers: firewall-rules (all requirements); host-service → Startup sequence (fi
 - [x] 10.2 Write the reconcile PowerShell script and time one run with 300 rules in the `elevated` workflow (never on the developer's desktop). If it takes over 10 s, stop and revisit D11 with the user before wiring triggers. Verify: the timing is recorded in `docs/milestones/m2.md`, and `admins_own_rule_untouched` and `foreign_rule_inside_the_group` pass in the `elevated` workflow.
 - [x] 10.3 Implement the reconciler (D11): desired state from instances and launched ports, the owned-name regex with its round-trip test, single-flight with one coalesced pending run, operations awaiting the reconcile (60 s bound), degraded flags and `firewall_ok`, service mode only (`not_built` in dev mode), the API port rule, and the triggers. Verify: all firewall rows, `firewall_unavailable_at_startup` and `delete_keeping_files` pass (`elevated` ones in the `elevated` workflow); flip them.
 - [x] 10.4 Document the firewall rules (naming, what is never touched, how to see degraded state) in the operator docs. Verify: the doc names the group, the naming scheme and `firewall_unavailable`.
-- [ ] 10.5 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
+- [x] 10.5 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.
 
 ## 11. [M2] Desktop: paired daemons, pairing, renewal and conflicts
 
@@ -271,4 +271,4 @@ Covers: desktop-client (all requirements); daemon-security → Client pins the d
 
 - This change carries M2 (Secure remote host). After archive, `specwright-roadmap close` walks the exit criteria recorded in `docs/milestones/m2.md`.
 - When a task adds a dependency to any workspace package, re-run the dependency skill discovery and update `.claude/skills/UPSTREAM.json`.
-- Elevated rows are never run on CI (Actions minutes are budgeted); their evidence is the local run recorded in `docs/milestones/m2.md`.
+- Elevated rows never run on a developer's desktop: they run on CI, in the manual `elevated` workflow (Actions minutes are budgeted, so a run covers only the files a change touches), and each run is recorded in `docs/milestones/m2.md`.
