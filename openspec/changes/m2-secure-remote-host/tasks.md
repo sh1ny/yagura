@@ -13,8 +13,8 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | daemon-security → Pairing with a one-time code | Expired or reused code | apps/yagurad/test/security/pairing_with_a_one_time_code_test.dart | expired_or_reused_code | 6 | green |
 | daemon-security → Pairing with a one-time code | Brute force from one address | apps/yagurad/test/security/pairing_with_a_one_time_code_test.dart | brute_force_from_one_address | 6 | green |
 | daemon-security → Pairing with a one-time code | Distributed guessing | apps/yagurad/test/security/pairing_with_a_one_time_code_test.dart | distributed_guessing | 6 | green |
-| daemon-security → Client pins the daemon CA | Fingerprint mismatch at pairing | apps/yagura_desktop/test/client_pins_the_daemon_ca_test.dart | fingerprint_mismatch_at_pairing | 11 | red |
-| daemon-security → Client pins the daemon CA | Daemon CA matches stored CA | apps/yagura_desktop/test/client_pins_the_daemon_ca_test.dart | daemon_ca_matches_stored_ca | 11 | red |
+| daemon-security → Client pins the daemon CA | Fingerprint mismatch at pairing | apps/yagura_desktop/test/client_pins_the_daemon_ca_test.dart | fingerprint_mismatch_at_pairing | 11 | green |
+| daemon-security → Client pins the daemon CA | Daemon CA matches stored CA | apps/yagura_desktop/test/client_pins_the_daemon_ca_test.dart | daemon_ca_matches_stored_ca | 11 | green |
 | daemon-security → Mutual TLS on every call | Call without a client certificate | apps/yagurad/test/security/mutual_tls_on_every_call_test.dart | call_without_a_client_certificate | 6 | green |
 | daemon-security → Mutual TLS on every call | Revoked device | apps/yagurad/test/security/mutual_tls_on_every_call_test.dart | revoked_device | 6 | green |
 | daemon-security → Mutual TLS on every call | Method added without an exemption | apps/yagurad/test/security/mutual_tls_on_every_call_test.dart | method_added_without_an_exemption | 6 | green |
@@ -40,11 +40,11 @@ Every scenario maps to a Dart test at the boundary it crosses: daemon behaviour 
 | daemon-security → Development mode is localhost only | Dev mode default bind | apps/yagurad/test/security/development_mode_is_localhost_only_test.dart | dev_mode_default_bind | 6 (M1) | green |
 | daemon-security → Development mode is localhost only | Started without dev mode | apps/yagurad/test/security/development_mode_is_localhost_only_test.dart | started_without_dev_mode | 6 | green |
 | daemon-security → Development mode is localhost only | Started from a console without dev mode | apps/yagurad/test/security/development_mode_is_localhost_only_test.dart | started_from_a_console_without_dev_mode | 6 | green |
-| desktop-client → Multiple paired daemons | Two daemons online | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | two_daemons_online | 11 | red |
-| desktop-client → Multiple paired daemons | Daemon restarted | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | daemon_restarted | 11 | red |
-| desktop-client → Multiple paired daemons | Daemon offline | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | daemon_offline | 11 | red |
-| desktop-client → Multiple paired daemons | Device revoked | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | device_revoked | 11 | red |
-| desktop-client → Multiple paired daemons | No shared API version | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | no_shared_api_version | 11 | red |
+| desktop-client → Multiple paired daemons | Two daemons online | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | two_daemons_online | 11 | green |
+| desktop-client → Multiple paired daemons | Daemon restarted | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | daemon_restarted | 11 | green |
+| desktop-client → Multiple paired daemons | Daemon offline | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | daemon_offline | 11 | green |
+| desktop-client → Multiple paired daemons | Device revoked | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | device_revoked | 11 | green |
+| desktop-client → Multiple paired daemons | No shared API version | apps/yagura_desktop/test/multiple_paired_daemons_test.dart | no_shared_api_version | 11 | green |
 | desktop-client → Pairing from the client | Pair a new daemon | apps/yagura_desktop/test/pairing_from_the_client_test.dart | pair_a_new_daemon | 11 | red |
 | desktop-client → Pairing from the client | Malformed pairing string | apps/yagura_desktop/test/pairing_from_the_client_test.dart | malformed_pairing_string | 11 | red |
 | desktop-client → Pairing from the client | Pairing code rejected | apps/yagura_desktop/test/pairing_from_the_client_test.dart | pairing_code_rejected | 11 | red |
@@ -253,7 +253,7 @@ Covers: firewall-rules (all requirements); host-service → Startup sequence (fi
 Covers: desktop-client (all requirements); daemon-security → Client pins the daemon CA.
 
 - [x] 11.1 Write the failing widget tests for this group's rows against fake daemon connections and a fake keychain; verify each fails for the stated reason.
-- [ ] 11.2 Implement the daemon registry and per-daemon secure connections (D13): keychain storage, pinned CA with authority `yagurad-<daemon-id>`, connection states with backoff 1 s to 30 s, `revoked` and `expired`, and the loopback dev daemon entry. Verify: the multiple-daemons and CA-pinning rows pass; flip them.
+- [x] 11.2 Implement the daemon registry and per-daemon secure connections (D13): keychain storage, pinned CA with authority `yagurad-<daemon-id>`, connection states with backoff 1 s to 30 s, `revoked` and `expired`, and the loopback dev daemon entry. Verify: the multiple-daemons and CA-pinning rows pass; flip them.
 - [ ] 11.3 Implement pairing from a pairing string (in-process key and CSR, `Pairing.Info`, fingerprint check, `Enroll`, key deleted on failure), renewal on connect and every 24 h, the create flow calling `SetSecret` after `CreateInstance`, and the revision-conflict reload that keeps edits. Verify: the remaining group rows pass; flip them; the M1 forms rows still pass.
 - [ ] 11.4 Update the desktop user docs (pairing, daemon list states, conflicts). Verify: each state shown in the UI is described.
 - [ ] 11.5 Review this group's diff with a fresh-context reviewer; fix any P0/P1 finding. Verify: no open P0/P1.

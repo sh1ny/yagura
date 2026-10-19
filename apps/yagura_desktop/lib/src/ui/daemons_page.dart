@@ -1,0 +1,213 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../connection.dart';
+import '../daemon_record.dart';
+import '../providers.dart';
+import 'home_page.dart';
+import 'instance_list.dart' show instanceStateLabel;
+import 'pair_dialog.dart';
+
+/// The word the list shows for a connection state (design D13).
+String daemonStateLabel(ConnectionStatus status) => switch (status) {
+  Connecting() || Reconnecting() => 'connecting',
+  Connected() => 'connected',
+  Offline() => 'offline',
+  IncompatibleDaemon() => 'incompatible',
+  Revoked() => 'revoked',
+  Expired() => 'expired',
+};
+
+String _time(DateTime t) {
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
+}
+
+/// One sentence about the state: the last error and when the daemon was last
+/// seen, or what the admin has to do.
+String daemonStateDetail(ConnectionStatus status) => switch (status) {
+  Connecting() => 'Connecting…',
+  Reconnecting() => 'Connection lost. Reconnecting…',
+  Connected(:final info, :final negotiated) =>
+    'Connected to ${info.hostName.isEmpty ? 'daemon' : info.hostName}'
+        ' · API ${negotiated.effective}',
+  Offline(:final error, :final lastSeen) =>
+    '$error · ${lastSeen == null ? 'Not reached since the client started' : 'Last seen ${_time(lastSeen)}'}',
+  IncompatibleDaemon(:final client, :final daemon) =>
+    'Incompatible: client API $client, daemon API ${daemon.join(', ')}',
+  Revoked() => 'This device was revoked by the daemon. Pair again to continue.',
+  Expired() =>
+    'The device certificate expired or its renewal was refused. '
+        'Pair again to continue.',
+};
+
+/// Whether pairing again would fix [status].
+bool offersRepair(ConnectionStatus status) => switch (status) {
+  Revoked() || Expired() => true,
+  Offline(:final error) =>
+    error == 'server_ca_mismatch' || error == 'credentials_missing',
+  _ => false,
+};
+
+/// The paired daemons with their states and instances (design D13).
+class DaemonsPage extends ConsumerWidget {
+  const DaemonsPage({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final daemons = ref.watch(daemonRegistryProvider);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Yagura'),
+        actions: [
+          IconButton(
+            key: const ValueKey('action:pair'),
+            tooltip: 'Pair a daemon',
+            icon: const Icon(Icons.add_link),
+            onPressed: () => showPairDialog(context),
+          ),
+        ],
+      ),
+      body: daemons.isEmpty
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  'No daemons yet. Pair one with the pairing string that '
+                  '"yagurad pair" prints on the host.',
+                ),
+              ),
+            )
+          : ListView(
+              padding: const EdgeInsets.all(12),
+              children: [
+                for (final daemon in daemons)
+                  _DaemonCard(key: ValueKey('daemon:${daemon.id}'), daemon),
+              ],
+            ),
+    );
+  }
+}
+
+class _DaemonCard extends ConsumerWidget {
+  const _DaemonCard(this.daemon, {super.key});
+
+  final DaemonRecord daemon;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final id = daemon.id;
+    final status =
+        ref.watch(connectionStatusProvider(id)).value ?? const Connecting();
+    final instances = ref.watch(instancesProvider(id)).value ?? const [];
+    final scheme = Theme.of(context).colorScheme;
+    final problem = switch (status) {
+      Offline() || Revoked() || Expired() || IncompatibleDaemon() => true,
+      _ => false,
+    };
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        daemon.name,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      Text(daemon.address),
+                    ],
+                  ),
+                ),
+                Chip(
+                  backgroundColor: problem
+                      ? scheme.errorContainer
+                      : scheme.secondaryContainer,
+                  label: Text(
+                    daemonStateLabel(status),
+                    key: ValueKey('daemon:$id:state'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              daemonStateDetail(status),
+              key: ValueKey('daemon:$id:detail'),
+              style: TextStyle(color: problem ? scheme.error : null),
+            ),
+            for (final instance in instances)
+              ListTile(
+                key: ValueKey('daemon:$id:instance:${instance.id}'),
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text(instance.name),
+                trailing: Text(instanceStateLabel(instance.state)),
+              ),
+            OverflowBar(
+              alignment: MainAxisAlignment.start,
+              children: [
+                if (status is Connected)
+                  TextButton(
+                    key: ValueKey('daemon:$id:open'),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => HomePage(daemonId: id),
+                      ),
+                    ),
+                    child: const Text('Manage'),
+                  ),
+                if (offersRepair(status))
+                  TextButton(
+                    key: ValueKey('daemon:$id:repair'),
+                    onPressed: () => showPairDialog(context),
+                    child: const Text('Pair again'),
+                  ),
+                if (!daemon.isDev)
+                  TextButton(
+                    key: ValueKey('daemon:$id:remove'),
+                    onPressed: () => _confirmRemove(context, ref),
+                    child: const Text('Remove'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmRemove(BuildContext context, WidgetRef ref) async {
+    final remove = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Remove ${daemon.name}?'),
+        content: const Text(
+          'This device forgets the daemon and deletes its key and certificate '
+          'from the keychain. The daemon keeps listing the device until an '
+          'administrator revokes it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('remove:confirm'),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (remove == true) {
+      await ref.read(daemonRegistryProvider.notifier).remove(daemon.id);
+    }
+  }
+}

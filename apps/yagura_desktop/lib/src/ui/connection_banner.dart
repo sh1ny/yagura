@@ -29,6 +29,21 @@ class ConnectionBanner extends ConsumerWidget {
         'Reconnecting…',
         scheme.tertiaryContainer,
       ),
+      Offline(:final error) => (
+        Icons.cloud_off,
+        'Offline: $error',
+        scheme.errorContainer,
+      ),
+      Revoked() => (
+        Icons.gpp_bad,
+        'This device was revoked by the daemon',
+        scheme.errorContainer,
+      ),
+      Expired() => (
+        Icons.timer_off,
+        'The device certificate expired',
+        scheme.errorContainer,
+      ),
       IncompatibleDaemon(:final client, :final daemon) => (
         Icons.block,
         'Incompatible: client API $client, daemon API '

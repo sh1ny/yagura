@@ -5,6 +5,8 @@
 /// operation events, log lines and field violations.
 library;
 
+import 'dart:typed_data';
+
 import 'package:yagura_proto/yagura_proto.dart';
 
 /// A failed call, reduced to what the UI needs from the gRPC status and its
@@ -37,6 +39,7 @@ abstract interface class DaemonTransport {
   /// A snapshot first, then deltas.
   Stream<InstanceEvent> watchInstances();
 
+  Future<Instance> getInstance(String instanceId);
   Future<Instance> createInstance(CreateInstanceRequest request);
   Future<Instance> updateSettings(UpdateSettingsRequest request);
   Future<Instance> setSecret(SetSecretRequest request);
@@ -56,6 +59,10 @@ abstract interface class DaemonTransport {
 
   Stream<LogBatch> backlog(String instanceId);
   Stream<LogBatch> follow(String instanceId);
+
+  /// `Pairing.RenewCertificate` over this (authenticated) connection: signs a
+  /// CSR for a new key.
+  Future<EnrollResponse> renewCertificate(Uint8List csrDer);
 
   Future<void> close();
 }
