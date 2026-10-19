@@ -130,6 +130,7 @@ Failures print `yagurad: <reason>: <message>` and exit 1.
 | `service_not_ready` | The service runs but the daemon did not answer within 60 seconds; see the log under `%ProgramFiles%\Yagura\logs` and `yagurad service status` |
 | `servers_running` | `--purge-accounts` while game servers run |
 | `profile_in_use` | `--purge-accounts` kept an account because its profile is in use |
+| `service_accounts` | `yagura-srv` or `yagura-steam` could not be set up (the message names the account and the Windows error); also reported by the running service, which then starts no game server. See [data-directory.md](data-directory.md#service-accounts) |
 | `internal_error` | `--purge-accounts` could not read the database to tell whether game servers run (before the service was stopped nothing was changed; after it, the service is started again), or a file or Windows call failed in a way the other reasons do not name; the message holds the error |
 
 The commands that ask the running daemon (`configure`, `status`, the readiness wait of `install` and the check of `--purge-accounts`) also pass on the reasons of the admin channel: `access_denied`, `admin_channel_untrusted`, `admin_channel_busy`, `admin_request_timeout`, `admin_connection_closed` and `admin_api_unsupported`. [data-directory.md](data-directory.md) explains each.

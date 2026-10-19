@@ -39,6 +39,27 @@ LocalSystem has the same SID (`S-1-5-18`) on every machine, but its DPAPI key be
 
 Linux has no secret store until M5: the store opens empty and refuses to hold a secret (`secret_store_unavailable`).
 
+## Service accounts
+
+In service mode (the Windows service, ADR 0013 and ADR 0015) the daemon runs as LocalSystem and creates two local accounts at every start, repairing them when they exist:
+
+| Account | Runs | Can use |
+|---|---|---|
+| `yagura-srv` | Game servers, through the launcher | Its instance directories (modify, but not delete the directory itself), read and execute of the content store (M3; none exists in M2) and of the game files SteamCMD installed, traverse of the instance root |
+| `yagura-steam` | SteamCMD, and the unpacking of its first download | `steamcmd/` (modify), its instance directories (as above) and traverse of the instance root |
+
+Both are members of Users only, have a random 64-character password that the daemon keeps in its secret store (`service-account:<name>`), are allowed to log on as a batch job and are denied interactive, remote interactive and network logon. They get their own window station and desktop, so a game server and SteamCMD do not share one. Neither account can read `yagura.db`, the secrets or the other account's files, and neither can reach the admin channel (it answers SYSTEM and Administrators only).
+
+When an account cannot be set up the daemon reports `service_accounts` and runs degraded: it serves the API, but a game server or SteamCMD does not start. A start that cannot log an account on fails with `launch_logon_failed`, and the instance stays stopped.
+
+### Protection of the data directory
+
+Before the database opens, the service opens the data directory without following links, makes Administrators its owner and replaces its DACL: full control for SYSTEM and Administrators only, not inherited from the parent. Everything below inherits that, except `instances/` (traverse for the two accounts, entered only through the instance's own DACL), `steamcmd/` and `content/`, which carry their explicit entries. A `acl-layout` file records that this was done; it counts only when it is a plain file with one link, owned by SYSTEM or Administrators. A link anywhere in the walk stops the start with `data_dir_not_protected`, naming it, and nothing is written through it.
+
+Older instance directories (made before the service existed) get their DACL once, at the first service start; a directory that cannot be updated is reported as `acl_migration_failed` on the instance and tried again at the next start.
+
+**Shared hosts.** The first service start trusts a data directory that already exists: it cannot tell which files an earlier user put there. Create the data directory only as an administrator, or let the service create it. On a host where standard users can write to the chosen path, a user who planted files there before the first start keeps nothing they could change afterwards (the walk replaces their permissions and the owner), but the files themselves stay, so inspect a directory you did not create yourself.
+
 ## Admin commands
 
 The commands that run on the host reach the running service over a local named pipe, the admin channel, and never open `yagura.db` themselves. Run them from an elevated prompt (Run as administrator). The service serves the pipe `\\.\pipe\yagurad-admin` with a descriptor that names only SYSTEM and Administrators, so no other account can open it. The pipe is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`: if another process already serves the name, the service starts without the channel (startup notice and `GetHealth.admin_channel_ok` false, reason `admin_channel_squatted`) rather than share it. The CLI in turn checks, before it sends anything, that the pipe is served by a LocalSystem process, that the pipe object is owned by SYSTEM or Administrators (which a process id, reusable once the server is gone, cannot fake: only an administrator can make a pipe those own), and that the server process id read twice from the held handle is the same, so a squatter never sees a command. The service keeps one instance listening whatever clients do (a client that connects and hangs up at once costs nothing) and retries every second when it cannot make the next one; `GetHealth.admin_channel_ok` is false while no instance can take a client. The channel takes 4 clients at a time (a fifth waits), 64 KiB per message, and drops a client that sends nothing for 5 seconds. A dev daemon (`--dev`) has no admin channel.
