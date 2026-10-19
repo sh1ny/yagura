@@ -200,10 +200,11 @@ class ProcessRig {
     List<String> serverArgs = const [],
     int graceSeconds = 5,
     String health = 'type: process\n  start_timeout_seconds: 30',
+    Directory? parent,
   }) async {
     requireBreakaway();
     final tools = await processTools();
-    final env = TestEnv();
+    final env = TestEnv(parent: parent);
     final rig = ProcessRig._(env, tools);
     addTearDown(rig._cleanup);
     rig._installPlugin(serverArgs, graceSeconds, health);

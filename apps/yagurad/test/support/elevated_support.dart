@@ -26,6 +26,14 @@ final _random = Random.secure();
 /// fixed length.
 String _suffix() => _random.nextInt(1 << 30).toRadixString(16).padLeft(8, '0');
 
+/// `%ProgramData%\yagurad-test`: where the rows that run the daemon as
+/// LocalSystem keep their data, as a real install keeps its own. The temp
+/// folder of the runner's profile is not a place the service accounts, or a
+/// standard user, can be expected to reach.
+Directory programDataBase() =>
+    Directory(p.join(Platform.environment['ProgramData']!, 'yagurad-test'))
+      ..createSync(recursive: true);
+
 /// The default limit of one external command.
 const commandTimeout = Duration(seconds: 90);
 
@@ -164,7 +172,14 @@ class SystemDaemon {
   File get log => File(p.join(dataDir.path, 'daemon.log'));
 
   /// Starts the daemon and waits until the admin pipe answers `status`.
-  static Future<SystemDaemon> start(ProcessTools tools) async {
+  ///
+  /// [prepare] runs before the daemon starts, with the path of its data
+  /// directory (which does not exist yet): a row that needs a data directory
+  /// an earlier daemon or a standard user made builds it there.
+  static Future<SystemDaemon> start(
+    ProcessTools tools, {
+    Future<void> Function(String data)? prepare,
+  }) async {
     // Nothing else may serve the pipe, or this daemon's status is not
     // the one the test asks.
     final squatter = await runYaguradExe(tools, ['status']);
@@ -176,12 +191,13 @@ class SystemDaemon {
       );
     }
     final task = 'yagura-test-${_suffix()}';
-    final dataDir = Directory.systemTemp.createTempSync('yagurad_system_');
+    final dataDir = programDataBase().createTempSync('yagurad_system_');
     final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     final port = socket.port;
     await socket.close();
     final daemon = SystemDaemon._(tools, task, dataDir);
     addTearDown(daemon.stop);
+    await prepare?.call(p.join(dataDir.path, 'data'));
 
     // The task runs a script, so the daemon's output can be kept.
     final script = File(p.join(dataDir.path, 'run.cmd'))
@@ -235,6 +251,61 @@ class SystemDaemon {
       'task: ${query.stdout}\n'
       'daemon.log: ${daemon.log.existsSync() ? daemon.log.readAsStringSync() : '(none)'}\n'
       '${await processListing()}',
+    );
+  }
+
+  /// Runs the daemon as LocalSystem on [dataArgument] (the data directory by
+  /// default; a path that is not a plain directory, such as a junction, when
+  /// given) and waits for it to exit by itself: a start that fails exits with
+  /// the reason in its output. Returns what it printed; fails when it is still
+  /// running after [timeout] (and ends it).
+  static Future<({String log, Directory dataDir})> runUntilExit(
+    ProcessTools tools, {
+    Future<void> Function(String data)? prepare,
+    String Function(String data)? dataArgument,
+    Duration timeout = const Duration(seconds: 120),
+  }) async {
+    final task = 'yagura-test-${_suffix()}';
+    final dataDir = programDataBase().createTempSync('yagurad_system_');
+    final daemon = SystemDaemon._(tools, task, dataDir);
+    addTearDown(daemon.stop);
+    final data = p.join(dataDir.path, 'data');
+    await prepare?.call(data);
+    final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final port = socket.port;
+    await socket.close();
+    final script = File(p.join(dataDir.path, 'run.cmd'))
+      ..writeAsStringSync(
+        '@"${tools.yagurad}" run --service --bind 127.0.0.1:$port '
+        '--data-dir "${dataArgument?.call(data) ?? data}" '
+        '> "${daemon.log.path}" 2>&1\r\n'
+        '@echo done> "${p.join(dataDir.path, 'exited.txt')}"\r\n',
+      );
+    final create = await runCommand('schtasks', [
+      '/Create', '/TN', task, '/TR', script.path, '/SC', 'ONCE', '/ST', '23:59',
+      '/RU', 'SYSTEM', '/RL', 'HIGHEST', '/F', //
+    ]);
+    if (create.exitCode != 0) {
+      fail('schtasks /Create failed: ${create.stdout}${create.stderr}');
+    }
+    final run = await runCommand('schtasks', ['/Run', '/TN', task]);
+    if (run.exitCode != 0) {
+      fail('schtasks /Run failed: ${run.stdout}${run.stderr}');
+    }
+    final exited = File(p.join(dataDir.path, 'exited.txt'));
+    final deadline = DateTime.now().add(timeout);
+    while (!exited.existsSync()) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail(
+          'the daemon was still running after ${timeout.inSeconds} s.\n'
+          'daemon.log: ${daemon.log.existsSync() ? daemon.log.readAsStringSync() : '(none)'}',
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    return (
+      log: daemon.log.existsSync() ? daemon.log.readAsStringSync() : '',
+      dataDir: dataDir,
     );
   }
 

@@ -7,7 +7,10 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 import 'package:yagurad/src/platform/win32_security.dart';
 import 'package:yagurad/src/platform/win32_service.dart';
+import 'package:yagurad/src/steam/steamcmd_service.dart';
 
+import 'account_support.dart'
+    show accountSid, queryDatabase, removeServiceAccounts, sddlOf;
 import 'daemon_support.dart';
 import 'elevated_support.dart';
 import 'process_support.dart';
@@ -55,7 +58,15 @@ class ServiceRig {
   String get bundleExecutable => p.join(bundleDirectory, 'bin', 'yagurad.exe');
 
   /// Fails unless the session is elevated; builds the tools and the bundle;
-  /// seeds [instances] running servers; registers the clean-up.
+  /// seeds [instances] instances; registers the clean-up.
+  ///
+  /// A dev daemon makes and installs the instances but does not start them:
+  /// they are marked as requested running, so that the service starts them
+  /// itself (as `yagura-srv`) when it comes up. Servers a dev daemon started
+  /// would run as the runner's account and the service would reject them
+  /// (design D9: only a relay's child running as `yagura-srv` is verified), so
+  /// the rows wait for the servers with [whenServersAttached] after
+  /// [install].
   static Future<ServiceRig> create({int instances = 2}) async {
     if (!Platform.isWindows || !isElevated()) {
       fail(
@@ -74,7 +85,7 @@ class ServiceRig {
         '${squatter.stdout}${squatter.stderr}\n${await processListing()}',
       );
     }
-    final process = await ProcessRig.create();
+    final process = await ProcessRig.create(parent: programDataBase());
     final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     final port = socket.port;
     await socket.close();
@@ -122,8 +133,8 @@ class ServiceRig {
     }
   }
 
-  /// Starts [count] servers with a dev daemon on the data directory, then
-  /// ends that daemon the way a crash does: the servers keep running.
+  /// Makes and installs [count] instances with a dev daemon, marks them as
+  /// requested running and ends that daemon; the service starts them.
   Future<void> _seed(int count) async {
     final daemon = await process.start();
     for (var i = 0; i < count; i++) {
@@ -136,20 +147,58 @@ class ServiceRig {
         ..createSync(recursive: true);
       File(tools.fakeServer)
           .copySync(p.join(directory.path, 'valheim_server.exe'));
-      final done = await runStart(daemon, instance.id);
-      expect(
-        done.resultReason,
-        isEmpty,
-        reason: 'start failed: ${done.resultMessage}',
-      );
     }
     await process.env.kill(daemon);
-    servers
-      ..clear()
-      ..addAll(runningServers());
-    expect(servers, hasLength(count));
-    for (final pid in servers.values) {
-      expect(processAlive(pid), isTrue, reason: 'server $pid after the seed');
+    final db = sqlite3.open(p.join(data, 'yagura.db'));
+    try {
+      db.execute("UPDATE instances SET last_requested_state = 'running'");
+    } finally {
+      db.close();
+    }
+  }
+
+  /// Puts the fake SteamCMD (compiled) and the ready mark into the data
+  /// directory's `steamcmd/anonymous`, so the service's Install runs it
+  /// without the network. Call it before the service is installed: the first
+  /// service start then gives the folder to `yagura-steam`.
+  Future<void> seedFakeSteamCmd() async {
+    final steam = p.join(data, 'steamcmd', 'anonymous');
+    Directory(steam).createSync(recursive: true);
+    final compiled = await runCommand(Platform.resolvedExecutable, [
+      'compile',
+      'exe',
+      p.absolute('test', 'fixtures', 'fake_steamcmd', 'fake_steamcmd.dart'),
+      '-o',
+      p.join(steam, 'steamcmd.exe'),
+    ], timeout: const Duration(minutes: 5));
+    expect(
+      compiled.exitCode,
+      0,
+      reason: '${compiled.stdout}${compiled.stderr}',
+    );
+    final output = Directory(p.join(steam, 'output'))
+      ..createSync(recursive: true);
+    for (final file in Directory(
+      p.absolute('test', 'fixtures', 'fake_steamcmd', 'output'),
+    ).listSync().whereType<File>()) {
+      file.copySync(p.join(output.path, p.basename(file.path)));
+    }
+    // The daemon remembers that SteamCMD is ready in its database
+    // (`steamcmd_installations`), not in a marker file: without the row it
+    // would unpack Valheim's real SteamCMD over the fake and install the real
+    // game.
+    final db = sqlite3.open(p.join(data, 'yagura.db'));
+    try {
+      db.execute(
+        'INSERT OR REPLACE INTO steamcmd_installations (installation, '
+        'ready_at) VALUES (?, ?)',
+        [
+          SteamCmdService.anonymousInstallation,
+          DateTime.now().millisecondsSinceEpoch,
+        ],
+      );
+    } finally {
+      db.close();
     }
   }
 
@@ -253,14 +302,20 @@ class ServiceRig {
         run['name']! as String: run['server_pid']! as int,
   };
 
-  /// Waits until [condition] holds, up to [timeout].
+  /// Waits until [condition] holds, up to [timeout]. When [abortWhen] returns
+  /// text, the wait ends at once with that text: a condition that can no
+  /// longer come true (a server that already ended `launch_failed`) fails the
+  /// test now, not after the timeout.
   Future<void> eventuallyHolds(
     bool Function() condition, {
     required String reason,
     Duration timeout = const Duration(seconds: 90),
+    String? Function()? abortWhen,
   }) async {
     final deadline = DateTime.now().add(timeout);
     while (!condition()) {
+      final abort = abortWhen?.call();
+      if (abort != null) fail('gave up waiting for $reason: $abort');
       if (DateTime.now().isAfter(deadline)) {
         fail('timed out waiting for $reason');
       }
@@ -268,12 +323,52 @@ class ServiceRig {
     }
   }
 
+  /// Why a wait for running servers is hopeless, or null: a run that ended
+  /// with a reason (with the message of the operation that failed), or a
+  /// service that is not running.
+  String? serverWaitIsHopeless() {
+    try {
+      for (final run in runs()) {
+        final reason = '${run['end_reason']}';
+        if (run['state'] == 'ended' && reason.isNotEmpty) {
+          final failed = queryDatabase(
+            data,
+            "SELECT kind, result_reason, result_message FROM operations "
+            "WHERE status != 'succeeded' AND result_message != '' "
+            "ORDER BY created_at DESC LIMIT 3",
+          );
+          return 'the run of ${run['name']} ended $reason '
+              '(operations: $failed)';
+        }
+      }
+    } on Object {
+      // The database is not readable at this moment: keep waiting.
+    }
+    final state = serviceState;
+    if (state != null && state != serviceRunning) {
+      return 'the service is in state $state';
+    }
+    return null;
+  }
+
   /// Waits until the daemon of the service has re-attached to [count]
-  /// servers and they run.
-  Future<void> whenServersAttached(int count) => eventuallyHolds(
-    () => runningServers().length == count,
-    reason: 'the daemon to re-attach to $count servers',
-  );
+  /// servers and they run. Fails at once when a run ended or the service
+  /// stopped.
+  Future<void> whenServersAttached(
+    int count, {
+    Duration timeout = const Duration(seconds: 90),
+  }) async {
+    await eventuallyHolds(
+      () => runningServers().length == count,
+      reason: 'the daemon to re-attach to $count servers',
+      timeout: timeout,
+      abortWhen: serverWaitIsHopeless,
+    );
+    // The clean-up ends them, and the rows look servers up by name.
+    servers
+      ..clear()
+      ..addAll(runningServers());
+  }
 
   /// Everything that helps to read a failure: the service, the daemon behind
   /// the pipe, the runs, the install folder and the logs.
@@ -294,7 +389,58 @@ class ServiceRig {
     } on Object catch (e) {
       text.writeln('  (cannot read the database: $e)');
     }
-    text.writeln('install folder $installRoot:');
+    try {
+      text
+        ..writeln('operations:')
+        ..writeln(
+          queryDatabase(
+            data,
+            'SELECT kind, status, result_reason, result_message FROM '
+            'operations ORDER BY created_at',
+          ).join(', '),
+        )
+        ..writeln('instances:')
+        ..writeln(
+          queryDatabase(
+            data,
+            'SELECT name, state, last_requested_state, acl_layout, directory '
+            'FROM instances',
+          ).join(', '),
+        );
+    } on Object catch (e) {
+      text.writeln('  (cannot read the database: $e)');
+    }
+    final srv = await accountSid('yagura-srv');
+    final steam = await accountSid('yagura-steam');
+    text.writeln('accounts: yagura-srv=$srv yagura-steam=$steam');
+    for (final path in [
+      data,
+      p.join(data, 'yagura.db'),
+      p.join(data, 'instances'),
+      p.join(data, 'steamcmd'),
+      p.join(data, 'content'),
+      p.join(data, 'acl-layout'),
+      if (Directory(p.join(data, 'instances')).existsSync())
+        ...Directory(p.join(data, 'instances')).listSync().map((e) => e.path),
+    ]) {
+      try {
+        if (FileSystemEntity.typeSync(path) == FileSystemEntityType.notFound) {
+          text.writeln('acl $path: (missing)');
+        } else {
+          text.writeln('acl $path: ${await sddlOf(path)}');
+        }
+      } on Object catch (e) {
+        text.writeln('acl $path: ($e)');
+      }
+    }
+    text
+      ..writeln(
+        (await runCommand('net', [
+          'user',
+          'yagura-srv',
+        ], failOnTimeout: false)).stdout,
+      )
+      ..writeln('install folder $installRoot:');
     final root = Directory(installRoot);
     if (root.existsSync()) {
       for (final entity in root.listSync(recursive: true)) {
@@ -313,6 +459,10 @@ class ServiceRig {
     }
     final dataRoot = Directory(data);
     if (dataRoot.existsSync()) {
+      text.writeln('data directory, three levels deep:');
+      _listing(dataRoot, data, 3, text);
+      text.writeln('the instances, five levels deep:');
+      _listing(Directory(p.join(data, 'instances')), data, 4, text);
       for (final file in dataRoot.listSync(recursive: true).whereType<File>()) {
         final name = p.basename(file.path);
         if (name == 'exit.json' || name == 'relay.json') {
@@ -336,6 +486,34 @@ class ServiceRig {
     return '$text';
   }
 
+  /// [directory] and what is below it, [depth] levels deep, with sizes.
+  static void _listing(
+    Directory directory,
+    String base,
+    int depth,
+    StringBuffer text,
+  ) {
+    if (depth == 0) return;
+    List<FileSystemEntity> children;
+    try {
+      children = directory.listSync(followLinks: false);
+    } on FileSystemException catch (e) {
+      text.writeln('  ${p.relative(directory.path, from: base)}: $e');
+      return;
+    }
+    for (final child in children) {
+      final relative = p.relative(child.path, from: base);
+      if (child is File) {
+        text.writeln('  $relative (${child.lengthSync()} bytes)');
+      } else if (child is Directory) {
+        text.writeln('  $relative/');
+        _listing(child, base, depth - 1, text);
+      } else {
+        text.writeln('  $relative (link)');
+      }
+    }
+  }
+
   Future<void> _cleanup() async {
     try {
       printOnFailure(await diagnostics());
@@ -350,9 +528,15 @@ class ServiceRig {
       await powershell('sc.exe delete $name', failOnTimeout: false);
     }
     await process.env.closeDaemons();
+    try {
+      servers.addAll(runningServers());
+    } on Object {
+      // The database is gone or unreadable: the servers known so far are ended.
+    }
     for (final pid in {...process.recordedPids(), ...servers.values}) {
       if (processAlive(pid)) Process.killPid(pid);
     }
+    await removeServiceAccounts();
     for (var i = 0; i < 50; i++) {
       if (!process.recordedPids().any(processAlive)) break;
       await Future<void>.delayed(const Duration(milliseconds: 100));

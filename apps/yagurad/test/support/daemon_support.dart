@@ -8,14 +8,17 @@ import 'package:yagurad/src/admin/admin_transport.dart';
 import 'package:yagurad/src/errors.dart';
 import 'package:yagurad/src/platform/acl_writer.dart';
 import 'package:yagurad/src/host/daemon.dart';
+import 'package:yagurad/src/host/data_dir_protector.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
 import 'package:yagurad/src/instances/instance.dart';
+import 'package:yagurad/src/instances/instance_acls.dart';
 import 'package:yagurad/src/logs/log_hub.dart';
 import 'package:yagurad/src/logs/log_models.dart';
 import 'package:yagurad/src/operations/operations.dart';
 import 'package:yagurad/src/host/secret_store.dart';
 import 'package:yagurad/src/process/process.dart';
+import 'package:yagurad/src/service/service_accounts.dart';
 import 'package:yagurad/src/service/version_sweeper.dart';
 import 'package:yagurad/src/snapshots/snapshots.dart';
 import 'package:yagurad/src/steam/steam.dart';
@@ -46,6 +49,9 @@ class FakeServer implements RunningServer {
 
   @override
   ProcessIdentity? get relay => null;
+
+  @override
+  bool recordRejected = false;
 
   final _exit = Completer<int>();
 
@@ -116,12 +122,23 @@ class FakeProcessHost implements ProcessHost {
         : StoppedBy.graceful;
   }
 
+  /// When set, a re-attach fails `run_record_rejected` naming this relay
+  /// PID: the run record does not match a verified process (design D9).
+  int? rejectedRelayPid;
+
   @override
   Future<RunningServer?> reattach(
     ProcessIdentity identity, {
     ProcessIdentity? relay,
     String runDirectory = '',
   }) async {
+    if (rejectedRelayPid case final pid?) {
+      throw YaguraException(
+        'run_record_rejected',
+        'the run record names no verified server (relay $pid)',
+        details: {'relayPid': pid},
+      );
+    }
     for (final server in survivors) {
       if (server.identity == identity) return server;
     }
@@ -233,7 +250,11 @@ class FakeSnapshotter implements Snapshotter {
 /// A fresh data directory for one test, with helpers to prepare plugins and
 /// start daemons on it.
 class TestEnv {
-  TestEnv() : root = Directory.systemTemp.createTempSync('yagurad_test_') {
+  /// A fresh directory under [parent] (the temp folder by default). The
+  /// service rows pass a folder under `%ProgramData%`, as a real install has
+  /// its data, so the service accounts reach it the way they would there.
+  TestEnv({Directory? parent})
+    : root = (parent ?? Directory.systemTemp).createTempSync('yagurad_test_') {
     addTearDown(() async {
       for (final daemon in List.of(_daemons)) {
         await daemon.close();
@@ -314,6 +335,9 @@ class TestEnv {
     AdminListener Function()? adminListener,
     AclWriter? aclWriter,
     AccountSids? accountSids,
+    DataDirProtector? dataDirProtector,
+    ServiceAccounts? serviceAccounts,
+    InstanceAcls? instanceAcls,
     Future<List<InternetAddress>> Function()? hostAddresses,
     VersionSweeper? versionSweeper,
     // Nothing polls by itself unless a test says so: tests call `pollNow`.
@@ -339,6 +363,11 @@ class TestEnv {
         adminListener: adminListener,
         aclWriter: aclWriter,
         accountSids: accountSids,
+        dataDirProtector: dataDirProtector,
+        serviceAccounts: serviceAccounts == null
+            ? null
+            : (_) => serviceAccounts,
+        instanceAcls: instanceAcls,
         hostAddresses: hostAddresses,
         versionSweeper: versionSweeper,
         logOptions: logOptions,
