@@ -20,9 +20,9 @@ flowchart LR
     CL --> KC[(OS keychain:<br/>device key + certs)]
   end
   CL -->|gRPC over mTLS| API
-  CLI[yagurad CLI verbs<br/>pair, devices, status] -->|local admin pipe<br/>Admins only| ADM
+  CLI[yagurad CLI verbs<br/>pair, devices, roots, status] -->|local admin pipe<br/>SYSTEM + Admins only| ADM
 
-  subgraph D["yagurad service (LocalSystem)"]
+  subgraph D["yagurad run --service (LocalSystem)"]
     API[API server + auth interceptor] --> OPS[Operation runner<br/>per-instance queue]
     ADM[Local admin channel] --> PAIR
     API --> PAIR[Pairing + CA]
@@ -32,6 +32,8 @@ flowchart LR
     INST --> BIND[Config binder]
     INST --> MODS[Mod pipeline]
     INST --> STEAM[Steam service]
+    INST --> IFS[InstanceFs<br/>ConfinedFs: no links followed]
+    STEAM --> IFS
     INST --> FW[Firewall reconciler]
     INST --> SNAP[Save snapshots]
     PLUG --> HOOK[Hook runner]
@@ -45,7 +47,8 @@ flowchart LR
     STATE[(SQLite state + DPAPI secrets)]
   end
 
-  STEAM -->|kill-on-close job| SCMD[[SteamCMD<br/>one install per account]]
+  STEAM -->|launch as yagura-steam<br/>kill-on-close job| LAUNCH
+  LAUNCH -->|CreateProcessAsUserW<br/>yagura-steam| SCMD[[SteamCMD as yagura-steam<br/>one install per account]]
   PROC -->|CreateProcessW| LAUNCH[[yagurad launch<br/>exits at once]]
   LAUNCH -->|CreateProcessAsUserW<br/>yagura-srv| RELAY[[yagurad relay]]
   RELAY -->|child, pipes| GS[[Game server]]
@@ -56,14 +59,15 @@ flowchart LR
   RCON -->|UDP/TCP/WS localhost| GS
   FW -->|PowerShell NetSecurity| WFW[(Windows Firewall)]
   SCMD --> SteamNet[(Steam)]
+  SVC[[WinSW service]] -->|starts the version directory exe| D
   MODS -->|workshop metadata HTTP| SteamNet
-  INST -->|writes| IDIR[(Instance dirs<br/>+ instance.json)]
+  IFS -->|writes| IDIR[(Instance dirs<br/>+ instance.json)]
 ```
 
 | Component | Responsibility | Owns (state) | Talks to via (contract) |
 |---|---|---|---|
 | API server | gRPC services, mTLS, device check, audit of mutating and auth calls | none (stateless) | `proto/yagura/v1` (ADR 0006, 0007) |
-| Local admin channel | CLI verbs on the host (`pair`, `devices`, `status`) | none | Named pipe ACL'd to SYSTEM + Administrators (ADR 0012) |
+| Local admin channel | CLI verbs on the host (`pair`, `devices`, `roots`, `status`) | none | Named pipe ACL'd to SYSTEM + Administrators (ADR 0012) |
 | Pairing + CA | CA, server cert, pairing codes, device enrollment, renewal, revocation | CA key (secret), devices, pairing codes | SQLite, SecretStore |
 | Operation runner | Serialises operations per instance, host-wide heavy limit, progress, cancellation, startup recovery | operations table, in-memory progress | Operation events stream |
 | Instance manager | Instance CRUD, revisions, state machine; orchestrates install/update/start/stop | instances, settings, revisions, `instance.json` | Plugin registry, binder, mods, process, steam, firewall, snapshots |
@@ -71,8 +75,9 @@ flowchart LR
 | Hook runner | Runs one hook in a fresh worker isolate with deadline and memory cap; returns file edits to the binder | none | Hook contract: JSON in/out, pure host API (ADR 0003) |
 | Config binder | Sole writer of bound files and hook-requested edits; detects external edits | last-applied hashes per file | Format parsers (ADR 0004) |
 | Mod pipeline | Resolve, acquire (single-flight), stage (junctions), keys, load order, update checks | instance-mod rows with pinned versions | Steam service, content store (ADR 0005) |
-| Steam service | SteamCMD installs per account (one run at a time each), app/workshop downloads, Guard relay | SteamCMD dirs, account rows | SteamCMD args and output patterns (ADR 0014) |
-| Process supervisor | Native spawn via launcher and relay, stop strategies, exit waiters, re-attach | run records (relay/server PID, exe, start time) | Relay files, Win32/POSIX process APIs (ADR 0009) |
+| Steam service | SteamCMD installs per account (one run at a time each), run as the `yagura-steam` account in service mode, app/workshop downloads, Guard relay | SteamCMD dirs, account rows | SteamCMD args and output patterns (ADR 0014) |
+| Instance file boundary (InstanceFs over ConfinedFs) | Every daemon file access under an instance directory or the SteamCMD directory: opened relative to the root handle, reparse points refused (`sandbox_violation`) | none | Win32 `NtCreateFile` with final-path check (ADR 0015) |
+| Process supervisor | Native spawn via launcher and relay, stop strategies, exit waiters, re-attach, process identity verification before any signal or kill | run records (relay/server PID, exe, start time) | Relay files, Win32/POSIX process APIs (ADR 0009) |
 | Save snapshots | Copies of declared `data_paths` before update and before delete with files | snapshot rows, `snapshots/` | Filesystem |
 | Log hub | Tails declared sources, decodes, ring-buffers, fans out | ring buffers, file offsets | Log stream messages |
 | RCON adapters | BattlEye, Source RCON, Rust WebRCON sessions | open sessions (memory) | Game wire protocols |
@@ -126,6 +131,8 @@ stateDiagram-v2
 | `restore_interrupted` | Acknowledge | `stopped` (warning kept: data paths may be mixed) |
 | `settings_invalid` | UpdateSettings with valid settings | `stopped` |
 | `plugin_missing` | ReloadPlugins that restores the plugin | `stopped` |
+| `run_record_rejected` | Stop | Verification retried; the genuine server is stopped when found, else the instance stays in `error` |
+| `run_record_rejected` | Acknowledge | `stopped` (run record cleared, warning naming the relay PID kept) |
 | any | Stop | refused only while an operation runs |
 | any | Delete | refused while another operation is queued or running |
 
@@ -149,7 +156,7 @@ Start from `error: settings_invalid` or `plugin_missing` fails `invalid_state`. 
 | Instance-mod rows (`staged_version`, `desired_version`, order, staged name; GC treats both versions as references) | Mod pipeline | Until removed | — | SQLite |
 | Bound file hashes | Config binder | Per bound file | Updated after each apply | SQLite |
 | SteamCMD installs + cached logins | Steam service | Per Steam account | Re-login on expiry | SteamCMD's own files (ACL'd) |
-| Secrets (CA key, Steam pw, RCON pw, GSLT, `yagura-srv` pw) | SecretStore, called by the owning component | Until replaced/deleted | — | SQLite blobs, DPAPI user scope of LocalSystem (ADR 0011) |
+| Secrets (CA key, Steam pw, RCON pw, GSLT, `yagura-srv` and `yagura-steam` passwords) | SecretStore, called by the owning component | Until replaced/deleted | A row whose `scope_sid` is not the daemon's own is deleted and re-created in service mode (secret settings become unset), and refused in dev mode | SQLite `secrets` table: DPAPI blobs, user scope of LocalSystem, each row with its `scope_sid` (ADR 0011) |
 | Devices, pairing codes | Pairing + CA | Device: until revoked; code: 10 min, single use | Expired codes pruned | SQLite |
 | Owned firewall rules | Firewall reconciler | While the port is wanted | Reconcile at startup, on port change, on request | Windows Firewall (actual) vs SQLite (desired) |
 | Save snapshots | Save snapshots | Last 3 per instance; `pre_delete` snapshots of a deleted instance 30 days (orphan listing) | Oldest deleted, never the one restoring; `pre_restore` taken before any data path is replaced | Disk + SQLite rows |
@@ -209,7 +216,9 @@ Startup separates fatal steps from degraded ones:
 | Operation events | Progress coalesced per step; other events 2,000 per operation | `events_dropped` marker on resume | — | Client |
 | Audit log (mutating + auth calls only) | 100,000 rows | Oldest pruned | — | — |
 | RCON | 1 session per instance, 8 console subscribers, 10 s command timeout | Rejected | Reconnect 1→30 s backoff | Client console |
-| Pairing attempts | 5 wrong codes per 10 min | Code invalidated | — | CLI + audit |
+| Pairing attempts | 5 per address / 10 min; 50 total / 10 min | Address blocked / code invalidated (`pairing_throttled`) | — | CLI + audit |
+| Auth-failure aggregates | 10,000 rows, one per address per 10 min | Oldest pruned | — | Audit |
+| Firewall reconcile | 1 running + 1 coalesced pending; one script per reconcile; 30 s per run, an operation waits at most 60 s | Further requests join the pending one | Timeout: `firewall: degraded`, nothing deleted | Client badge, `GetHealth.firewall_ok` |
 | Plugin files | manifest ≤ 256 KiB, hooks.js ≤ 1 MiB | Plugin rejected | — | Client plugin list |
 | Messages | 4 MiB request, 16 MiB response | `RESOURCE_EXHAUSTED` / paging | — | Client |
 

@@ -1,6 +1,6 @@
 # 0010. SteamCMD runs non-interactively; Steam Guard is relayed to the client
 
-- Status: accepted
+- Status: superseded by 0014
 - Date: 2026-10-16
 - Supersedes: —
 
