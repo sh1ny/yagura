@@ -2,15 +2,12 @@
 
 ## Why
 
-Yagura was first specified as one change covering milestones M1-M5. Archiving a change records its requirements in `openspec/specs/` as current behaviour, so one change for the whole platform would either never archive or record unbuilt behaviour. `init-core-platform` therefore carries M1 only, and this change parks everything planned for M2-M5 (Secure remote host, Steam accounts and mods, Operations and complex configs, Linux agent; see `openspec/roadmap.md`) until its milestone starts.
+Yagura was first specified as one change covering milestones M1-M5. Archiving a change records its requirements in `openspec/specs/` as current behaviour, so one change for the whole platform would either never archive or record unbuilt behaviour. `init-core-platform` therefore carries M1 only, and this change parks everything planned for M2-M5 (Secure remote host, Steam accounts and mods, Operations and complex configs, Linux agent; see `openspec/roadmap.md`) until its milestone starts. M2 (Secure remote host) has been taken out into `m2-secure-remote-host`.
 
 This change is never applied or archived. At the start of each milestone, `specwright-roadmap next` takes that milestone's requirements, decisions and task groups out of it into a new change (for example `m2-secure-remote-host`), which gets its own design review against the code M1 and the earlier milestones built. This change is deleted when nothing is left in it.
 
 ## What Changes
 
-- **Security (M2)**: daemon-local CA, one-time pairing codes with CA fingerprint pinning, mTLS on every call, certificate renewal, per-device revocation, audit log, local admin channel; secrets in DPAPI/OS stores and never returned by the API.
-- **Host integration (M2)**: Windows service via WinSW, game servers as the low-privilege `yagura-srv` account, the InstanceFs trust boundary, firewall rules owned by group and reconciled from instance ports; Linux systemd and firewall adapters (M5).
-- **Remote desktop (M2)**: pairing from the client, several daemons, instance revisions with conflict detection.
 - **Steam accounts (M3)**: account logins with Steam Guard relayed to the client, credential retention, GSLT injection, workshop downloads.
 - **Config bindings (M3, M4)**: settings applied to game files through round-tripping parsers (`ini`, `json`, `dayz-cfg`, `kv`, then `ue-ini`, `xml`, `vdf`) with manual-edit detection.
 - **Mods (M3)**: the mod pipeline with a shared, versioned content store, junction staging with copy fallback, key files, load order and update detection; plugin version migration.
@@ -20,18 +17,15 @@ This change is never applied or archived. At the start of each milestone, `specw
 ## Capabilities
 
 ### New Capabilities
-- `firewall-rules`: owned rule naming, desired-state reconcile, port changes and instance deletion.
 - `config-bindings`: binding settings to files, supported formats, round-trip preservation, manual edit detection, atomic writes.
 - `mod-management`: mod sources, the content store, staging strategies, key files, load order, mod updates and removal.
 - `rcon`: protocol adapters, sessions, commands, console streaming.
 
 ### Modified Capabilities
 Created by `init-core-platform` (M1); this backlog adds requirements to them and extends some M1 requirements (listed as MODIFIED in their delta specs).
-- `instance-lifecycle`, `plugin-manifest`, `plugin-hooks`, `steam-content`, `daemon-protocol`, `daemon-security`, `log-streaming`, `host-service`, `desktop-client`.
+- `instance-lifecycle`, `plugin-manifest`, `plugin-hooks`, `steam-content`, `daemon-protocol`, `log-streaming`, `host-service`, `desktop-client`.
 
 ## Impact
 
-- Adds `plugins/{dayz,ark_sa,scum,rust}`, `tool/winsw/`, and the Linux service files.
-- Dependencies: `x509`, `pointycastle`, Flutter `flutter_secure_storage`; bundled WinSW 2.x (MIT).
-- External systems: Steam accounts and Steam Guard, Steam Web API for workshop metadata, CurseForge (ARK:SA mods are server-managed), Windows Firewall, Windows Service Control Manager, systemd.
-- Records ADR 0014 (ACL withdrawal during SteamCMD runs) in M2.
+- Adds `plugins/{dayz,ark_sa,scum,rust}` and the Linux service files.
+- External systems: Steam accounts and Steam Guard, Steam Web API for workshop metadata, CurseForge (ARK:SA mods are server-managed), systemd.
