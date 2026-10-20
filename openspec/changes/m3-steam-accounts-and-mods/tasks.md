@@ -263,7 +263,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
   - the mods mirrored into `instance.json`.
 
   Verify: the load-order, mod-change and durable-state rows pass.
-- [ ] 7.4 Implement staging and keys (D7, D8):
+- [x] 7.4 Implement staging and keys (D7, D8):
   - recorded entries, `stage_kind` and the `.yagura-staged` marker, and `stage_name_conflict`;
   - copy fallback and `stage_link_failed`;
   - `server_managed`;

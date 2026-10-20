@@ -9,6 +9,11 @@ enum HookPoint {
   /// After the daemon updated the instance's game files.
   onPostUpdate(allowsLaunchChanges: false),
 
+  /// After the daemon staged the instance's mods and placed their key files,
+  /// on every stage step (also one that changed nothing); its file edits
+  /// join the operation's one config pass (design D9).
+  onModsStaged(allowsLaunchChanges: false),
+
   /// Before the server process starts; may add arguments and environment.
   onPreStart(allowsLaunchChanges: true),
 

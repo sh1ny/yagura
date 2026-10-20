@@ -17,6 +17,7 @@ class HookWorkerRequest {
     required this.contextJson,
     required this.rootPath,
     required this.deadline,
+    this.recorded = const {},
     this.memoryLimitBytes = HookLimits.memoryBytes,
     this.stackBytes = HookLimits.stackBytes,
     this.resultLimitBytes = HookLimits.resultBytes,
@@ -28,6 +29,7 @@ class HookWorkerRequest {
         source: map['source']! as String,
         contextJson: map['contextJson']! as String,
         rootPath: map['rootPath']! as String,
+        recorded: (map['recorded']! as Map).cast<String, String>(),
         deadline: Duration(microseconds: map['deadlineMicros']! as int),
         memoryLimitBytes: map['memoryLimitBytes']! as int,
         stackBytes: map['stackBytes']! as int,
@@ -44,6 +46,10 @@ class HookWorkerRequest {
 
   final String rootPath;
 
+  /// The instance's recorded mod junctions (`{staged path -> target}`), which
+  /// a read through the host API may follow.
+  final Map<String, String> recorded;
+
   /// How long the script may run, measured from the start of the worker.
   final Duration deadline;
   final int memoryLimitBytes;
@@ -55,6 +61,7 @@ class HookWorkerRequest {
     'source': source,
     'contextJson': contextJson,
     'rootPath': rootPath,
+    'recorded': recorded,
     'deadlineMicros': deadline.inMicroseconds,
     'memoryLimitBytes': memoryLimitBytes,
     'stackBytes': stackBytes,
@@ -170,7 +177,11 @@ Map<String, Object?> runHookInWorker(HookWorkerRequest request) {
   var loaded = false;
   try {
     js.setDeadline(request.deadline);
-    registerHostApi(js, InstanceFs(request.rootPath), logs);
+    registerHostApi(
+      js,
+      InstanceFs(request.rootPath, recorded: request.recorded),
+      logs,
+    );
     js.hideHostBridge();
     js.eval(hookPrelude, filename: '<yagura>');
     js.eval(request.source, filename: 'hooks.js');

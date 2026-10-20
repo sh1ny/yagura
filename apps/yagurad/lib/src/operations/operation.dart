@@ -42,7 +42,19 @@ enum OperationKind {
   addSteamAccount(heavy: false, wire: 'add_steam_account'),
 
   /// Logs an account in again after its cached login expired.
-  reauthSteamAccount(heavy: false, wire: 'reauth_steam_account');
+  reauthSteamAccount(heavy: false, wire: 'reauth_steam_account'),
+
+  /// Stages an instance's mods (design D7). The downloads belong to the mod
+  /// pipeline, which takes its own lock and slot (design D6).
+  applyMods(heavy: false, wire: 'apply_mods'),
+
+  /// Reads the workshop for newer mod versions (design D14); with no instance
+  /// it runs under the host subject.
+  checkModUpdates(heavy: false, wire: 'check_mod_updates'),
+
+  /// Downloads the newer versions of mods; stages them unless the instance
+  /// runs.
+  updateMods(heavy: false, wire: 'update_mods');
 
   const OperationKind({required this.heavy, this.wire});
 

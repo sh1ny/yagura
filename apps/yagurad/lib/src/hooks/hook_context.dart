@@ -17,6 +17,7 @@ class HookContext {
     this.paths = const {},
     this.settings = const {},
     this.ports = const {},
+    this.mods = const [],
     this.fromVersion,
     this.toVersion,
   }) {
@@ -65,6 +66,10 @@ class HookContext {
   /// Port numbers by name.
   final Map<String, int> ports;
 
+  /// The staged mods in load order: `source`, `itemId`, `role`, `stagedName`
+  /// and `version`. Always present; empty for an instance without mods.
+  final List<Map<String, Object?>> mods;
+
   /// The plugin versions a `migrateSettings` call moves the settings between;
   /// absent from every other hook's context.
   final String? fromVersion;
@@ -81,6 +86,7 @@ class HookContext {
     'paths': paths,
     'settings': settings,
     'ports': ports,
+    'mods': mods,
     'fromVersion': ?fromVersion,
     'toVersion': ?toVersion,
   };

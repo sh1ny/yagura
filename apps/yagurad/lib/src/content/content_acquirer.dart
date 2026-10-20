@@ -123,6 +123,11 @@ class _Run {
   final List<_Flight> flights;
   final cancel = CancelToken();
 
+  /// The key of the installation lock: the same as the one an install or
+  /// update of an instance takes (`account:<id>`, or `anonymous`).
+  String get lockKey =>
+      installation == 'anonymous' ? installation : 'account:$installation';
+
   var position = 0;
   var step = '';
   SteamProgressNote? lastProgress;
@@ -349,7 +354,7 @@ class ContentAcquirer {
       final reporter = _RunReporter(run);
       // Joining operations learn of the run before it has a lock.
       release = await runner.acquireHeavy(
-        installation: run.installation,
+        installation: run.lockKey,
         cancel: run.cancel,
         onPosition: (position) {
           run.position = position;

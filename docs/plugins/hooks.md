@@ -52,6 +52,7 @@ exports.onPreStart = function (ctx) {
 |---|---|---|
 | `onPostInstall` | after the daemon installed the instance's game files | `files` |
 | `onPostUpdate` | after the daemon updated the game files | `files` |
+| `onModsStaged` | after the daemon staged the instance's mods (every start, update and ApplyMods), before `onPreStart` | `files` |
 | `onPreStart` | before the server process starts | `args`, `env`, `files` |
 | `onPostStop` | after the server process stopped | `files` |
 | `migrateSettings` | after a plugin reload changed the plugin's version, once per instance of the plugin | `settings` |
@@ -67,6 +68,7 @@ Every hook receives the same JSON object:
 | `paths` | named paths, relative to the instance root, without `..` |
 | `settings` | the instance's settings by key; a `secret` setting appears only as `{"secret": true, "set": <bool>}`, never its value |
 | `ports` | port numbers by name |
+| `mods` | the instance's staged mods in load order, each `{source, itemId, role, stagedName, version}`; `[]` for an instance without staged mods |
 | `fromVersion`, `toVersion` | `migrateSettings` only: the plugin version the instance's settings were saved under, and the loaded one (`pluginVersion` is the loaded one too) |
 
 The serialised context is limited to 1 MiB.
@@ -210,6 +212,25 @@ exports.onPostUpdate = function (ctx) {
 {
   "files": [
     { "path": "cfg/cfggameplay.json", "format": "json", "patch": { "version": 122 } }
+  ]
+}
+```
+
+### `onModsStaged`
+
+Record the staged mods in the gameplay file. `ctx.mods` lists the staged mods in load order; the files of a staged mod can be read but not edited.
+
+```js hook=onModsStaged
+exports.onModsStaged = function (ctx) {
+  const names = (ctx.mods || []).map(function (m) { return m.stagedName; });
+  return { files: [{ path: ctx.paths.config + '/cfggameplay.json', format: 'json', patch: { stagedMods: names } }] };
+};
+```
+
+```json result
+{
+  "files": [
+    { "path": "cfg/cfggameplay.json", "format": "json", "patch": { "stagedMods": [] } }
   ]
 }
 ```

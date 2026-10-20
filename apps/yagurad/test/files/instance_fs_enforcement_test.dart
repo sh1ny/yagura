@@ -25,6 +25,9 @@ const _allowed = <String, String>{
   'content/content_store.dart':
       'the content store and its staging area in <data>/content; the SteamCMD '
       'tree is read through ConfinedFs.copyOut, which refuses links',
+  'mods/mod_keys.dart':
+      'reads the key files of a mod in the content store (<data>/content); '
+      'the instance side goes through InstanceFs',
   'host/data_dir_lock.dart': 'the lock file in the data directory',
   'firewall/powershell_firewall.dart':
       'the request files for PowerShell in <data>/tmp or the install folder tmp, '

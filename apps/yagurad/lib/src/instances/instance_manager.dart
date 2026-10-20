@@ -14,6 +14,8 @@ import '../firewall/firewall_reconciler.dart';
 import '../firewall/rule_names.dart';
 import '../config/bound_file_store.dart';
 import '../hooks/hooks.dart';
+import '../mods/mod_entry.dart';
+import '../mods/mods_service.dart';
 import '../host/acl_layout.dart';
 import '../host/data_directory.dart';
 import '../host/replaced_secrets.dart';
@@ -157,6 +159,9 @@ class InstanceManager {
   final DateTime Function() clock;
   late final Lifecycle lifecycle;
 
+  /// The mod pipeline's instance side (design D7); set by the daemon.
+  ModsService? mods;
+
   final _records = <String, InstanceRecord>{};
   final _events = StreamController<InstanceEvent>.broadcast();
   final _pluginsReloaded = StreamController<void>.broadcast();
@@ -242,6 +247,9 @@ class InstanceManager {
       pid: record.server?.pid ?? 0,
       health: record.health,
       revision: record.revision,
+      modsUpdateAvailable: record.listedMods
+          .where((m) => m.updateAvailable)
+          .length,
       firewallStatus: switch (firewall) {
         null => 'disabled',
         final f when f.isDegraded(record.id) => 'degraded',
@@ -805,6 +813,93 @@ class InstanceManager {
     return id;
   }
 
+  // ---- mods ---------------------------------------------------------------
+
+  /// The record of [id] for the mods service, which keeps it up to date.
+  InstanceRecord requireRecord(String id) => _require(id);
+
+  /// Every record, for the update check.
+  List<InstanceRecord> get records => _records.values.toList();
+
+  ModsService get modsService =>
+      mods ??
+      (throw YaguraException('internal_error', 'the mods service is not set'));
+
+  /// Fails `revision_required` or `revision_conflict` like a settings save.
+  void checkRevision(InstanceRecord record, int? expected) =>
+      _checkRevision(record, expected);
+
+  /// Commits [mods] as the instance's list: a configuration change, so the
+  /// revision increments with it and `instance.json` is rewritten (design D7).
+  /// The record is as it was when the commit fails.
+  void commitMods(InstanceRecord record, List<ModEntry> mods) {
+    final before = record.mods;
+    record.mods = mods;
+    try {
+      _commit(record, revisedFrom: record.revision);
+    } on Object {
+      record.mods = before;
+      rethrow;
+    }
+  }
+
+  /// The `{staged path -> content directory}` of the instance's linked mods,
+  /// which `InstanceFs` follows read-only (design D7, ADR 0015).
+  Map<String, String> recordedJunctions(InstanceRecord record) {
+    final spec = registry.find(record.pluginId)?.manifest.mods;
+    if (spec == null || record.mods.isEmpty) return const {};
+    return {
+      for (final mod in record.mods)
+        if (mod.stageKind == 'link' &&
+            mod.stagedName.isNotEmpty &&
+            mod.stagedVersion.isNotEmpty)
+          p.posix.join(spec.stageDir, mod.stagedName): stagedVersionPath(
+            dataDirectory.contentPath,
+            spec,
+            mod,
+          ),
+    };
+  }
+
+  InstanceRecord _modsRecord(String id) {
+    final record = _require(id);
+    if (requirePlugin(record).manifest.mods == null) {
+      throw ModsService.modsNotSupported(record);
+    }
+    return record;
+  }
+
+  Operation applyMods(String id) {
+    final record = _modsRecord(id);
+    _guarded(id, OperationKind.applyMods);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.applyMods,
+      body: (context) => lifecycle.applyMods(context, record.id),
+    );
+  }
+
+  /// Checks the workshop for newer versions of the mods of [id], or of every
+  /// instance when it is empty (an operation of the host's own queue).
+  Operation checkModUpdates(String id) {
+    if (id.isNotEmpty) _modsRecord(id);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.checkModUpdates,
+      body: (context) => modsService.checkUpdates(context, instanceId: id),
+    );
+  }
+
+  Operation updateMods(String id, List<String> items) {
+    final record = _modsRecord(id);
+    modsService.updateTargets(record, items);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.updateMods,
+      body: (context) => lifecycle.updateMods(context, record.id, items),
+    );
+  }
+
   // ---- lifecycle requests -------------------------------------------------
 
   Operation install(String id, {bool validateFiles = false}) {
@@ -1234,6 +1329,18 @@ class InstanceManager {
         break;
       case OperationKind.addSteamAccount || OperationKind.reauthSteamAccount:
         // Account operations belong to no instance.
+        break;
+      case OperationKind.applyMods:
+        if (state == InstanceState.running || state == InstanceState.starting) {
+          refuse('instance_running', 'mods are staged while it is stopped');
+        }
+        if (state == InstanceState.notInstalled) {
+          refuse('not_installed', 'install it first');
+        }
+        if (state != InstanceState.stopped) {
+          refuse('invalid_state', 'ApplyMods needs it stopped');
+        }
+      case OperationKind.checkModUpdates || OperationKind.updateMods:
         break;
     }
   }

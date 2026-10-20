@@ -10,6 +10,7 @@ import '../errors.dart';
 import '../files/files.dart';
 import '../host/secret_store.dart';
 import '../hooks/hooks.dart';
+import '../mods/mod_entry.dart';
 import '../operations/operations.dart';
 import '../plugins/plugin_registry.dart';
 import '../process/process.dart';
@@ -43,7 +44,39 @@ class Lifecycle {
     paths: {'instance': record.directory, 'server': _serverDirectory(record)},
     os: _manager.os,
     secretsSet: _manager.setSecretsOf(record),
+    mods: _modLists(record),
   );
+
+  /// The staged names (or item ids, where the server fetches its own mods)
+  /// of each role, in load order, for the launch arguments.
+  Map<String, List<String>> _modLists(InstanceRecord record) {
+    final roles =
+        _manager.registry.find(record.pluginId)?.manifest.mods?.roles ??
+        const <String>[];
+    return {
+      for (final role in roles)
+        role: [
+          for (final mod in record.listedMods)
+            if (mod.role == role &&
+                mod.status == ModEntry.staged &&
+                mod.stagedName.isNotEmpty)
+              mod.stagedName,
+        ],
+    };
+  }
+
+  /// The staged mods in load order, as hooks see them.
+  List<Map<String, Object?>> _hookMods(InstanceRecord record) => [
+    for (final mod in record.listedMods)
+      if (mod.status == ModEntry.staged && mod.stagedName.isNotEmpty)
+        {
+          'source': mod.source,
+          'itemId': mod.itemId,
+          'role': mod.role,
+          'stagedName': mod.stagedName,
+          'version': mod.stagedVersion,
+        },
+  ];
 
   /// Runs hook [point] of [plugin] when it has a `hooks.js`; returns its
   /// result (empty when the plugin has no script or does not export it).
@@ -76,10 +109,14 @@ class Lifecycle {
               setSecrets: _manager.setSecretsOf(record),
             ),
             ports: {for (final port in record.ports) port.name: port.number},
+            mods: _hookMods(record),
             fromVersion: fromVersion,
             toVersion: fromVersion == null ? null : manifest.version,
           ),
-          root: InstanceFs(record.directory),
+          root: InstanceFs(
+            record.directory,
+            recorded: _manager.recordedJunctions(record),
+          ),
           deadline: Duration(seconds: manifest.hooksTimeoutSeconds),
         ),
         cancel: ctx.cancel.whenCancelled,
@@ -186,7 +223,10 @@ class Lifecycle {
     final bindings = bind ? _bindings(record, plugin) : const <BoundKey>[];
     if (bindings.isEmpty && edits.isEmpty) return;
     final result = await ConfigBinder(
-      InstanceFs(record.directory),
+      InstanceFs(
+        record.directory,
+        recorded: _manager.recordedJunctions(record),
+      ),
       store: _manager.boundFiles,
       instanceId: record.id,
     ).apply(bindings: bindings, edits: edits);
@@ -415,9 +455,23 @@ class Lifecycle {
       _manager.setState(record, InstanceState.updating);
       updating = true;
       await _steamRun(ctx, record, manifest, validate: validate);
+      // Update brings the mods to their newest versions (design D7); Validate
+      // checks the game files only.
+      final modEdits = kind == OperationKind.update
+          ? await _stageMods(
+              ctx,
+              record,
+              plugin,
+              step: 'update_mods',
+              refreshAll: true,
+            )
+          : const <FileEdit>[];
       await ctx.step('apply_config', () async {
         final hook = await _hook(ctx, record, plugin, HookPoint.onPostUpdate);
-        await _applyConfig(ctx, record, plugin, hook.files, bind: true);
+        await _applyConfig(ctx, record, plugin, [
+          ...modEdits,
+          ...hook.files,
+        ], bind: true);
       });
       _manager.setState(record, InstanceState.stopped);
     } on OperationCancelled {
@@ -449,6 +503,83 @@ class Lifecycle {
     }
   }
 
+  // ---- mods ----------------------------------------------------------------
+
+  /// The stage step of an operation (design D7): acquires what is missing
+  /// (and the newest of [refresh] or [refreshAll]), stages the mods, places
+  /// their keys, then runs `onModsStaged`, whose file edits it returns for the
+  /// operation's one config pass. A plugin without mods has no step. With
+  /// [place] false the instance runs: the versions are acquired and recorded
+  /// but nothing is staged, and no hook runs.
+  Future<List<FileEdit>> _stageMods(
+    OperationContext ctx,
+    InstanceRecord record,
+    LoadedPlugin plugin, {
+    required String step,
+    Set<String> refresh = const {},
+    bool refreshAll = false,
+    bool place = true,
+  }) async {
+    if (plugin.manifest.mods == null) return const [];
+    return ctx.step(step, () async {
+      await _manager.modsService.stage(
+        ctx,
+        record,
+        plugin,
+        refresh: refresh,
+        refreshAll: refreshAll,
+        place: place,
+      );
+      if (!place) return const <FileEdit>[];
+      final hook = await _hook(ctx, record, plugin, HookPoint.onModsStaged);
+      return hook.files;
+    });
+  }
+
+  /// `ApplyMods`: stages the mods of a stopped instance, then one config pass
+  /// with the bindings and the hook's edits.
+  Future<void> applyMods(OperationContext ctx, String id) async {
+    final record = _manager.recordForOperation(id);
+    _manager.checkAllowed(record, OperationKind.applyMods, execution: true);
+    final plugin = _manager.requirePlugin(record);
+    final edits = await _stageMods(ctx, record, plugin, step: 'stage_mods');
+    await _modsConfigPass(ctx, record, plugin, edits);
+  }
+
+  /// `UpdateMods`: acquires the newest versions of [items] (every mod with an
+  /// update available when empty). A stopped instance is staged at once; a
+  /// running one links them at its next start.
+  Future<void> updateMods(
+    OperationContext ctx,
+    String id,
+    List<String> items,
+  ) async {
+    final record = _manager.recordForOperation(id);
+    _manager.checkAllowed(record, OperationKind.updateMods, execution: true);
+    final plugin = _manager.requirePlugin(record);
+    final targets = _manager.modsService.updateTargets(record, items);
+    final place = record.state == InstanceState.stopped;
+    final edits = await _stageMods(
+      ctx,
+      record,
+      plugin,
+      step: 'update_mods',
+      refresh: targets,
+      place: place,
+    );
+    if (place) await _modsConfigPass(ctx, record, plugin, edits);
+  }
+
+  Future<void> _modsConfigPass(
+    OperationContext ctx,
+    InstanceRecord record,
+    LoadedPlugin plugin,
+    List<FileEdit> edits,
+  ) => ctx.step(
+    'apply_config',
+    () => _applyConfig(ctx, record, plugin, edits, bind: true),
+  );
+
   SnapshotRequest _snapshotRequest(
     InstanceRecord record,
     LoadedPlugin plugin,
@@ -462,6 +593,7 @@ class Lifecycle {
       _launchContext(record, plugin.manifest),
     ),
     reason: reason,
+    recorded: _manager.recordedJunctions(record),
   );
 
   /// An update, validate or restart that ends with the server stopped clears
@@ -498,12 +630,21 @@ class Lifecycle {
       var extraArgs = const <String>[];
       var env = const <String, String>{};
       var edits = const <FileEdit>[];
+      // The mods are staged before the bindings; the hook's edits join the
+      // one config pass below (design D9).
+      final modEdits = await _stageMods(
+        ctx,
+        record,
+        plugin,
+        step: 'stage_mods',
+      );
       await ctx.step('hook:onPreStart', () async {
         final hook = await _hook(ctx, record, plugin, HookPoint.onPreStart);
         extraArgs = hook.args ?? const [];
         env = hook.env ?? const {};
         edits = hook.files;
       });
+      edits = [...modEdits, ...edits];
       // One pass writes the bindings and the hook's edits, so a file is read
       // and written once and the whole pass is undone if one file fails.
       if (manifest.bindings.isNotEmpty || edits.isNotEmpty) {
@@ -905,6 +1046,7 @@ class Lifecycle {
             _launchContext(record, manifest),
           ),
           snapshotId: snapshotId,
+          recorded: _manager.recordedJunctions(record),
         ),
         onStep: ctx.beginStep,
         checkCancelled: ctx.cancel.throwIfCancelled,

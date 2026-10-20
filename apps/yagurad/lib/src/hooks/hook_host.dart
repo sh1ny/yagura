@@ -125,6 +125,7 @@ class HookHost {
         source: invocation.source,
         contextJson: contextJson,
         rootPath: invocation.root.root,
+        recorded: invocation.root.recordedPaths,
         deadline: invocation.deadline,
       ),
       cancel,

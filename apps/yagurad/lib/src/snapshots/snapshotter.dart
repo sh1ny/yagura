@@ -6,6 +6,7 @@ class SnapshotRequest {
     required this.instanceDirectory,
     required this.dataPaths,
     required this.reason,
+    this.recorded = const {},
   });
 
   final String instanceId;
@@ -14,6 +15,10 @@ class SnapshotRequest {
 
   /// Absolute data paths, resolved inside the instance directory.
   final List<String> dataPaths;
+
+  /// The instance's recorded mod junctions (design D7): the walk skips them
+  /// instead of failing at them.
+  final Map<String, String> recorded;
 
   /// `pre_update`, `pre_delete` or `pre_restore`.
   final String reason;
@@ -49,6 +54,7 @@ class RestoreRequest {
     required this.instanceDirectory,
     required this.dataPaths,
     required this.snapshotId,
+    this.recorded = const {},
   });
 
   final String instanceId;
@@ -58,6 +64,10 @@ class RestoreRequest {
   /// The plugin's current data paths, which the `pre_restore` snapshot
   /// copies.
   final List<String> dataPaths;
+
+  /// The instance's recorded mod junctions (design D7): the walk skips them
+  /// instead of failing at them.
+  final Map<String, String> recorded;
   final String snapshotId;
 }
 

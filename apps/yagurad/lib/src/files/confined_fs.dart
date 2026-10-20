@@ -204,6 +204,10 @@ class ConfinedFs {
   final ConfinedBackend _backend;
   final Map<String, String> _recordedPaths;
 
+  /// The recorded junctions this instance was opened with, so a worker in
+  /// another isolate can open its own with the same map.
+  Map<String, String> get recordedPaths => _recordedPaths;
+
   late final List<_Recorded> _recorded = [
     for (final MapEntry(:key, :value) in _recordedPaths.entries)
       _Recorded(parse(key), value),
