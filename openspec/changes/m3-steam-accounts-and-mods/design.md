@@ -33,7 +33,7 @@ What M1 and M2 left in place:
 
 Unverified assumptions, each closed by a task:
 
-- **(A1)** With stdin on NUL, SteamCMD exits or stops on a Steam Guard request with output that tells email, authenticator and mobile approval apart. `+login <user> <pass> <code>` completes a login. A mobile approval completes within the same run without input. After a login run, no file under the account installation (SteamCMD's `logs/` and `config/`, `config.vdf` aside) holds the password in clear. With the cached login expired and no password passed, `+login <user>` with stdin on NUL ends or prints a recognisable password request instead of looping. Closed by spike task 1.1 with a test account run by the user, which records each behaviour and scans the installation's files. If a run keeps waiting on stdin, the daemon kills it as soon as a prompt or password-request pattern matches (D2 works either way). If SteamCMD's files carry the password, D3's fallback applies.
+- **(A1)** With stdin on NUL, SteamCMD exits or stops on a Steam Guard request with output that tells email, authenticator and mobile approval apart. `+login <user> <pass> <code>` completes a login. A mobile approval completes within the same run without input. After a login run, no file under the account installation (SteamCMD's `logs/` and `config/`, `config.vdf` aside) holds the password in clear. With the cached login expired and no password passed, `+login <user>` with stdin on NUL ends or prints a recognisable password request instead of looping. Closed by spike task 1.1 with a test account run by the user, which records each behaviour and scans the installation's files. If a run keeps waiting on stdin, the daemon kills it as soon as a prompt or password-request pattern matches (D2 works either way). If SteamCMD's files carry the password, D3's fallback applies. **Spike result (`docs/spikes/m3-steam-guard.md`):** holds, with two corrections. First, SteamCMD writes its console output to a pipe only when it exits, in login runs and in download runs alike (a 65 s, 2.1 GB install gave every progress line at its exit). A waiting run therefore shows nothing on stdout, and no pattern can match while a run lives: the "kill as soon as a pattern matches" fallback above cannot apply, and a run that waits silently is bounded by D2 "Silent run". SteamCMD's `logs/connection_log.txt` and `logs/console_log.txt` are written live (D15): the first prints `Waiting for confirmation` every 5 s during a mobile approval (D2 "Mobile approval"), the second is a timestamped copy of stdout with the download progress (D15, stall timer). Second, an email code took over 10 minutes to arrive, and a code from an earlier attempt's email still completed a later login (D2 "Code kinds": 15 minutes).
 - **(A2)** A DayZ server started under the relay saves and exits on Ctrl+C. If not, the plugin uses `kill` after the grace period (DayZ persists continuously) and records that in the milestone notes (task 10.3).
 - **(A3)** BattlEye and the DayZ server load mods through junctions in the server folder. This is the backlog's open risk. If they do not, `copy_fallback: true` is the plugin's documented fallback (task 10.3).
 
@@ -49,10 +49,11 @@ Unverified assumptions, each closed by a task:
 
 ### D2: Steam Guard is an operation prompt raised between SteamCMD runs
 
-- **Choice:** The login step runs `+login <user> <pass> +quit` in the account's installation. A versioned pattern group `login` (added to `steam/patterns.yaml` by the spike) classifies the output as `ok`, `guard_email`, `guard_authenticator`, `guard_mobile`, `login_invalid` (`steam_login_invalid`), `rate_limited` (`steam_rate_limited`) or `reauth_needed` (`steam_reauth_required`, also matched by a password request when no password was passed). When a run is still alive after a `guard_*` pattern matched, it is killed for the code kinds (A1).
-  - **Code kinds.** A `PromptBroker` (one per daemon) creates `Prompt{id, kind, message, steam_account, expires_at = now + 5 min}` and attaches it to the operation. The operation moves to `waiting_for_input`, and the event goes to the operation's watchers and to `WatchPrompts` (D13). `RespondToPrompt(operation_id, prompt_id, code)` resolves it compare-and-set: the first valid answer wins. Later answers fail `FAILED_PRECONDITION` reason `prompt_resolved`, and every watcher gets `PromptResolved{by_device_id, outcome}`. The step then runs `+login <user> <pass> <code> +quit` once. A rejection is `steam_guard_invalid`. No answer within the expiry is `steam_guard_timeout`. A cancel resolves the prompt with outcome `cancelled`.
-  - **Mobile approval.** The prompt has no answer field. The run stays alive, and the step waits for the `ok` pattern for up to 2 minutes, then kills the run (`steam_guard_timeout`).
-  - **Timing.** The waits sit between runs (code kinds) or inside the login step's 10-minute cap (architecture Resource bounds), so they never meet the 15-minute download stall timer. Account operations take the installation lock but no heavy slot. A prompt raised inside an instance install, update or mod download run (remembered password, expired cache) waits inside that run's installation lock and heavy slot, so it holds one of the 4 host slots for at most 5 minutes. That bound is accepted.
+- **Choice:** The login step runs `+login <user> <pass> +quit` in the account's installation. A versioned pattern group `login` (added to `steam/patterns.yaml` by the spike) classifies the output as `ok`, `guard_email`, `guard_authenticator`, `guard_mobile`, `login_invalid` (`steam_login_invalid`), `rate_limited` (`steam_rate_limited`) or `reauth_needed` (`steam_reauth_required`, also matched by a password request when no password was passed), plus `guard_invalid` (`steam_guard_invalid`) for a rejected code. The classification reads the run's stdout after the run exits (A1): in the spike, runs that ask for a code exit on their own within 5 s. The outcomes are tried in table order and the first that any line matches wins: the failures first, then `ok`, then the guard kinds. So an `ok` line after a `guard_*` line (a mobile approval or a code that came through in the same run) means the run logged in.
+  - **Code kinds.** A `PromptBroker` (one per daemon) creates `Prompt{id, kind, message, steam_account, expires_at = now + 15 min}` and attaches it to the operation. The operation moves to `waiting_for_input`, and the event goes to the operation's watchers and to `WatchPrompts` (D13). `RespondToPrompt(operation_id, prompt_id, code)` resolves it compare-and-set: the first valid answer wins. Later answers fail `FAILED_PRECONDITION` reason `prompt_resolved`, and every watcher gets `PromptResolved{by_device_id, outcome}`. The step then runs `+login <user> <pass> <code> +quit` once. A rejection is `steam_guard_invalid`. No answer within the expiry is `steam_guard_timeout`. A cancel resolves the prompt with outcome `cancelled`.
+  - **Mobile approval.** SteamCMD writes its stdout to a pipe only at exit, so a run waiting for the approval prints nothing there. While a login run lives, the step follows the installation's `logs/connection_log.txt` with the D15 log follower. The first line matching the versioned `login.live.guard_mobile` pattern (`Waiting for confirmation` in build 1791918946) raises the prompt, which has no answer field and expires 2 minutes later. The run stays alive; the step waits for the run to end with the `ok` pattern on stdout, and kills it at the expiry (`steam_guard_timeout`). The log is only a live signal: the classification of the run still comes from its stdout at exit.
+  - **Silent run.** A login run that has neither exited nor raised a prompt within 60 s, counted from its start and restarted by every new `console_log.txt` line (a self-update inside the run keeps writing there), is killed and fails `steam_login_unresponsive`, with the last scrubbed lines of `console_log.txt` in the message (the held-back stdout is lost with the kill). This covers changed log wording, a log the follower cannot read, and a run that waits on stdin instead of exiting (an authenticator code, not seen in the spike). In the spike every login run exited or printed its mobile wait within 5 s; the 60 s bound holds a heavy slot at most that long.
+  - **Timing.** The waits sit between runs (code kinds) or inside the login step's 10-minute cap (architecture Resource bounds), so they never meet the 15-minute download stall timer. Account operations take the installation lock but no heavy slot. A prompt raised inside an instance install, update or mod download run (remembered password, expired cache) waits inside that run's installation lock and heavy slot, so it holds one of the 4 host slots for at most 15 minutes. That bound is accepted.
   - **Instance operations.** Install, update and mod downloads with an expired cached login use the same step when the password is remembered. Without one they fail `steam_reauth_required` and set the account `reauth_required`.
   - **Prompts in pipeline runs.** A mod download run belongs to the mod pipeline (D6), not to one operation. A prompt it raises has one prompt id, which is attached to every operation waiting on the run and published once on `WatchPrompts`. `RespondToPrompt` accepts that id with any of those operation ids, compare-and-set as above. A waiter that is cancelled only detaches. The prompt resolves `cancelled` only when the run itself is cancelled, which happens when its last waiter detaches.
 - **Rejected:** driving SteamCMD's own interactive prompt over stdin. ADR 0014 rejected it: prompt timing and buffering differ by platform and version.
@@ -86,6 +87,7 @@ Unverified assumptions, each closed by a task:
   - **Download.** Through SteamCMD in the instance's account installation (anonymous when none is linked): one run per acquisition batch, with one `+workshop_download_item 221100 <id>` per owned item (D6). SteamCMD writes `<install>/steamapps/workshop/content/<app>/<item>/` as `yagura-steam`.
   - **Version.** The version is the `time_updated` read right before the run. After the run the metadata is read again: a changed value downloads once more (SteamCMD fetches the delta) and publishes under the new value. A second change fails the item with `workshop_item_changing`.
   - **Publish.** Per ADR 0014: a no-follow copy into `content/.staging/<run-id>/<item>/` that refuses any reparse point, then a rename to `content/steam_workshop/<app>/<item>/<version>/`. SteamCMD's tree stays as the download cache, so updates are deltas. Its size counts in the disk check.
+  - **Progress.** Download progress, for workshop runs as for app installs, comes from `logs/console_log.txt` through the D15 log follower, not from stdout (A1).
 - **Rejected:** parsing SteamCMD's workshop output or `appworkshop_<app>.acf` for versions. The output does not report `time_updated` reliably, and the ACF needs a VDF reader, which arrives in M4.
 - **Reversal cost:** low.
 
@@ -198,6 +200,17 @@ Unverified assumptions, each closed by a task:
 - **Rejected:** updating automatically when the timer sees a new version. That restarts servers unattended, and the architecture keeps timed restarts out of v1 scope.
 - **Reversal cost:** low.
 
+### D15: SteamCMD's live signals come from its log files, read by a bounded follower
+
+- **Context:** SteamCMD writes stdout to a pipe only at exit (A1, spike finding 3). Today's stall timer reads stdout only (`steamcmd_service.dart:424-462`), so any download longer than 15 minutes is killed as `steam_stalled`. That is an M2 defect, fixed here because workshop runs and DayZ installs exceed 15 minutes.
+- **Choice:** A `SteamLogFollower` follows one log file of an installation for one run:
+  - **Start.** The file's size and file id (volume serial and file index) are read before the process starts. A missing file starts at offset 0 when it appears, and means "no signal yet" until then.
+  - **Read.** Every 250 ms, and once more after the run exits: a no-follow open through the installation's `ConfinedFs` with full sharing, so SteamCMD's writes and renames are never blocked. At most 64 KiB is read per poll; the rest waits for the next poll. A size below the offset or a changed file id (rotation or truncation) restarts the read at offset 0 of the new file.
+  - **Lines.** Split on LF, with CR stripped. A line over 4 KiB is cut to 4 KiB and the rest of it, up to the next LF, is dropped, so the partial line carried between polls is at most 4 KiB. `console_log.txt` lines lose their `[YYYY-MM-DD hh:mm:ss] ` prefix. Every line goes through the run's Scrubber (D3), then through the patterns, and is dropped: lines are never stored or logged. The last 5 scrubbed lines stay in memory for a failure message (`steam_stalled`, `steam_login_unresponsive`).
+  - **Uses.** Every SteamCMD run follows `console_log.txt`: its progress lines (the existing `progress` pattern) give the operation's progress and reset the 15-minute stall timer. A login run also follows `connection_log.txt` for the mobile prompt (D2). The outcome of every run is still classified from stdout at exit.
+- **Rejected:** running SteamCMD under a pseudo-console so that it flushes stdout per line. Its behaviour there is untested, and ADR 0014 keeps SteamCMD non-interactive. Also rejected: watching the download directory's size, which says nothing about a stalled verify or commit step.
+- **Reversal cost:** low (inside the SteamCMD service).
+
 ## Diagrams (FULL)
 
 ### T1 Components added or changed in M3
@@ -210,6 +223,7 @@ flowchart LR
     OAPI[Operations API] --> PB[Prompt broker]
     ACC --> PB
     ACC --> SC[SteamCMD service<br/>one install per account]
+    SC --> LF[Log follower<br/>console_log, connection_log]
     MP --> WM[Workshop metadata client]
     MP --> SC
     MP --> CS[(Content store)]
@@ -269,8 +283,8 @@ sequenceDiagram
   participant S as SteamCMD
   C1->>A: AddAccount(user, pass)
   A->>S: +login user pass +quit
-  S-->>A: guard_authenticator (killed if still alive)
-  A->>B: raise prompt (5 min)
+  S-->>A: guard_authenticator (run exited)
+  A->>B: raise prompt (15 min)
   B-->>C1: prompt (WatchOperation, WatchPrompts)
   B-->>C2: prompt (WatchPrompts)
   C2->>B: RespondToPrompt(code)
@@ -341,6 +355,8 @@ flowchart LR
 | Component | Fails / dies mid-operation → | Recovery | Retry safe? | Who finds out |
 |---|---|---|---|---|
 | Account login | Wrong password, Guard rejected or timed out, rate limit | Account not saved (add) or stays `reauth_required` (reauth); password dropped | Yes | Client operation error with reason |
+| Account login | Run neither exits, raises a prompt nor writes `console_log.txt` for 60 s (changed wording, unreadable log, a wait on stdin) | Run killed; `steam_login_unresponsive` with the last scrubbed `console_log.txt` lines; account not saved or stays `reauth_required` | Yes | Client operation error with reason |
+| SteamCMD log follower | Log missing, rotated, truncated or unreadable | Missing: no signal yet; rotated or truncated: read again from offset 0; unreadable: no signal, so the stall timer (downloads) or the 60 s silent-run bound (logins) ends the run | Yes | Client operation error (`steam_stalled`, `steam_login_unresponsive`) |
 | Account add | Daemon restarts during `AddAccount` | Startup deletes the `adding` row, its `steam:<id>` secret and its installation (no-follow) | Yes | Client: operation `interrupted`; account absent from `ListAccounts` |
 | Prompt broker | Daemon restarts while a prompt is pending | Operation `interrupted` at startup; no account saved | Yes | Client: the operation ends `interrupted`, and the `WatchPrompts` snapshot after reconnect no longer lists the prompt, so the dialog closes |
 | Workshop metadata | HTTP error or timeout | Item or check fails; flags kept; check retried with backoff | Yes | Client: mod `failed`/check `unknown` |
@@ -359,12 +375,14 @@ flowchart LR
 | Queue / buffer / cache / transfer | Bound | At the bound | Timeout | At 10x / 100x |
 |---|---|---|---|---|
 | Workshop metadata | 100 items/request, 1 request/s per daemon | Batched and paced | 15 s per request | 1,000 items = 10 requests (10 s); 10,000 = 100 s, acceptable for a 6 h check |
-| SteamCMD workshop run | Keys no other run has, one run per installation at a time, owned by the mod pipeline | Others queue on the installation lock | 15 min without progress, 12 h total (existing) | 120 mods in one run; progress is per item, so the stall timer stays valid |
+| SteamCMD workshop run | Keys no other run has, one run per installation at a time, owned by the mod pipeline | Others queue on the installation lock | 15 min without progress in `console_log.txt` (D15), 12 h total (existing) | 120 mods in one run; progress is per item, so the stall timer stays valid |
 | Mods per instance | 256 | `SetMods` fails `INVALID_ARGUMENT` reason `too_many_mods` | — | Message size stays far under 4 MiB |
 | Content store disk | Free ≥ 2× reported size per batch, SteamCMD tree counted | `insufficient_disk` before download | — | GBs per version; GC after 7 days unreferenced |
 | Steam accounts | 32 per daemon, `adding` rows included | `RESOURCE_EXHAUSTED` reason `too_many_accounts` | — | One SteamCMD install each (~300 MB) |
 | Account operation queue | 10 per account (runner rule) | `queue_full` | — | — |
-| Pending prompts | 1 per operation | A second raise on the same step fails the operation (bug guard) | 5 min codes, 2 min mobile | — |
+| Pending prompts | 1 per operation | A second raise on the same step fails the operation (bug guard) | 15 min codes, 2 min mobile | — |
+| SteamCMD log follower (D15) | Per poll: 64 KiB read, lines cut at 4 KiB, partial line carried ≤ 4 KiB; 5 scrubbed lines kept; 2 files per login run, 1 per other run | The rest is read on the next poll | Poll every 250 ms for the run's life | A 2 GB install writes ~30 progress lines a minute, far below 64 KiB per poll |
+| Silent login run | 60 s without exit, prompt or a new `console_log.txt` line | Killed, `steam_login_unresponsive` | 60 s | — |
 | `RespondToPrompt` code | 16 characters, `[A-Za-z0-9]` | `INVALID_ARGUMENT` reason `prompt_answer_invalid` | — | — |
 | `WatchPrompts` subscribers | 32 per daemon; 256 events behind | Refused / `resync_required` + snapshot | — | — |
 | Bound files per instance | 64 distinct files; each ≤ 16 MiB (existing cap) | Plugin rejected at load / `file_too_large` | Lock retry 5 s | — |

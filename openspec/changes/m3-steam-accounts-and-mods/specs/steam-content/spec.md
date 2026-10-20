@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: Adding a Steam account with Steam Guard
-Adding an account SHALL log in once with username and password in the account's own SteamCMD installation. If Steam asks for an email or authenticator code, the operation SHALL wait for input with a prompt of kind `email` or `authenticator` for up to 5 minutes and retry the login once with the submitted code; for kind `mobile_approval` it SHALL wait up to 2 minutes for the approval.
+Adding an account SHALL log in once with username and password in the account's own SteamCMD installation. If Steam asks for an email or authenticator code, the operation SHALL wait for input with a prompt of kind `email` or `authenticator` for up to 15 minutes and retry the login once with the submitted code; for kind `mobile_approval` it SHALL wait up to 2 minutes for the approval.
 
 #### Scenario: Email code relayed
 - **WHEN** an admin adds account `srvadmin` and Steam requests an email code
@@ -14,7 +14,7 @@ Adding an account SHALL log in once with username and password in the account's 
 - **THEN** the operation fails with `steam_guard_invalid`, the account is not saved, and the password is discarded
 
 #### Scenario: No code submitted in time
-- **WHEN** no code arrives within 5 minutes
+- **WHEN** no code arrives within 15 minutes
 - **THEN** the operation fails with `steam_guard_timeout` and no account is saved
 
 #### Scenario: Mobile approval not given
@@ -24,6 +24,10 @@ Adding an account SHALL log in once with username and password in the account's 
 #### Scenario: Wrong password
 - **WHEN** Steam rejects the username or password
 - **THEN** the operation fails with `steam_login_invalid` without raising a prompt, and no account is saved
+
+#### Scenario: SteamCMD does not respond
+- **WHEN** the login run neither ends, asks for a code or an approval, nor writes to its SteamCMD log for 60 seconds
+- **THEN** the SteamCMD run is terminated, the operation fails with `steam_login_unresponsive`, and no account is saved
 
 #### Scenario: Daemon restarted while adding
 - **WHEN** the daemon restarts while an `AddAccount` operation waits for a Steam Guard code
@@ -124,3 +128,22 @@ The daemon SHALL download and bootstrap SteamCMD on first need into its data dir
 #### Scenario: SteamCMD download fails
 - **WHEN** the SteamCMD archive cannot be downloaded
 - **THEN** the operation fails with `steamcmd_unavailable` and the HTTP status or network error, and no partial SteamCMD directory is left marked as ready
+
+### Requirement: SteamCMD runs are bounded and cleaned up
+A SteamCMD step SHALL fail after 15 minutes without download progress or 12 hours in total. Download progress SHALL be read while SteamCMD runs, from its own log, because SteamCMD reports its console output to the daemon only when it exits. SteamCMD processes SHALL end when the daemon ends, and at startup the daemon SHALL terminate any SteamCMD process running from its SteamCMD directories before accepting operations. If one cannot be terminated, that installation is unavailable: operations that need it fail with `steamcmd_unavailable` and start no SteamCMD process until a sweep, retried every 60 s, succeeds.
+
+#### Scenario: Stalled download
+- **WHEN** SteamCMD reports no download progress for 15 minutes
+- **THEN** it is terminated and the operation fails with `steam_stalled` and the last progress values
+
+#### Scenario: Long download that keeps progressing
+- **WHEN** a download runs for longer than 15 minutes, its console output held back until exit, while its log reports progress every few seconds
+- **THEN** it is not terminated, the operation's progress follows the log, and the operation succeeds when SteamCMD exits successfully
+
+#### Scenario: Stray SteamCMD after a crash
+- **WHEN** the daemon starts and a SteamCMD process from its directories is still running
+- **THEN** that process is terminated before the API listener opens, and the termination is logged
+
+#### Scenario: Stray SteamCMD cannot be terminated
+- **WHEN** the startup sweep cannot terminate a SteamCMD process running from the anonymous installation
+- **THEN** the API listener still opens with a notice, installs fail with `steamcmd_unavailable` without starting another SteamCMD, and installs run again once a retried sweep succeeds

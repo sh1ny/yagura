@@ -69,6 +69,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | steam-content → Adding a Steam account with Steam Guard | No code submitted in time | apps/yagurad/test/steam/adding_a_steam_account_with_steam_guard_test.dart | no_code_submitted_in_time | 5 | red |
 | steam-content → Adding a Steam account with Steam Guard | Mobile approval not given | apps/yagurad/test/steam/adding_a_steam_account_with_steam_guard_test.dart | mobile_approval_not_given | 5 | red |
 | steam-content → Adding a Steam account with Steam Guard | Wrong password | apps/yagurad/test/steam/adding_a_steam_account_with_steam_guard_test.dart | wrong_password | 5 | red |
+| steam-content → Adding a Steam account with Steam Guard | SteamCMD does not respond | apps/yagurad/test/steam/adding_a_steam_account_with_steam_guard_test.dart | steamcmd_does_not_respond | 5 | red |
 | steam-content → Adding a Steam account with Steam Guard | Daemon restarted while adding | apps/yagurad/test/steam/adding_a_steam_account_with_steam_guard_test.dart | daemon_restarted_while_adding | 5 | red |
 | steam-content → Adding a Steam account with Steam Guard | Account already added | apps/yagurad/test/steam/adding_a_steam_account_with_steam_guard_test.dart | account_already_added | 5 | red |
 | steam-content → Credential retention is the admin's choice | Password not remembered and cache valid | apps/yagurad/test/steam/credential_retention_is_the_admin_s_choice_test.dart | password_not_remembered_and_cache_valid | 5 | red |
@@ -93,6 +94,10 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | mod-management → Shared, versioned, immutable content store | Removing a mod from one instance | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | removing_a_mod_from_one_instance | 6 | red |
 | mod-management → Shared, versioned, immutable content store | Unreferenced version collected | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | unreferenced_version_collected | 6 | red |
 | mod-management → Shared, versioned, immutable content store | Not enough disk for a mod | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | not_enough_disk_for_a_mod | 6 | red |
+| steam-content → SteamCMD runs are bounded and cleaned up | Stalled download | apps/yagurad/test/steam/steamcmd_runs_are_bounded_and_cleaned_up_test.dart | stalled_download | 5 | green |
+| steam-content → SteamCMD runs are bounded and cleaned up | Long download that keeps progressing | apps/yagurad/test/steam/steamcmd_runs_are_bounded_and_cleaned_up_test.dart | long_download_that_keeps_progressing | 5 | red |
+| steam-content → SteamCMD runs are bounded and cleaned up | Stray SteamCMD after a crash | apps/yagurad/test/steam/steamcmd_runs_are_bounded_and_cleaned_up_test.dart | stray_steamcmd_after_a_crash | 5 | green |
+| steam-content → SteamCMD runs are bounded and cleaned up | Stray SteamCMD cannot be terminated | apps/yagurad/test/steam/steamcmd_runs_are_bounded_and_cleaned_up_test.dart | stray_steamcmd_cannot_be_terminated | 5 | green |
 | steam-content → Workshop downloads | Workshop item downloaded | apps/yagurad/test/steam/workshop_downloads_test.dart | workshop_item_downloaded | 6 | red |
 | steam-content → Workshop downloads | Item removed from the workshop | apps/yagurad/test/steam/workshop_downloads_test.dart | item_removed_from_the_workshop | 6 | red |
 | daemon-protocol → Instance state and event stream | Snapshot then deltas | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | snapshot_then_deltas | 7 | green |
@@ -174,7 +179,8 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 - [ ] 1.2 Extend `test/fixtures/fake_steamcmd/fake_steamcmd.dart`:
   - `+workshop_download_item <app> <item>` writing into `steamapps/workshop/content/<app>/<item>/`;
   - login transcripts from the spike (each Guard kind, wrong password, rate limit, expired cache, a mobile approval that arrives after a delay or never);
-  - an echo of the command line, and a log file under the installation's `logs/` when the spike shows SteamCMD writes one.
+  - an echo of the command line;
+  - SteamCMD's output timing from the spike: stdout held back until exit (banner lines aside), `logs/console_log.txt` (timestamped copy of stdout, progress lines) and `logs/connection_log.txt` (`Waiting for confirmation` every 5 s during a mobile approval) written live; a log rotated or truncated at start; and a silent run that neither exits nor writes (design D15, D2 "Silent run").
 
   Add a fake Steam Web API server (`test/fixtures/fake_workshop_api.dart`) for `GetPublishedFileDetails`, with per-item results, `time_updated`, private or missing items, delays and failures. Verify: each fixture has a self-test under `test/fixtures/` that passes.
 - [x] 1.3 Write the failing tests for this group's red rows (`default_layout_created`, `content_store_protected`), and `test/host/migration_7_test.dart`, which follows `migration_4_test.dart`. Verify: they fail because `content/` and the migration 7 tables are missing.
@@ -224,8 +230,9 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
   - account login in instance installs and updates.
 
   Verify: the account and login-mode rows pass.
-- [ ] 5.3 Implement D2 and D13: the login step and the `login` patterns; `PromptBroker`, with compare-and-set answers, the 5-minute code and 2-minute mobile-approval waits, and `waiting_for_input`; `RespondToPrompt` (`prompt_resolved`, `prompt_answer_invalid`); `Operations.WatchPrompts`, with its entry in `security/method_access.dart`, 32 subscribers, 256 events behind and then a resync; the pending prompt in the operation snapshot. Verify: the daemon-protocol rows of this group pass.
+- [ ] 5.3 Implement D2 and D13: the login step and the `login` patterns; `PromptBroker`, with compare-and-set answers, the 15-minute code and 2-minute mobile-approval waits (the mobile prompt raised from `logs/connection_log.txt` through the D15 follower of task 5.5, so 5.5 comes first), the 60 s silent-run bound (`steam_login_unresponsive`), and `waiting_for_input`; `RespondToPrompt` (`prompt_resolved`, `prompt_answer_invalid`); `Operations.WatchPrompts`, with its entry in `security/method_access.dart`, 32 subscribers, 256 events behind and then a resync; the pending prompt in the operation snapshot. Verify: the daemon-protocol rows of this group pass.
 - [ ] 5.4 Implement D3: the Scrubber on every SteamCMD line; `remember_password` stored as secret `steam:<id>` (`secret_store_unavailable`); `steam_reauth_required`; and SteamCMD's file scrub after each login run and at startup, if task 1.1 found the password in its files. Verify: the password rows pass. Flip this group's rows green and re-run its green rows (`anonymous_install`, `first_install_bootstraps_steamcmd`, `steamcmd_download_fails`, and the existing operations-stream rows).
+- [ ] 5.5 Implement D15, before 5.3: `SteamLogFollower` (start size and file id read before the process starts, a no-follow read through the installation's `ConfinedFs` every 250 ms and after exit, 64 KiB per poll, lines cut at 4 KiB, restart at offset 0 on rotation or truncation, a missing file as no signal yet, each line scrubbed and dropped, the last 5 kept for failure messages), with unit tests for each bound. Every SteamCMD run follows `logs/console_log.txt`: its progress lines drive the operation's progress and the 15-minute stall timer in `steamcmd_service.dart` instead of stdout. Verify: the follower tests and `long_download_that_keeps_progressing` pass and are flipped green, and `stalled_download`, `total_time_cap`, `cancel_terminates_steamcmd` and the existing install rows still pass.
 
 ## 6. [M3] Workshop metadata, downloads and content store
 

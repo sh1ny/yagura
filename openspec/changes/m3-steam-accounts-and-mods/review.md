@@ -2,15 +2,230 @@
 
 ## Metadata
 
-- **Round:** 2
-- **Prior round:** 1
-- **Re-check:** amendment re-check. A spec amendment made during apply (task 3.3) voided the round-1 verdict. The amendment aligns the specs with design D9's single config pass: `specs/config-bindings/spec.md` "Bindings map settings to file keys", `specs/plugin-hooks/spec.md` scenario "Mods-staged hook edits a config", and `proposal.md` "Config bindings" (bindings apply on every start in one pass with the start's hook edits, bindings first; `ApplyConfig` stays unimplemented in M3). This round judged three questions only: whether the amendment makes specs, proposal and design consistent, whether it contradicts anything else, and whether dropping `ApplyConfig` from M3 is coherent with the roadmap.
+- **Round:** 5
+- **Prior round:** 4 (re-check of the round-3 Required Changes; approve with changes, R4-M1 outstanding)
+- **Re-check:** re-check of the round-4 Required Change R4-M1 and of the round-4 Suggestions the author applied (R4-S1, R4-S2). It covers those edits only, and checks whether they introduce new contradictions. The edits are:
+  - the `login` outcome order and header comment in `steam/patterns.yaml`, with `patterns.g.dart` regenerated;
+  - the precedence rule in D2 "Choice";
+  - a new test group in `steam_patterns_test.dart`;
+  - the silent-run bound restarted by every new `console_log.txt` line, in D2 "Silent run", the Failure row, the Resource Bounds row and the spec scenario "SteamCMD does not respond";
+  - the sequence-diagram label;
+  - spike finding 3's credit to D15.
 - **Reviewer:** fresh-context subagent (specwright-reviewer, Claude Code)
-- **Reviewed:** `git diff -- openspec/changes/m3-steam-accounts-and-mods`; `proposal.md`; `design.md` (D7 step 5, D9, T3 diagram, ADRs section); `tasks.md`; the delta specs `config-bindings`, `plugin-hooks`, `instance-lifecycle` and `plugin-manifest` (every delta was grepped for `binding`, `onPreStart` and `ApplyConfig`); main specs `plugin-hooks`, `instance-lifecycle` and `plugin-manifest`; `docs/protocol.md` (methods by version); `docs/plugins/hooks.md`; `openspec/roadmap.md` (M3, M4, Later); `openspec/architecture.md` (ADR table); ADR 0004; `openspec/changes/platform-backlog` (working-tree specs, proposal and tasks, grepped for `ApplyConfig`). Source checked: `apps/yagurad/lib/src/api/instances_api.dart:347-350`, `instances/lifecycle.dart:174,244,309-311,401-402`, `proto/yagura/v1/instances.proto:33`, `security/method_access.dart:45`. Skills loaded: none (none named).
+- **Reviewed:**
+  - `apps/yagurad/lib/src/steam/patterns.yaml` (the `login` group and its header comment);
+  - `apps/yagurad/test/steam/steam_patterns_test.dart:77-155`;
+  - `design.md`: A1, D2 "Choice" and "Silent run", the AddAccount sequence diagram, the Failure table and the Resource Bounds table;
+  - `specs/steam-content/spec.md`, the scenario "SteamCMD does not respond";
+  - `docs/spikes/m3-steam-guard.md`: "Output that tells the kinds apart" and findings 1, 3 and 4;
+  - `openspec validate m3-steam-accounts-and-mods --strict`, which reports the change valid.
+
+  I could not run `dart test test/steam` here: `dart` is not on this shell's PATH. The author reports +63, all passing. I checked the new test group by reading it against the table. Skills loaded: none (none named).
 
 <!-- This verdict covers only the contents reviewed. Editing proposal, specs or design afterward (other than applying Required Changes) voids it. -->
 
 ## Findings
+
+### Round 5 (re-check of the round-4 Required Change)
+
+**R4-M1: applied.**
+- In `login.outcomes` in `patterns.yaml`, `reauth_needed`, `rate_limited`, `guard_invalid` and `login_invalid` come first, then `ok`, then `guard_email`, `guard_authenticator` and `guard_mobile`.
+- The header comment states the rule: outcomes are tried in table order, and the first that any line matches wins. Failures come first, so a later `...OK` does not hide one. `ok` comes before the guard kinds, so a code or approval that came through in the same run counts as a login.
+- D2 "Choice" states the same rule in the same order, and adds that an `ok` line after a `guard_*` line means the run logged in. D2 "Mobile approval" ("the run ends with the `ok` pattern on stdout") now agrees with the table.
+- The new test group "login outcomes classify the spike transcripts" reads the embedded table and applies the rule as written: list order first, then any line. It covers six transcripts:
+  - an approved mobile login gives `ok`;
+  - an accepted email code gives `ok`;
+  - a mobile approval never given gives `guard_mobile`;
+  - an email code asked gives `guard_email`;
+  - a cached login gives `ok`;
+  - a missing cached login gives `reauth_needed`.
+
+  The group also checks `live.guard_mobile` against a timestamped `connection_log.txt` line. The transcripts use the spike document's stdout lines.
+- Moving `ok` ahead of the guards does not let a failed guard run pass as `ok`. The `ok` pattern requires `...to Steam Public...OK` on one line. The spike's email-code-asked output ends with `Steam Guard code:ERROR (Account Logon Denied)`, and the test confirms it still gives `guard_email`.
+- A rejected code or password still wins over `ok`, because the failure kinds come first.
+- The never-approved mobile case is a classification only. In the step, that run is killed at the prompt expiry (`steam_guard_timeout`), and D2 still says so.
+
+**R4-S1: applied.** D2 "Silent run" now counts the 60 s from the run's start and restarts it on every new `console_log.txt` line, so a self-update inside the run keeps it alive. The Resource Bounds row ("60 s without exit, prompt or a new `console_log.txt` line"), the Failure row and the spec scenario "SteamCMD does not respond" ("neither ends, asks for a code or an approval, nor writes to its SteamCMD log for 60 seconds") agree with it.
+
+A run that keeps writing to the log but never logs in stays bounded by the login step's 10-minute cap (architecture Resource Bounds). D2 "Timing" already places all login waits inside that cap. Once the mobile prompt is raised, its own 2-minute expiry governs.
+
+One wording difference does not matter: the spec says "its SteamCMD log" and the design names `console_log.txt`. The spec scenario stays at the behaviour level, and the design binds it.
+
+**R4-S2: applied.** The AddAccount sequence diagram now says `guard_authenticator (run exited)`, which matches D2 "Choice" (classification at exit) and "Silent run". Spike finding 3 now says "Design D15 (with D5 "Progress") is added".
+
+**New contradictions:** none found. The A1 sentence "the daemon kills it as soon as a prompt or password-request pattern matches" remains, but the Spike result in the same bullet still says it cannot apply, as accepted in round 4.
+
+#### Critical (blocking)
+
+None.
+
+#### Moderate
+
+None.
+
+#### Suggestions
+
+None.
+
+### Round 4 (re-check of the round-3 Required Changes)
+
+**R3-M1: applied.**
+- The author ran a real anonymous install (app 896660, 2,112,080,121 bytes, exit 0, 65.3 s). Spike finding 3 and the two new Results rows record it: stdout delivered every progress line at the exit, while `logs/console_log.txt` had each one live, one every 2 s.
+- A1 now says the held-back stdout applies to login and download runs alike, so the general statement is backed by evidence instead of narrowed.
+- D15 "Context" names the consequence for the stall timer (`steamcmd_service.dart:424-462` reads stdout only) as an M2 defect fixed here. D15 "Uses" moves progress and the 15-minute stall timer to `console_log.txt` for every run. D5 "Progress" and the Resource Bounds workshop-run row ("15 min without progress in `console_log.txt` (D15)") agree.
+- The MODIFIED requirement "SteamCMD runs are bounded and cleaned up" keeps the main spec's three scenarios unchanged ("Stalled download", "Stray SteamCMD after a crash", "Stray SteamCMD cannot be terminated"). It adds the sentence on reading progress from the log, and the scenario "Long download that keeps progressing", whose THEN can be asserted against the fake.
+- Task 5.5 cites `stalled_download`, `total_time_cap`, `cancel_terminates_steamcmd` and the existing install rows. All of them exist in `steamcmd_runs_are_bounded_and_cleaned_up_test.dart:58-149`.
+- This agrees with ADR 0014's "15 minutes without download progress", and the outcome is still classified from stdout at exit. The rejected alternatives (a pseudo-console, watching directory size) have stated reasons.
+
+**R3-M2: applied.** D15 bounds the follower:
+- 64 KiB per poll;
+- lines cut at 4 KiB, with the rest dropped up to the next LF, so the partial line carried between polls is at most 4 KiB;
+- the last 5 scrubbed lines kept for failure messages.
+
+The new Resource Bounds row repeats those numbers. D15 "Start" reads the size and file id (volume serial and file index) before the process starts. A size below the offset, or a changed file id, restarts at offset 0. A missing file is "no signal yet". The follower opens the file no-follow through the installation's `ConfinedFs` with full sharing. The new Failure row covers a missing, rotated, truncated or unreadable log, and ends each case with a named error. The design does not depend on the follower ever catching up, because the stall timer and the silent-run bound end the run regardless.
+
+**R3-M3: applied in the design, but the new `login` table misclassifies an approved mobile login (R4-M1).**
+- `patterns.yaml` version 3 has `login.live.guard_mobile: 'Waiting for confirmation'`, with `connection_log: 'logs/connection_log.txt'`, and D2 "Mobile approval" cites it.
+- D2 "Silent run" kills a login run that has neither exited nor raised a prompt within 60 s, with `steam_login_unresponsive` and the last scrubbed `console_log.txt` lines. The Failure row, the Resource Bounds row, the spec scenario "SteamCMD does not respond", the test-map row `steamcmd_does_not_respond` and task 5.3 agree with it.
+- The old D2 sentence "killed when still alive after a `guard_*` pattern matched" is gone. The A1 sentence remains, but the Spike result in the same bullet says explicitly that it "cannot apply", which is enough.
+
+**R3-S1: applied.** Task 1.2 now has the fake reproduce:
+- stdout held back until exit (banner lines aside);
+- live `console_log.txt` and `connection_log.txt`;
+- a log rotated or truncated at start;
+- a silent run.
+
+**R3-S2: applied.** D15 "Lines": log lines are scrubbed, matched and dropped, never stored or logged, apart from the 5-line failure tail.
+
+#### Critical (blocking)
+
+None.
+
+#### Moderate
+
+**R4-M1. The `login` outcome order classifies a successful mobile-approval run as `guard_mobile`.**
+The new `login.outcomes` comment in `patterns.yaml` says "the first outcome any line matches wins". `guard_mobile` (`Please confirm the login in the Steam Mobile app`) comes before `ok` in the list.
+
+The spike's approved mobile run printed both lines on stdout ("Mobile approval" under "Output that tells the kinds apart"):
+- `Please confirm the login in the Steam Mobile app on your phone.`
+- `Waiting for confirmation...`
+- `Logging in user '<user>' ... to Steam Public...OK`
+
+Because the whole stdout arrives at exit and is classified then (D2 "Choice"), a mobile login that the admin approved matches `guard_mobile` before `ok`. Reading the rule by line order instead of list order gives the same result, because the `guard_mobile` line comes first. D2 "Mobile approval" expects the step to see "the run end with the `ok` pattern on stdout". Implemented as written, the table would turn every approved phone login into a guard result, and the step would then either raise a second prompt (the Pending prompts bug guard fails the operation) or fail the login. Exit criterion 3 needs an account login, and the spike's mobile account offers phone approval only, so this path is the one the milestone run takes.
+
+The same ordering issue does not affect the email code retry. Its stdout (`Steam Guard code provided.`, then `...OK`) matches neither `guard_email` alternative.
+
+Fix:
+- State the precedence in D2 "Choice". The guard kinds describe a run that did not log in, so either `ok` wins over every `guard_*` kind, or a `guard_*` kind counts only when no `ok` line follows it. The failure kinds (`reauth_needed`, `rate_limited`, `guard_invalid`, `login_invalid`) can keep their "an earlier failure is not hidden" rule.
+- Order or annotate `patterns.yaml` to match, and regenerate `patterns.g.dart`.
+- Add a `steam_patterns_test.dart` case with the spike's approved-mobile transcript, which classifies as `ok`.
+
+#### Suggestions
+
+- **R4-S1. The 60 s silent-run bound does not count SteamCMD's self-update.** Spike finding 4 shows that SteamCMD schedules an "immediate update check" after an unclean shutdown, which is what follows a silent-run or expiry kill. The bootstrap self-update took 10-12 s on the spike machine. When Valve ships a SteamCMD build, the first login run in each account installation downloads it inside the run. On a slow link that can take longer than 60 s, and the run is then killed as `steam_login_unresponsive` while it is visibly working: its update progress is in `console_log.txt`, which D15 already follows. Consider counting new `console_log.txt` lines as liveness, or starting the 60 s at the first `steam_login` step line (`Logging in user`) seen in `console_log.txt`.
+- **R4-S2. Stale wording.**
+  - The AddAccount sequence diagram still says `guard_authenticator (killed if still alive)`. Under D2 "Silent run", a run waiting on stdin is killed by the 60 s bound, not by a pattern match.
+  - Spike finding 3 says "Design D2 and D5 are amended". The stall-timer change is in D15.
+
+#### Round 4 Required Changes (history, applied and re-checked in round 5)
+
+1. **R4-M1.** In D2 "Choice", state the precedence between `ok` and the `guard_*` kinds for a run classified at exit: a run whose stdout has the `ok` line after a `guard_*` line logged in. Make `apps/yagurad/lib/src/steam/patterns.yaml` (`login.outcomes`, order and comment) follow that rule, and regenerate `patterns.g.dart`. Add a `steam_patterns_test.dart` case for the spike's approved-mobile stdout (`Please confirm the login in the Steam Mobile app on your phone.`, `Waiting for confirmation...`, `Logging in user '<user>' ... to Steam Public...OK`) that expects `ok`.
+
+### Round 3 (amendment re-check)
+
+**What holds.**
+- The 15-minute code wait is the same everywhere it appears:
+  - D2 "Code kinds" (`expires_at = now + 15 min`);
+  - D2 "Timing" (a prompt inside an instance run holds a heavy slot for at most 15 minutes);
+  - the AddAccount sequence diagram ("raise prompt (15 min)");
+  - the Resource Bounds "Pending prompts" row ("15 min codes, 2 min mobile");
+  - the steam-content requirement and its "No code submitted in time" scenario;
+  - task 5.3.
+
+  A grep of the change finds no 5-minute prompt bound left. The daemon-protocol and desktop-client deltas carry the expiry as data and name no duration, so they need no edit.
+- The spike supports the 15 minutes: the first email arrived more than 10 minutes after the attempt, and a code from an earlier email still completed a later login. The code wait sits between runs, outside the login step's 10-minute cap (architecture Resource Bounds, "login step 10 min"), and D2 "Timing" says so. ADR 0014 fixes no duration for the code wait and leaves the timeouts to the spike, so the change does not contradict it.
+- The 2-minute mobile bound matches ADR 0014 ("waits for SteamCMD to report approval within 2 minutes"), the spec scenario "Mobile approval not given" and the spike, where approvals came 16-21 s after the start.
+- The stdout finding does not affect the code kinds. Email and expired-cache runs exit at once (exit 5 within 1-5 s, spike Results), so classifying stdout after exit works for them.
+- D2 "Prompts in pipeline runs" and D6 still hold. The log follow is part of the login step, so a mobile prompt inside a pipeline-owned run uses the same single prompt id and waiter rules.
+- Reading the log is confined as described:
+  - `ConfinedFs` opens each path component relative to its parent's handle, with `FILE_OPEN_REPARSE_POINT` (`confined_fs_windows.dart:35-40`). A link that `yagura-steam` plants as `logs` or as `connection_log.txt` is therefore not followed; ADR 0014 line 17 says `yagura-steam` can plant such links.
+  - The open uses share mode 7 (`confined_fs_windows.dart:737`), so the daemon's polling never blocks SteamCMD from writing, renaming or deleting the file.
+  - `readAt(offset, count)` (`confined_fs.dart:52-53`) gives a bounded read at an offset.
+  - Passing each line through the run's Scrubber matches D3 and ADR 0014, and the spike found no password or code in any SteamCMD file in 10 runs.
+
+#### Critical (blocking)
+
+None.
+
+#### Moderate
+
+**R3-M1. The amendment says SteamCMD's stdout reaches the pipe only at exit, for every run, but the existing stall timer depends on the opposite.**
+The amended text makes a general claim:
+- A1: "SteamCMD writes its console output to a pipe only when it exits";
+- D2 "Mobile approval": "SteamCMD writes its stdout to a pipe only at exit".
+
+The spike observed this only for login runs, whose whole output is a few hundred bytes (`docs/spikes/m3-steam-guard.md`, finding 1). It did not run workshop downloads ("Not covered").
+
+The 15-minute no-progress timer reads only stdout lines. `lastProgressAt` moves when a progress line arrives, and the watchdog kills the run with `steam_stalled` (`steamcmd_service.dart:424-462`). The design relies on that timer for long runs:
+- the Resource Bounds row "SteamCMD workshop run": "120 mods in one run; progress is per item, so the stall timer stays valid";
+- D2 "Timing": prompt waits "never meet the 15-minute download stall timer";
+- ADR 0014: "15 minutes without download progress".
+
+Either way, the design has a problem:
+- **If the claim holds for every run,** every install, update or workshop run longer than 15 minutes is killed as `steam_stalled`. That includes the DayZ server install and the 120-mod batch of exit criterion 3.
+- **If it does not** (more likely: block buffering, which flushes once enough output builds up and would explain why M1's 2.1 GB Valheim install passed), the design states something false. An implementer could then rebuild progress tracking or the stall timer on the log file for no reason.
+
+So the design contradicts its own Resource Bounds row, and an implementation mistake is likely in both cases. Narrow the claim in A1 and D2 to what was observed: a login run's output reaches the pipe only when the run exits. Then record whether download progress lines arrive live. The real installs from M1 and M2, or task 10.3's real DayZ run, can show this from line offsets. If they do not arrive live, the design needs another source for the stall timer, for example the growth of `logs/console_log.txt` or `logs/content_log.txt`.
+
+**R3-M2. The log follow has no read bound and no rule for a log that shrinks or is replaced.**
+`logs/connection_log.txt` is written by `yagura-steam`, which ADR 0014 treats as able to plant links and write anything in its installation. D2 says only that the step reads the log "from its size at the run's start ... every 250 ms". Three gaps follow:
+- **No bound.** D2 sets no limit on bytes read per poll, on line length, or on a partial last line kept between polls. A runaway or hostile SteamCMD that writes hundreds of MB to the log makes the daemon read and split all of it in its own process. The other read path, `readBytes` (`confined_fs.dart:304-325`), takes a `maxBytes`. The Resource Bounds table has no row for this follower.
+- **Shrink or replacement.** The spike ran on fresh installations only (`F:\spike\<kind>\steamcmd`), so it never saw what SteamCMD does at startup with a log that has grown. Valve's clients rotate their logs (for example to `*.previous.txt`) or truncate them. If SteamCMD rotates or truncates the file after the daemon records the start size, every read at the old offset returns nothing. The `Waiting for confirmation` line is never seen, and no device gets a mobile prompt. D2 needs a rule: when the size drops below the offset, or the file id changes (`FILE_ID_INFO`, read on the confined handle), restart at offset 0 of the current file. A missing file means "no signal yet", not an error.
+- **Start offset.** D2 should say that the start size is read before the process is created. Otherwise an early `Waiting for confirmation` line can be written below the recorded offset and missed.
+
+The first gap lets a SteamCMD run drive the daemon's memory and CPU without limit. The second and third make a mobile login wait silently with no prompt.
+
+**R3-M3. A login run that stays silent on stdout and in the log has no defined outcome, and the log line is a hard-coded literal rather than a versioned pattern.**
+The mobile prompt's 2-minute expiry starts when the daemon first sees the log line. If the line never comes, only the login step's 10-minute cap ends the run. The line can fail to come in three ways:
+- the log is rotated (R3-M2);
+- a SteamCMD build changes the wording;
+- an authenticator-code run waits for `Two-factor code:` on stdin instead of exiting. The spike did not observe this kind, and with stdout held back, the stdout pattern can match only at exit.
+
+Until the cap kills the run:
+- no prompt reaches any device;
+- an install holds a heavy slot for 10 minutes, not the 2 the spec states;
+- at the kill, the output SteamCMD held back is lost, so classification has nothing to match.
+
+D2 and the Failure table do not say what error the operation then ends with. The spec scenario "Mobile approval not given" (`steam_guard_timeout` after 2 minutes) does not hold for this case.
+
+Separately, ADR 0014 keeps SteamCMD's recognisable output "per SteamCMD version in a table", and task 1.1 adds the `login` group to `steam/patterns.yaml`. D2 still names `Waiting for confirmation` as a literal, so a wording change in a SteamCMD update would need a code change instead of a pattern update.
+
+The design needs:
+- the log signal in the `login` pattern group, for example `guard_mobile_waiting` with source `connection_log`, marked as verified by the spike;
+- a defined outcome for a silent run. A login run that writes neither stdout nor a log signal within a stated bound (for example 2 minutes, the mobile bound) is killed and fails with a named reason: `steam_guard_timeout`, or `steam_unknown_error` with "no output before the kill". Add a test row for it against the fake SteamCMD.
+
+Also correct two sentences:
+- A1: "If a run keeps waiting on stdin, the daemon kills it as soon as a prompt or password-request pattern matches (D2 works either way)";
+- D2 "Choice": "When a run is still alive after a `guard_*` pattern matched, it is killed".
+
+With stdout held until exit, those stdout patterns cannot match while the run lives. Only the log signal or the silent-run bound can end a waiting run.
+
+#### Suggestions
+
+- **R3-S1. Make the fake SteamCMD reproduce the behaviour the amendment relies on.** Task 1.2 says "a log file under the installation's `logs/` when the spike shows SteamCMD writes one", and the spike now shows that it does. Name the behaviours, so the task 5.3 tests exercise the log path and not live stdout:
+  - stdout held until exit on the login transcripts;
+  - `Waiting for confirmation` written to `logs/connection_log.txt` every few seconds;
+  - a log that has already grown and is truncated or rotated at start (R3-M2);
+  - a silent run that writes no line (R3-M3).
+- **R3-S2. Say where the scrubbed log lines go.** D2 passes each log line through the Scrubber but does not say whether the lines reach the operation log, the failure tail, or only the pattern matcher. If they reach the operation log, the client shows the "Waiting for confirmation" lines live, which helps the admin. If they do not, the scrub only guards against a future change. One clause in D2 settles it.
+
+#### Round 3 Required Changes (history, re-checked in round 4)
+
+R3-M1 and R3-M2 are applied. R3-M3 is applied in the design, and the classification order it led to is R4-M1:
+
+1. **R3-M1.** In A1 and D2 "Mobile approval", narrow the stdout statement to what the spike observed: a login run's output reaches the pipe only when the run exits. Record whether download progress lines (`app_update`, `workshop_download_item`) arrive on stdout while the run lives. Use line offsets from an existing real install, or add the check to task 10.3. If they do not arrive live, give the 15-minute stall timer another source, and update the Resource Bounds "SteamCMD workshop run" row to match.
+2. **R3-M2.** In D2 "Mobile approval", bound the log follower: a maximum number of bytes read per poll, a maximum line length (longer lines cut and counted), and a limit on the partial line carried between polls. Add a Resource Bounds row for it. State that the start size is read before the process is created. State that a size below the offset, or a changed file id, restarts the read at offset 0 of the current file, and that a missing file is "no signal yet".
+3. **R3-M3.** Move `Waiting for confirmation` into the `login` pattern group of `steam/patterns.yaml` as a log-sourced pattern, verified by the spike. Define the outcome of a login run that writes neither stdout nor a log signal within a stated bound: the run is killed and fails with a named reason. Add that outcome to the Failure table, and add a test-map row against the fake SteamCMD. Correct the A1 sentence "the daemon kills it as soon as a prompt or password-request pattern matches" and the D2 sentence "When a run is still alive after a `guard_*` pattern matched, it is killed", so that neither relies on stdout patterns matching while the run is alive.
 
 ### Round 2 (amendment re-check)
 
@@ -52,6 +267,13 @@ Park it. Either add the `ApplyConfig` requirement to `platform-backlog` under a 
 
   Neither statement is false under a loose reading, and the scenarios check only step names. But the start-path amendment was made for exactly this ambiguity. Consider "run the plugin's `onPostUpdate` hook, then apply the bindings and its file edits in one pass (step `apply_config`)".
 - **R2-S2. Task 11.2 should name `ApplyConfig` in the M3 protocol row.** Task 11.2 lists what M3 implements, plus "still not `Rcon`". The M2 row of `docs/protocol.md:140` lists `Instances.ImportInstance`, `ExportInstance` and `ApplyConfig` as not implemented. The M3 row should keep `ApplyConfig` in that list, so the document matches the proposal.
+
+#### Round 2 Required Changes (history, all applied)
+
+The round-2 verdict was approve with changes. Both of its Required Changes were applied and re-checked in round 2 (see Rebuttals, round 2):
+
+1. **R2-M1.** Bring ADR 0004's "Bindings apply before `onPreStart`" into line with the amended specs. Record a superseding ADR or an amendment note stating that bindings and hook edits apply in one pass after the hooks return, bindings first, so hooks read bound files as they were before this start's bindings. Update the design's "ADRs: To record during apply" to name it.
+2. **R2-M2.** Give `ApplyConfig` an owner. Either park its requirement in `platform-backlog` (the config-bindings delta, with a task group under a named milestone), or state in the proposal that it is dropped from the roadmap and why.
 
 ### Round 1 (history)
 
@@ -138,8 +360,7 @@ VERDICT: APPROVE_WITH_CHANGES
 
 ## Required Changes
 
-1. **R2-M1.** Bring ADR 0004's "Bindings apply before `onPreStart`" into line with the amended specs. Record a superseding ADR or an amendment note stating that bindings and hook edits apply in one pass after the hooks return, bindings first, so hooks read bound files as they were before this start's bindings. Update the design's "ADRs: To record during apply" to name it.
-2. **R2-M2.** Give `ApplyConfig` an owner. Either park its requirement in `platform-backlog` (the config-bindings delta, with a task group under a named milestone), or state in the proposal that it is dropped from the roadmap and why.
+1. **R4-M1 (applied, re-checked in round 5).** In D2 "Choice", state the precedence between `ok` and the `guard_*` kinds for a run classified at exit: a run whose stdout has the `ok` line after a `guard_*` line logged in. Make `apps/yagurad/lib/src/steam/patterns.yaml` (`login.outcomes`, order and comment) follow that rule, and regenerate `patterns.g.dart`. Add a `steam_patterns_test.dart` case for the spike's approved-mobile stdout that expects `ok`.
 
 <!-- yes (applied, and re-checked by the reviewer - only the reviewer sets it) | no (outstanding) | n/a (any other verdict) -->
 CHANGES_APPLIED: yes
@@ -147,6 +368,34 @@ CHANGES_APPLIED: yes
 ## Rebuttals
 
 <!-- Author: fixed (cite) or rebutted (reason) per finding. A Critical/Moderate rebuttal counts only once marked "accepted by reviewer". -->
+
+### Round 5
+
+None: round 5 raised no findings.
+
+### Round 4
+
+- **R4-M1 fixed.**
+  - `apps/yagurad/lib/src/steam/patterns.yaml`: `ok` sits after the failure kinds and before the guard kinds, the header comment states the order rule, and `patterns.g.dart` is regenerated.
+  - design D2 "Choice": failures, then `ok`, then guards; an `ok` line after a `guard_*` line means the run logged in.
+  - `apps/yagurad/test/steam/steam_patterns_test.dart`: the group "login outcomes classify the spike transcripts" covers six spike transcripts and the `live.guard_mobile` signal. The author reports `dart test test/steam` at +63, all passing.
+- **R4-S1 fixed.** The 60 s silent-run bound restarts on every new `console_log.txt` line: design D2 "Silent run", the Failure row, the Resource Bounds row "Silent login run", and the steam-content scenario "SteamCMD does not respond".
+- **R4-S2 fixed.** The AddAccount sequence diagram says `guard_authenticator (run exited)`, and spike finding 3 credits D15 (with D5 "Progress").
+
+#### Reviewer re-check (round 5)
+
+- **R4-M1: applied.**
+  - The table order, the header comment and D2 "Choice" state one rule. The test group applies that rule to the spike's transcripts, and an approved mobile login now gives `ok`.
+  - Failures still win over `ok`, and an email-code-asked run still gives `guard_email`, because its output has no `...OK` line.
+  - I did not run the tests here (`dart` is not on this shell's PATH). I read the test against the table.
+- **R4-S1: applied.** The design, the Failure row, the bounds row and the spec scenario agree. The login step's 10-minute cap still bounds a run that keeps writing to its log.
+- **R4-S2: applied.**
+
+**Outstanding:** none. R4-M1 is applied and re-checked, and the edits introduce no new contradiction. Changes applied: yes.
+
+### Round 3
+
+- **R3-M1, R3-M2, R3-M3, R3-S1, R3-S2.** The author left no written entries. The edits are listed in the round-4 Metadata, and the round-4 Findings record what the reviewer found applied.
 
 ### Round 2
 
