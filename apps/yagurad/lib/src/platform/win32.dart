@@ -140,6 +140,63 @@ class Win32 {
         int Function(int, int, int)
       >('SetHandleInformation');
 
+  late final int Function(int, Pointer<Uint8>, int, Pointer<Uint32>, Pointer<Void>)
+  writeFile = _kernel
+      .lookupFunction<
+        Int32 Function(
+          IntPtr,
+          Pointer<Uint8>,
+          Uint32,
+          Pointer<Uint32>,
+          Pointer<Void>,
+        ),
+        int Function(int, Pointer<Uint8>, int, Pointer<Uint32>, Pointer<Void>)
+      >('WriteFile');
+
+  late final int Function(Pointer<Void>, int, int, Pointer<IntPtr>)
+  initializeProcThreadAttributeList = _kernel
+      .lookupFunction<
+        Int32 Function(Pointer<Void>, Uint32, Uint32, Pointer<IntPtr>),
+        int Function(Pointer<Void>, int, int, Pointer<IntPtr>)
+      >('InitializeProcThreadAttributeList');
+
+  late final int Function(
+    Pointer<Void>,
+    int,
+    int,
+    Pointer<Void>,
+    int,
+    Pointer<Void>,
+    Pointer<Void>,
+  )
+  updateProcThreadAttribute = _kernel
+      .lookupFunction<
+        Int32 Function(
+          Pointer<Void>,
+          Uint32,
+          IntPtr,
+          Pointer<Void>,
+          IntPtr,
+          Pointer<Void>,
+          Pointer<Void>,
+        ),
+        int Function(
+          Pointer<Void>,
+          int,
+          int,
+          Pointer<Void>,
+          int,
+          Pointer<Void>,
+          Pointer<Void>,
+        )
+      >('UpdateProcThreadAttribute');
+
+  late final void Function(Pointer<Void>) deleteProcThreadAttributeList =
+      _kernel.lookupFunction<
+        Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)
+      >('DeleteProcThreadAttributeList');
+
   late final int Function(
     Pointer<Utf16>,
     int,
@@ -551,6 +608,7 @@ class Win32 {
 
   /// `GENERIC_READ`, `FILE_SHARE_READ | FILE_SHARE_WRITE`, `OPEN_EXISTING`.
   static const genericRead = 0x80000000;
+  static const genericWrite = 0x40000000;
   static const fileShareReadWrite = 0x3;
   static const openExisting = 3;
   static const handleFlagInherit = 1;
@@ -583,6 +641,11 @@ class Win32 {
   /// handles at 80, 88 and 96.
   static const startupInfoSize = 104;
   static const startfUseStdHandles = 0x100;
+
+  /// `STARTUPINFOEXW` (size 112): the attribute list pointer is at 104.
+  static const startupInfoExSize = 112;
+  static const extendedStartupInfoPresent = 0x00080000;
+  static const procThreadAttributeHandleList = 0x00020002;
 
   /// `PROCESS_INFORMATION` (size 24): process handle at 0, thread handle at 8,
   /// process id at 16.

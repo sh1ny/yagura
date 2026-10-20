@@ -56,6 +56,162 @@ class AccountCredentials {
   }
 }
 
+/// The line of standard input every launch carries (design D4): the daemon
+/// writes it to the launcher, and the launcher writes the `secrets` of it to
+/// the relay. Arguments and the environment are readable by other processes,
+/// standard input is not, and no file holds it.
+class LaunchInput {
+  const LaunchInput({this.credentials, this.secrets = const {}});
+
+  /// The account to start the relay as; only the launcher sees it.
+  final AccountCredentials? credentials;
+
+  /// The secret setting values behind the secret launch arguments, by name.
+  final Map<String, String> secrets;
+
+  /// One line of JSON; the credentials are left out when there are none.
+  String encode() => jsonEncode({
+    if (credentials != null) 'account': credentials!.account,
+    if (credentials != null) 'password': credentials!.password,
+    'secrets': secrets,
+  });
+
+  /// What the relay is sent: the secrets alone, never the password.
+  String encodeForRelay() => jsonEncode({'secrets': secrets});
+
+  /// The decoded line, or null when it is missing or malformed.
+  static LaunchInput? decode(String? line) {
+    if (line == null) return null;
+    try {
+      final json = jsonDecode(line);
+      if (json is! Map) return null;
+      final secrets = json['secrets'];
+      if (secrets is! Map ||
+          secrets.values.any((v) => v is! String) ||
+          secrets.keys.any((k) => k is! String)) {
+        return null;
+      }
+      final account = json['account'];
+      final password = json['password'];
+      return LaunchInput(
+        credentials: account is String && password is String
+            ? AccountCredentials(account, password)
+            : null,
+        secrets: {
+          for (final MapEntry(:key, :value) in secrets.entries)
+            key as String: value as String,
+        },
+      );
+    } on FormatException {
+      return null;
+    }
+  }
+}
+
+/// The relay's standard input in the launcher: an anonymous pipe the launcher
+/// fills with the [LaunchInput.secrets] line and closes, and a NUL device for
+/// the relay's other standard handles (the relay owns its own console).
+class _RelayInputPipe {
+  _RelayInputPipe._(this.read, this.write, this.nul);
+
+  /// The pipe holds a whole line without the writer waiting for the relay.
+  static const _capacity = 64 * 1024;
+
+  final int read;
+  int write;
+  final int nul;
+
+  /// The inheritable handles the relay is started with, and no others.
+  List<int> get handles => [read, nul];
+
+  static _RelayInputPipe create(String line) {
+    final win32 = Win32.instance;
+    final bytes = utf8.encode('$line\n');
+    if (bytes.length >= _capacity) {
+      throw StateError('the launch input is larger than the relay pipe');
+    }
+    final readEnd = calloc<IntPtr>();
+    final writeEnd = calloc<IntPtr>();
+    final security = calloc<Uint8>(Win32.securityAttributesSize);
+    final name = 'NUL'.toNativeUtf16();
+    try {
+      (security).cast<Uint32>().value = Win32.securityAttributesSize;
+      (security + 16).cast<Int32>().value = 1;
+      if (win32.createPipe(readEnd, writeEnd, security.cast(), _capacity) ==
+          0) {
+        throw StateError('CreatePipe failed');
+      }
+      // The write end stays with the launcher.
+      win32.setHandleInformation(writeEnd.value, Win32.handleFlagInherit, 0);
+      final nul = win32.createFile(
+        name,
+        Win32.genericRead | Win32.genericWrite,
+        Win32.fileShareReadWrite,
+        security.cast(),
+        Win32.openExisting,
+        0,
+        0,
+      );
+      if (nul == Win32.invalidHandle) {
+        win32
+          ..closeHandle(readEnd.value)
+          ..closeHandle(writeEnd.value);
+        throw StateError('the NUL device could not be opened');
+      }
+      final pipe = _RelayInputPipe._(readEnd.value, writeEnd.value, nul);
+      final buffer = calloc<Uint8>(bytes.length);
+      final written = calloc<Uint32>();
+      try {
+        buffer.asTypedList(bytes.length).setAll(0, bytes);
+        if (win32.writeFile(
+                  pipe.write,
+                  buffer,
+                  bytes.length,
+                  written,
+                  nullptr,
+                ) ==
+                0 ||
+            written.value != bytes.length) {
+          pipe.close();
+          throw StateError('the launch input could not be written');
+        }
+      } finally {
+        calloc
+          ..free(buffer)
+          ..free(written);
+      }
+      // End of input for the relay once it has read the line.
+      win32.closeHandle(pipe.write);
+      pipe.write = 0;
+      return pipe;
+    } finally {
+      calloc
+        ..free(readEnd)
+        ..free(writeEnd)
+        ..free(security)
+        ..free(name);
+    }
+  }
+
+  void close() {
+    final win32 = Win32.instance;
+    if (write != 0) win32.closeHandle(write);
+    win32
+      ..closeHandle(read)
+      ..closeHandle(nul);
+  }
+}
+
+/// Reads the launch input line of standard input, or null when it is missing
+/// or unreadable.
+LaunchInput? readLaunchInput() {
+  try {
+    return LaunchInput.decode(stdin.readLineSync(encoding: utf8));
+  } on IOException {
+    return null;
+  }
+}
+
 /// `yagurad launch --run-dir <dir>` (design D2, ADR 0009): starts the relay in
 /// its own hidden console, outside the daemon's job, prints
 /// `{relay_pid, relay_created}` as one JSON line and exits. The relay is
@@ -66,12 +222,41 @@ Future<int> runLaunchMode(
   String runDirectory,
   StringSink out,
   StringSink err, {
-  AccountCredentials? credentials,
+  required LaunchInput input,
 }) async {
   final self = Platform.resolvedExecutable;
-  if (credentials != null) {
-    return _launchAsAccount(self, runDirectory, credentials, out, err);
+  final credentials = input.credentials;
+  _RelayInputPipe pipe;
+  try {
+    pipe = _RelayInputPipe.create(input.encodeForRelay());
+  } on StateError catch (e) {
+    err.writeln('launch failed: ${e.message}');
+    return helperFailed;
   }
+  try {
+    if (credentials != null) {
+      return await _launchAsAccount(
+        self,
+        runDirectory,
+        credentials,
+        pipe,
+        out,
+        err,
+      );
+    }
+    return _launchConsole(self, runDirectory, pipe, out, err);
+  } finally {
+    pipe.close();
+  }
+}
+
+int _launchConsole(
+  String self,
+  String runDirectory,
+  _RelayInputPipe pipe,
+  StringSink out,
+  StringSink err,
+) {
   try {
     final relay = spawnProcess(
       executable: self,
@@ -81,6 +266,11 @@ Future<int> runLaunchMode(
           Win32.createBreakawayFromJob |
           Win32.createUnicodeEnvironment,
       hidden: true,
+      inheritHandles: true,
+      stdin: pipe.read,
+      stdout: pipe.nul,
+      stderr: pipe.nul,
+      handles: pipe.handles,
     );
     final identity = identityOfHandle(relay.handle, relay.pid);
     Win32.instance.closeHandle(relay.handle);
@@ -121,6 +311,7 @@ Future<int> _launchAsAccount(
   String self,
   String runDirectory,
   AccountCredentials credentials,
+  _RelayInputPipe pipe,
   StringSink out,
   StringSink err,
 ) async {
@@ -142,6 +333,10 @@ Future<int> _launchAsAccount(
         commandLine: commandLine,
         workingDirectory: directory,
         flags: flags | Win32.createBreakawayFromJob,
+        stdin: pipe.read,
+        stdout: pipe.nul,
+        stderr: pipe.nul,
+        handles: pipe.handles,
       );
     } on LogonFailure catch (e) {
       // A job that does not allow breakaway refuses it with access denied;
@@ -151,6 +346,10 @@ Future<int> _launchAsAccount(
         commandLine: commandLine,
         workingDirectory: directory,
         flags: flags,
+        stdin: pipe.read,
+        stdout: pipe.nul,
+        stderr: pipe.nul,
+        handles: pipe.handles,
       );
     }
     final win32 = Win32.instance;
@@ -240,6 +439,31 @@ Future<int> _runRelay(String runDirectory, StringSink err) async {
     err.writeln('relay: $runDirectory has no readable launch.json');
     return helperFailed;
   }
+  // The launcher always sends the line; without it the secret arguments have
+  // no value, and a server started without them would run unprotected or
+  // half-configured.
+  final input = readLaunchInput();
+  if (input == null) {
+    files.writeExit(
+      -1,
+      DateTime.now(),
+      error: 'the relay did not receive its secrets (launch_input_missing)',
+    );
+    err.writeln('relay: launch_input_missing');
+    return helperFailed;
+  }
+  final missing = [
+    for (final s in launch.secretArguments)
+      if (!input.secrets.containsKey(s.setting)) s.setting,
+  ];
+  if (missing.isNotEmpty) {
+    files.writeExit(
+      -1,
+      DateTime.now(),
+      error: 'the relay did not receive the secret ${missing.first}',
+    );
+    return helperFailed;
+  }
 
   // Ctrl+C sent to this console is for the server: the relay stays up.
   win32.setConsoleCtrlHandler(nullptr, 0);
@@ -292,9 +516,14 @@ Future<int> _runRelay(String runDirectory, StringSink err) async {
       // a Ctrl+C sent to it reaches the server (spike 1.3).
       server = spawnProcess(
         executable: launch.executable,
-        args: launch.args,
+        args: launch.resolvedArgs(input.secrets),
         workingDirectory: launch.workingDirectory,
         inheritHandles: true,
+        // Only the server's own standard handles: not the relay's input pipe.
+        handles: [
+          if (nul != Win32.invalidHandle) nul,
+          pipeWrite.value,
+        ],
         stdin: nul == Win32.invalidHandle ? null : nul,
         stdout: pipeWrite.value,
         stderr: pipeWrite.value,
