@@ -171,7 +171,7 @@ Unverified assumptions, each closed by a task:
 
 ### D11: Secret masking in the log hub at ingestion
 
-- **Choice:** Each instance has a `SecretMasker` built from the secret store: current values plus values replaced or deleted within 24 hours. Migration 7 adds `replaced_secrets(instance_id, setting, blob, replaced_at)`, DPAPI blobs pruned hourly after 24 h. The masker is rebuilt on every `SetSecret`/`DeleteSecret`. Values of 6 or more characters are matched as substrings; shorter ones only between non-word characters. The log hub masks each decoded line before it enters the ring, so followers, backlog, health `log_match` and crash notices (built from ring lines, `instance_manager.dart:1711-1713`) all see masked text. Capture files on disk are the game's own output and are not rewritten.
+- **Choice:** Each instance has a `SecretMasker` built from the secret store: current values plus values replaced or deleted within 24 hours. Migration 7 adds `replaced_secrets(instance_id, setting, blob, replaced_at)`, DPAPI blobs pruned hourly after 24 h. The masker is rebuilt on every `SetSecret`/`DeleteSecret`. Values of 6 or more characters are matched as substrings; shorter ones only between non-word characters. The log hub masks each decoded line before it enters the ring, so followers, backlog, health `log_match` and crash notices (built from ring lines, `instance_manager.dart:1711-1713`) all see masked text. Capture files on disk are the game's own output and are not rewritten. If the secret store cannot be read when a masker is rebuilt, no line passes unmasked: the last masker built for the instance keeps masking, and before any was built each line is replaced by a fixed `[line withheld: ...]` notice. The next line tries the read again (decided by the user, 2026-10-20).
 - **Rejected:** masking at fan-out only. Backlog, crash notices and `log_match` read the ring directly, so each would need its own masking call, and one missed path leaks.
 - **Reversal cost:** low.
 
@@ -367,6 +367,7 @@ flowchart LR
 | GC | Delete fails (file in use) | Left for next run; logged | Yes | Daemon log |
 | Config binder | Parse error, lock, crash mid-write | Two-phase write with rollback leaves old or new files; lock retried 5 s | Yes | Client error with file/line or `file_locked` |
 | Migration operation | Hook throws, result invalid | Settings and recorded version unchanged; `settings_invalid`; later operations except stop and delete fail `invalid_state` until a valid save records the loaded version | Yes, after a fix | Client notice + instance flag |
+| Secret masker | Secret store cannot be read at a rebuild | Last masker built keeps masking; with none, lines are withheld; read retried on the next line | Yes | Followers see `***` or the withheld notice |
 | Secret args | Launcher or relay dies before the server starts | Start fails with the launcher error; nothing on disk | Yes | Client operation error |
 | Update check timer | Daemon down | Next check 10 min after start | Yes | — |
 
