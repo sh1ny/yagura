@@ -353,7 +353,9 @@ class ServiceInstaller {
       await control.uninstall(layout);
     }
     await _removeApiRule();
-    final removal = await _removeFiles();
+    // The purge keeps the configuration until it has finished: a later
+    // `--purge-accounts` reads the data directory from it.
+    final removal = await _removeFiles(keepConfig: purgeAccounts);
     out.writeln(
       registered
           ? 'service $_name removed.'
@@ -386,7 +388,9 @@ class ServiceInstaller {
           out.writeln('kept account ${outcome.account}: ${outcome.reason}');
         }
       }
-      if (stayed.isNotEmpty) {
+      if (stayed.isEmpty) {
+        _removeConfig();
+      } else {
         throw YaguraException(
           'profile_in_use',
           'account ${stayed.map((o) => o.account).join(', ')} could not be '
@@ -516,10 +520,27 @@ class ServiceInstaller {
     details: {'servers': running},
   );
 
-  /// Deletes the configuration, the wrapper, its logs and every version
-  /// directory this service made, as far as it can. What stays is returned.
-  Future<({List<String> versions, List<(String, String)> files})>
-  _removeFiles() async {
+  /// Deletes the configuration file and then the install root when nothing
+  /// else is left in it.
+  void _removeConfig() {
+    final config = File(layout.configFile);
+    try {
+      if (config.existsSync()) config.deleteSync();
+      final root = Directory(layout.root);
+      if (root.existsSync() && root.listSync().isEmpty) root.deleteSync();
+    } on FileSystemException catch (e) {
+      out.writeln(
+        'kept ${e.path ?? config.path}: ${e.message}; delete it by hand',
+      );
+    }
+  }
+
+  /// Deletes the configuration (unless [keepConfig]), the wrapper, its logs
+  /// and every version directory this service made, as far as it can. What
+  /// stays is returned.
+  Future<({List<String> versions, List<(String, String)> files})> _removeFiles({
+    bool keepConfig = false,
+  }) async {
     final versions = <String>[];
     final files = <(String, String)>[];
     final root = Directory(layout.root);
@@ -530,7 +551,7 @@ class ServiceInstaller {
       if (why != null) files.add((entity.path, why));
     }
 
-    await remove(File(layout.configFile));
+    if (!keepConfig) await remove(File(layout.configFile));
     await remove(File(layout.winswExecutable));
     // What the wrapper wrote: its logs folder, and files named after the
     // service. A file still open keeps its folder (best effort).
@@ -546,7 +567,10 @@ class ServiceInstaller {
       final name = p.basename(entity.path);
       final isLogs =
           entity is Directory && name == p.basename(layout.logDirectory);
-      final isWrapperFile = entity is File && name.startsWith(prefix);
+      final isWrapperFile =
+          entity is File &&
+          name.startsWith(prefix) &&
+          !(keepConfig && p.equals(entity.path, layout.configFile));
       if (isLogs || isWrapperFile) await remove(entity);
     }
     // Only the directories this service's install made: the root may be

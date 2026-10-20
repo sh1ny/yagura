@@ -1140,6 +1140,31 @@ void main() {
       expect(rig.control.services, isEmpty, reason: 'the service is gone');
     });
 
+    test('a_purge_that_kept_an_account_can_be_run_again', () async {
+      final rig = InstallerRig();
+      final data = Directory(p.join(rig.root.path, 'data'))..createSync();
+      await rig.installer.install(dataDirectory: data.path);
+      rig.purger.outcomes = const [
+        PurgeOutcome(
+          'yagura-srv',
+          removed: false,
+          reason: 'its profile is still in use (error 32)',
+        ),
+        PurgeOutcome('yagura-steam', removed: true),
+      ];
+      await failureOf(() => rig.installer.uninstall(purgeAccounts: true));
+      // The configuration names the data directory the retry purges.
+      expect(File(rig.layout.configFile).existsSync(), isTrue);
+
+      rig.purger.outcomes = const [PurgeOutcome('yagura-srv', removed: true)];
+      rig.out.clear();
+      await rig.installer.uninstall(purgeAccounts: true);
+
+      expect(rig.purger.dataDirectories, [data.path, data.path]);
+      expect(rig.output, contains('removed account yagura-srv'));
+      expect(File(rig.layout.configFile).existsSync(), isFalse);
+    });
+
     // ---- the purge reads the configuration before it is deleted (G8-02) ----
 
     test('purge_uses_the_data_directory_the_service_runs_with', () async {
