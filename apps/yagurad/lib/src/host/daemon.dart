@@ -33,6 +33,7 @@ import 'data_dir_lock.dart';
 import 'data_dir_protector.dart';
 import 'data_directory.dart';
 import 'database.dart';
+import 'replaced_secrets.dart';
 import '../security/security.dart';
 import 'secret_store.dart';
 
@@ -326,13 +327,14 @@ class Daemon {
       lock.release();
       rethrow;
     }
+    final secretProtector = config.secretProtector ?? defaultSecretProtector();
     final DatabaseSecretStore secrets;
     try {
       secrets = _fatal(
         'secret_store',
         () => DatabaseSecretStore.open(
           database,
-          config.secretProtector ?? defaultSecretProtector(),
+          secretProtector,
           serviceMode: config.serviceMode,
         ),
       );
@@ -425,6 +427,11 @@ class Daemon {
             ),
         runs: runStore,
         boundFiles: BoundFileStore(database),
+        replacedSecrets: ReplacedSecrets(
+          database,
+          secretProtector,
+          clock: config.clock,
+        ),
         acls: config.serviceMode ? config.instanceAcls : null,
         healthEvaluator: HealthEvaluator(
           pollInterval: config.healthPollInterval,
@@ -446,7 +453,13 @@ class Daemon {
       database: database,
       clock: config.clock,
       options: config.logOptions,
+      secretValues: manager.secretValuesToMask,
     );
+    // The masker follows the secrets (design D11): it is built again after a
+    // change, a plugin reload (which decides what counts as a secret) and the
+    // hourly prune of replaced values.
+    manager.secretsChanged = logs.rebuildMasker;
+    manager.maskedSecretsExpired = logs.rebuildMaskers;
 
     await degraded('steam_sweep', config.steam.sweepStrays);
     await degraded('plugins', () async {
@@ -602,6 +615,7 @@ class Daemon {
     );
     await degraded('log_tailing', logSync.syncAll);
     logSync.listen();
+    manager.pluginsReloaded.listen((_) => logs.rebuildMaskers());
     manager.autostartInstances();
     started.complete();
 

@@ -8,6 +8,7 @@ import 'log_limits.dart';
 import 'log_models.dart';
 import 'log_offset_store.dart';
 import 'log_ring.dart';
+import 'secret_masker.dart';
 import 'source_tailer.dart';
 
 /// Timing of the log hub: injectable so tests run fast (design D6).
@@ -48,11 +49,18 @@ class LogHubOptions {
 /// `follow` and `backlog` carry what `Logs.Follow` and `Logs.Backlog` send
 /// (`LogBatch`: lines, `dropped`, `truncated`, `source_event`); `markRun` and
 /// `linesAfter` are what the start-time `log_match` health check uses.
+///
+/// Each decoded line is masked (design D11) before it enters the ring, so
+/// followers, backlog, health matches and crash notices only ever see masked
+/// text. [secretValues] gives the values to hide in an instance's log; the
+/// masker built from them is kept until [rebuildMasker] says the secrets
+/// changed.
 class LogHub {
   LogHub({
     YaguraDatabase? database,
     DateTime Function()? clock,
     this.options = const LogHubOptions(),
+    this.secretValues,
   }) : _offsets = database == null ? null : LogOffsetStore(database),
        _clock = clock ?? DateTime.now {
     _persistTimer = Timer.periodic(options.persistInterval, (_) {
@@ -61,12 +69,39 @@ class LogHub {
   }
 
   final LogHubOptions options;
+
+  /// The secret values to mask in the log of an instance; null masks nothing.
+  final List<String> Function(String instanceId)? secretValues;
+  final _maskers = <String, SecretMasker>{};
   final LogOffsetStore? _offsets;
   final DateTime Function() _clock;
   late final Timer _persistTimer;
   final _instances = <String, _InstanceLogs>{};
   final _saved = <String, LogPosition>{};
   var _closed = false;
+
+  // ---- secret masking ------------------------------------------------------
+
+  /// Builds the masker of [instanceId] again before its next line: its secrets
+  /// changed.
+  void rebuildMasker(String instanceId) => _maskers.remove(instanceId);
+
+  /// Builds every masker again before its next line.
+  void rebuildMaskers() => _maskers.clear();
+
+  SecretMasker _maskerFor(String instanceId) {
+    final cached = _maskers[instanceId];
+    if (cached != null) return cached;
+    final source = secretValues;
+    if (source == null) return SecretMasker.none;
+    try {
+      return _maskers[instanceId] = SecretMasker(source(instanceId));
+    } on Object {
+      // The secrets cannot be read right now: nothing is kept, so the next
+      // line asks again.
+      return SecretMasker.none;
+    }
+  }
 
   // ---- sources -------------------------------------------------------------
 
@@ -250,7 +285,7 @@ class LogHub {
       source: spec.name,
       sequence: ++instance.sequence,
       receivedAt: _clock(),
-      text: spec.encoding.decode(line.bytes),
+      text: _maskerFor(instance.id).mask(spec.encoding.decode(line.bytes)),
       sizeBytes: line.bytes.length + spec.encoding.unitBytes,
       truncated: line.truncated,
     );

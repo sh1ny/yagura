@@ -142,11 +142,11 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | plugin-hooks → Hook points | Hook not exported | apps/yagurad/test/hooks/hook_points_test.dart | hook_not_exported | 7 | green |
 | plugin-hooks → Sandboxed host API | Reading a staged mod | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | reading_a_staged_mod | 7 | red |
 | plugin-hooks → Sandboxed host API | Edit into a staged mod refused | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | edit_into_a_staged_mod_refused | 7 | red |
-| log-streaming → Secrets masked in log streams | Password echoed by the server | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | password_echoed_by_the_server | 8 | red |
-| log-streaming → Secrets masked in log streams | Backlog and crash lines masked | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | backlog_and_crash_lines_masked | 8 | red |
-| log-streaming → Secrets masked in log streams | Replaced secret still masked | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | replaced_secret_still_masked | 8 | red |
-| log-streaming → Secrets masked in log streams | Short secret inside a word | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | short_secret_inside_a_word | 8 | red |
-| log-streaming → Secrets masked in log streams | No secrets set | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | no_secrets_set | 8 | red |
+| log-streaming → Secrets masked in log streams | Password echoed by the server | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | password_echoed_by_the_server | 8 | green |
+| log-streaming → Secrets masked in log streams | Backlog and crash lines masked | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | backlog_and_crash_lines_masked | 8 | green |
+| log-streaming → Secrets masked in log streams | Replaced secret still masked | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | replaced_secret_still_masked | 8 | green |
+| log-streaming → Secrets masked in log streams | Short secret inside a word | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | short_secret_inside_a_word | 8 | green |
+| log-streaming → Secrets masked in log streams | No secrets set | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | no_secrets_set | 8 | green |
 | plugin-hooks → Hook points | Migration hook result applied | apps/yagurad/test/hooks/hook_points_test.dart | migration_hook_result_applied | 8 | green |
 | plugin-manifest → Plugin version changes re-validate instances | Removed setting migrated | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | removed_setting_migrated | 8 | green |
 | plugin-manifest → Plugin version changes re-validate instances | Running instance after an invalidating reload | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | running_instance_after_an_invalidating_reload | 8 | green |
@@ -271,7 +271,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 - [x] 8.1 Write the failing tests for this group's red rows. Verify: they fail for the missing migration operation and masker.
 - [x] 8.2 Implement D10: the `migrate_settings` operation at the queue head, outside the 10-operation bound and retargeted by a repeat reload; the `pluginVersion` write moved out of `reconcilePlugins` (`instance_manager.dart:1312-1320`); the `migrateSettings` hook with secret placeholders; the gate (`invalid_state`, with stop and delete exempt); the recovery (a valid save records the loaded version); and startup reconciliation. Verify: the plugin-version rows and `migration_hook_result_applied` pass.
-- [ ] 8.3 Implement D11: `SecretMasker` at log ingestion, rebuilt on secret changes; `replaced_secrets` pruned hourly after 24 h; substring matching from 6 characters, whole-word matching below that. Verify: the log-streaming rows pass, and this group's rows are flipped green.
+- [x] 8.3 Implement D11: `SecretMasker` at log ingestion, rebuilt on secret changes; `replaced_secrets` pruned hourly after 24 h; substring matching from 6 characters, whole-word matching below that. Verify: the log-streaming rows pass, and this group's rows are flipped green.
 
 ## 9. [M3] Desktop: prompts, accounts, mods and notices
 

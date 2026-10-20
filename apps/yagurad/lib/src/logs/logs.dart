@@ -3,3 +3,4 @@ export 'log_hub.dart';
 export 'log_match_watch.dart';
 export 'log_limits.dart';
 export 'log_models.dart';
+export 'secret_masker.dart';
