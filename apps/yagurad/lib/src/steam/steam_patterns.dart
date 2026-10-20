@@ -39,6 +39,52 @@ class SteamFailure {
   final bool retryOnce;
 }
 
+/// What a login run came to (the `kind` of `login.outcomes` in the table).
+enum LoginKind {
+  reauthNeeded('reauth_needed'),
+  rateLimited('rate_limited'),
+  guardInvalid('guard_invalid'),
+  loginInvalid('login_invalid'),
+  ok('ok'),
+  guardEmail('guard_email'),
+  guardAuthenticator('guard_authenticator'),
+  guardMobile('guard_mobile');
+
+  const LoginKind(this.wire);
+
+  final String wire;
+
+  static LoginKind fromWire(String wire) => values.firstWhere(
+    (k) => k.wire == wire,
+    orElse: () => throw FormatException('unknown login outcome kind: $wire'),
+  );
+}
+
+/// The outcome of a login run read from its output. [reason] and [message]
+/// are set for the outcomes that fail the run.
+class LoginOutcome {
+  const LoginOutcome(this.kind, {this.reason, this.message});
+
+  final LoginKind kind;
+  final String? reason;
+  final String? message;
+
+  /// Whether Steam asks for a code or an approval.
+  bool get isGuard =>
+      kind == LoginKind.guardEmail ||
+      kind == LoginKind.guardAuthenticator ||
+      kind == LoginKind.guardMobile;
+}
+
+class _LoginPattern {
+  _LoginPattern(this.kind, this.match, this.reason, this.message);
+
+  final LoginKind kind;
+  final RegExp match;
+  final String? reason;
+  final String? message;
+}
+
 class _FailurePattern {
   _FailurePattern(
     this.id,
@@ -65,11 +111,16 @@ class SteamPatterns {
     required List<(RegExp, String)> states,
     required RegExp success,
     required List<_FailurePattern> failures,
+    required List<_LoginPattern> loginOutcomes,
+    required this.connectionLog,
+    required RegExp liveGuardMobile,
   }) : _steps = steps,
        _progress = progress,
        _states = states,
        _success = success,
-       _failures = failures;
+       _failures = failures,
+       _loginOutcomes = loginOutcomes,
+       _liveGuardMobile = liveGuardMobile;
 
   /// The table embedded in the daemon.
   factory SteamPatterns.embedded() => SteamPatterns.parse(steamPatternsYaml);
@@ -77,6 +128,8 @@ class SteamPatterns {
   factory SteamPatterns.parse(String source) {
     final root = loadYaml(source) as YamlMap;
     final progress = root['progress'] as YamlMap;
+    final login = root['login'] as YamlMap;
+    final live = login['live'] as YamlMap;
     return SteamPatterns._(
       version: root['version'] as int,
       steps: [
@@ -111,10 +164,27 @@ class SteamPatterns {
             },
           ),
       ],
+      loginOutcomes: [
+        for (final outcome in login['outcomes'] as YamlList)
+          _LoginPattern(
+            LoginKind.fromWire((outcome as YamlMap)['kind'] as String),
+            RegExp(outcome['match'] as String),
+            outcome['reason'] as String?,
+            outcome['message'] as String?,
+          ),
+      ],
+      connectionLog: live['connection_log'] as String,
+      liveGuardMobile: RegExp(live['guard_mobile'] as String),
     );
   }
 
   final int version;
+
+  /// The installation's log (below its directory) that shows a mobile
+  /// approval being waited for while the run lives.
+  final String connectionLog;
+  final List<_LoginPattern> _loginOutcomes;
+  final RegExp _liveGuardMobile;
   final List<(String, RegExp)> _steps;
   final RegExp _progress;
   final List<(RegExp, String)> _states;
@@ -142,6 +212,27 @@ class SteamPatterns {
       bytesTotal: int.parse(match.namedGroup('total')!),
     );
   }
+
+  /// What the output of a login run [lines] came to: the outcomes are tried
+  /// in the order of the table, and the first that any line matches wins.
+  /// Null when none matches.
+  LoginOutcome? classifyLogin(Iterable<String> lines) {
+    final all = lines.toList();
+    for (final outcome in _loginOutcomes) {
+      if (all.any(outcome.match.hasMatch)) {
+        return LoginOutcome(
+          outcome.kind,
+          reason: outcome.reason,
+          message: outcome.message,
+        );
+      }
+    }
+    return null;
+  }
+
+  /// Whether [line] of the connection log says a mobile approval is waited
+  /// for.
+  bool isLiveGuardMobile(String line) => _liveGuardMobile.hasMatch(line);
 
   bool isSuccess(String line) => _success.hasMatch(line);
 

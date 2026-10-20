@@ -7,12 +7,16 @@ import '../errors.dart';
 import '../host/database.dart';
 import 'cancel_token.dart';
 import 'operation.dart';
+import 'prompt_broker.dart';
 import 'semaphore.dart';
 
 /// What a step of an operation sees.
 abstract interface class OperationContext {
   String get operationId;
   String get instanceId;
+
+  /// The Steam account of an account operation; empty otherwise.
+  String get accountId;
   CancelToken get cancel;
 
   /// Starts step [name] (throwing [OperationCancelled] first when the
@@ -24,12 +28,18 @@ abstract interface class OperationContext {
   void beginStep(String name);
 
   /// Runs [body] holding the SteamCMD installation lock of [installation],
-  /// then a heavy slot (design D3). While waiting, the operation reports step
+  /// then a heavy slot (design D3), unless [slot] is false: an account
+  /// operation takes the lock only. While waiting, the operation reports step
   /// `waiting_for_steamcmd` with its position.
   Future<T> heavy<T>(
     Future<T> Function() body, {
     String installation = 'anonymous',
+    bool slot = true,
   });
+
+  /// Raises a prompt for the administrator (design D13). The operation waits
+  /// for input until the ticket resolves; its [PromptTicket.result] says how.
+  PromptTicket raisePrompt(PromptSpec spec);
 
   /// Progress of [step]; [percent] is 0-100 or -1 when unknown. Only the
   /// latest per step is retained.
@@ -59,6 +69,7 @@ class _Op {
   _Op({
     required this.id,
     required this.instanceId,
+    required this.accountId,
     required this.kind,
     required this.body,
     required this.createdAt,
@@ -66,6 +77,13 @@ class _Op {
 
   final String id;
   final String instanceId;
+  final String accountId;
+
+  /// What the operation queues behind: its instance, else its account.
+  String get subject => subjectOf(instanceId, accountId);
+
+  /// The prompt the operation waits on.
+  Prompt? pending;
   final OperationKind kind;
   final OperationBody body;
   final DateTime createdAt;
@@ -100,7 +118,9 @@ class OperationRunner {
     this.historyPerInstance = 1000,
     this.historyAge = const Duration(days: 30),
     DateTime Function()? clock,
+    PromptBroker? prompts,
   }) : _clock = clock ?? DateTime.now,
+       prompts = prompts ?? PromptBroker(clock: clock),
        _slots = Semaphore(heavySlots);
 
   final YaguraDatabase database;
@@ -113,6 +133,9 @@ class OperationRunner {
   final Duration historyAge;
   final DateTime Function() _clock;
 
+  /// The prompts the operations of this runner raise (design D13).
+  final PromptBroker prompts;
+
   final Semaphore _slots;
   final _installationLocks = <String, Semaphore>{};
   final _ops = <String, _Op>{};
@@ -121,15 +144,20 @@ class OperationRunner {
   final _history = <String, Queue<String>>{};
   var _closed = false;
 
+  /// Whether the runner was closed (a stopping or killed daemon).
+  bool get isClosed => _closed;
+
   // ---- requests ----------------------------------------------------------
 
-  /// Queues an operation on [instanceId] and returns its view. A stop first
+  /// Queues an operation on [instanceId] (or on [accountId] for an account
+  /// operation, which belongs to no instance) and returns its view. A stop first
   /// cancels the queued Start and Restart operations of the instance and the
   /// running Start, and runs next; it does not cancel queued Install or
   /// Update. A settings migration goes to the head of the queue, outside the
   /// bound (design D10). Throws `queue_full` at the bound.
   Operation enqueue({
-    required String instanceId,
+    String instanceId = '',
+    String accountId = '',
     required OperationKind kind,
     required OperationBody body,
   }) {
@@ -137,17 +165,20 @@ class OperationRunner {
       throw YaguraException('internal_error', 'the daemon is shutting down');
     }
     if (kind == OperationKind.stop) _cancelForStop(instanceId);
-    final queue = _queues.putIfAbsent(instanceId, Queue.new);
+    final subject = subjectOf(instanceId, accountId);
+    final queue = _queues.putIfAbsent(subject, Queue.new);
     if (queue.length >= maxQueued && kind != OperationKind.migrateSettings) {
       throw YaguraException(
         'queue_full',
-        'instance $instanceId already has $maxQueued queued operations',
+        '${instanceId.isNotEmpty ? 'instance $instanceId' : subject} already '
+            'has $maxQueued queued operations',
         details: {'instanceId': instanceId, 'limit': maxQueued},
       );
     }
     final op = _Op(
       id: _newId(),
       instanceId: instanceId,
+      accountId: accountId,
       kind: kind,
       body: body,
       createdAt: _clock(),
@@ -159,7 +190,7 @@ class OperationRunner {
       queue.addLast(op);
     }
     _persist(op);
-    _startNext(instanceId);
+    _startNext(subject);
     return _view(op);
   }
 
@@ -228,7 +259,7 @@ class OperationRunner {
     }
     switch (op.status) {
       case OperationStatus.queued:
-        _queues[op.instanceId]?.remove(op);
+        _queues[op.subject]?.remove(op);
         _finish(
           op,
           OperationStatus.cancelled,
@@ -236,6 +267,8 @@ class OperationRunner {
         );
       case OperationStatus.running || OperationStatus.waitingForInput:
         op.cancel.cancel();
+        // A body that waits for an answer stops waiting.
+        prompts.cancelOperation(op.id);
       default:
         break;
     }
@@ -256,6 +289,26 @@ class OperationRunner {
       );
     }
     return Future.value(known);
+  }
+
+  /// Delivers the answer [value] of [byDeviceId] to the prompt [promptId] of
+  /// [operationId] (design D13) and returns the operation as it is then. The
+  /// first answer wins; a later one is `prompt_resolved`.
+  Operation respondToPrompt(
+    String operationId,
+    String promptId,
+    String value,
+    String byDeviceId,
+  ) {
+    if (get(operationId) == null) {
+      throw YaguraException(
+        'operation_not_found',
+        'there is no operation $operationId',
+        details: {'operationId': operationId},
+      );
+    }
+    prompts.answer(operationId, promptId, value, byDeviceId);
+    return get(operationId)!;
   }
 
   /// Events of [operationId] after [afterSequence], then live events until the
@@ -376,6 +429,7 @@ class OperationRunner {
   /// their next step.
   Future<void> close() async {
     _closed = true;
+    prompts.close();
     for (final op in _ops.values) {
       for (final listener in List.of(op.listeners)) {
         await listener.close();
@@ -457,6 +511,8 @@ class OperationRunner {
     String? message,
   }) {
     if (op.status.isTerminal) return;
+    // What it still waits on is resolved before its end is reported.
+    prompts.cancelOperation(op.id);
     op
       ..status = status
       ..endedAt = _clock()
@@ -466,21 +522,20 @@ class OperationRunner {
       ..waitPosition = 0;
     _emit(op, (sequence, at) => FinishedEvent(sequence, at, _view(op)));
     _persist(op);
-    if (_running[op.instanceId] == op) _running.remove(op.instanceId);
+    if (_running[op.subject] == op) _running.remove(op.subject);
     for (final listener in List.of(op.listeners)) {
       unawaited(listener.close());
     }
     op.listeners.clear();
     if (!op.done.isCompleted) op.done.complete(_view(op));
     _remember(op);
-    _startNext(op.instanceId);
+    _startNext(op.subject);
   }
 
   /// Keeps the finished operations of an instance in memory up to the history
   /// bound.
   void _remember(_Op op) {
-    final history = _history.putIfAbsent(op.instanceId, Queue.new)
-      ..addLast(op.id);
+    final history = _history.putIfAbsent(op.subject, Queue.new)..addLast(op.id);
     while (history.length > historyPerInstance) {
       _ops.remove(history.removeFirst());
     }
@@ -507,13 +562,42 @@ class OperationRunner {
     }
   }
 
+  /// The operation waits for input until [prompt] is resolved.
+  void _promptRaised(_Op op, Prompt prompt) {
+    op.pending = prompt;
+    if (op.status == OperationStatus.running) {
+      op.status = OperationStatus.waitingForInput;
+    }
+    _emit(op, (sequence, at) => PromptRaisedEvent(sequence, at, prompt));
+    _persist(op);
+  }
+
+  void _promptResolved(_Op op, Prompt prompt, PromptResult result) {
+    if (_closed || op.pending?.id != prompt.id) return;
+    op.pending = null;
+    if (op.status == OperationStatus.waitingForInput) {
+      op.status = OperationStatus.running;
+    }
+    _emit(
+      op,
+      (sequence, at) => PromptResolvedEvent(
+        sequence,
+        at,
+        prompt.id,
+        result.byDeviceId,
+        result.outcome,
+      ),
+    );
+    _persist(op);
+  }
+
   Semaphore _lockFor(String installation) =>
       _installationLocks.putIfAbsent(installation, () => Semaphore(1));
 
   Operation _view(_Op op) {
     var position = 0;
     if (op.status == OperationStatus.queued) {
-      position = (_queues[op.instanceId]?.toList().indexOf(op) ?? -1) + 1;
+      position = (_queues[op.subject]?.toList().indexOf(op) ?? -1) + 1;
     } else if (op.status == OperationStatus.running &&
         op.step == 'waiting_for_steamcmd') {
       position = op.waitPosition;
@@ -532,6 +616,8 @@ class OperationRunner {
       resultMessage: op.message,
       warnings: List.unmodifiable(op.warnings),
       lastSequence: op.sequence,
+      accountId: op.accountId,
+      pendingPrompt: op.pending,
     );
   }
 
@@ -551,6 +637,7 @@ class OperationRunner {
         w as String,
     ],
     lastSequence: row['last_sequence']! as int,
+    accountId: row['account_id']! as String,
   );
 
   static DateTime? _time(Object? millis) => millis == null
@@ -562,8 +649,8 @@ class OperationRunner {
     database.sqlite.execute(
       'INSERT OR REPLACE INTO operations (id, instance_id, kind, status, '
       'current_step, created_at, started_at, ended_at, result_reason, '
-      'result_message, warnings_json, last_sequence) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'result_message, warnings_json, last_sequence, account_id) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         op.id,
         op.instanceId,
@@ -577,6 +664,7 @@ class OperationRunner {
         op.message,
         jsonEncode(op.warnings),
         op.sequence,
+        op.accountId,
       ],
     );
   }
@@ -600,6 +688,9 @@ class _Context implements OperationContext {
 
   @override
   String get instanceId => _op.instanceId;
+
+  @override
+  String get accountId => _op.accountId;
 
   @override
   CancelToken get cancel => _op.cancel;
@@ -627,6 +718,7 @@ class _Context implements OperationContext {
   Future<T> heavy<T>(
     Future<T> Function() body, {
     String installation = 'anonymous',
+    bool slot = true,
   }) async {
     _checkOpen();
     cancel.throwIfCancelled();
@@ -644,10 +736,9 @@ class _Context implements OperationContext {
         ._lockFor(installation)
         .acquire(cancel: cancel, onPosition: onPosition);
     try {
-      final releaseSlot = await _runner._slots.acquire(
-        cancel: cancel,
-        onPosition: onPosition,
-      );
+      final releaseSlot = slot
+          ? await _runner._slots.acquire(cancel: cancel, onPosition: onPosition)
+          : () {};
       try {
         if (waiting) _op.step = before;
         _checkOpen();
@@ -659,6 +750,24 @@ class _Context implements OperationContext {
     } finally {
       releaseLock();
     }
+  }
+
+  @override
+  PromptTicket raisePrompt(PromptSpec spec) {
+    _checkOpen();
+    cancel.throwIfCancelled();
+    final ticket = _runner.prompts.raise(
+      spec,
+      PromptSubject(
+        operationId: _op.id,
+        instanceId: _op.instanceId,
+        accountId: _op.accountId,
+      ),
+      onResolved: (prompt, result) =>
+          _runner._promptResolved(_op, prompt, result),
+    );
+    _runner._promptRaised(_op, ticket.prompt);
+    return ticket;
   }
 
   @override
@@ -698,3 +807,11 @@ class _Context implements OperationContext {
       ..message = message;
   }
 }
+
+/// What an operation queues behind: its instance, else its account, else the
+/// host.
+String subjectOf(String instanceId, String accountId) => instanceId.isNotEmpty
+    ? instanceId
+    : accountId.isNotEmpty
+    ? 'account:$accountId'
+    : '';

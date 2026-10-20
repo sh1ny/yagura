@@ -1,3 +1,5 @@
+import 'prompt_broker.dart';
+
 /// Lifecycle status of an operation (mirrors `OperationStatus` in
 /// `operations.proto`).
 enum OperationStatus {
@@ -34,7 +36,13 @@ enum OperationKind {
   restore(heavy: false),
 
   /// Brings an instance's settings to a reloaded plugin version (design D10).
-  migrateSettings(heavy: false, wire: 'migrate_settings');
+  migrateSettings(heavy: false, wire: 'migrate_settings'),
+
+  /// Logs a new Steam account in (design D2); belongs to no instance.
+  addSteamAccount(heavy: false, wire: 'add_steam_account'),
+
+  /// Logs an account in again after its cached login expired.
+  reauthSteamAccount(heavy: false, wire: 'reauth_steam_account');
 
   const OperationKind({required this.heavy, this.wire});
 
@@ -67,6 +75,8 @@ class Operation {
     this.resultMessage = '',
     this.warnings = const [],
     this.lastSequence = 0,
+    this.accountId = '',
+    this.pendingPrompt,
   });
 
   final String id;
@@ -87,6 +97,13 @@ class Operation {
   final String resultMessage;
   final List<String> warnings;
   final int lastSequence;
+
+  /// The Steam account an account operation is about; empty otherwise.
+  final String accountId;
+
+  /// What the operation waits to be answered; null unless its status is
+  /// [OperationStatus.waitingForInput].
+  final Prompt? pendingPrompt;
 
   @override
   String toString() => 'Operation($id ${kind.name} ${status.wireName})';
@@ -127,6 +144,26 @@ class ProgressEvent extends OperationEvent {
 class LogEvent extends OperationEvent {
   const LogEvent(super.sequence, super.at, this.text);
   final String text;
+}
+
+/// The operation raised a prompt (design D13).
+class PromptRaisedEvent extends OperationEvent {
+  const PromptRaisedEvent(super.sequence, super.at, this.prompt);
+  final Prompt prompt;
+}
+
+/// A prompt of the operation was resolved.
+class PromptResolvedEvent extends OperationEvent {
+  const PromptResolvedEvent(
+    super.sequence,
+    super.at,
+    this.promptId,
+    this.byDeviceId,
+    this.outcome,
+  );
+  final String promptId;
+  final String byDeviceId;
+  final PromptOutcome outcome;
 }
 
 /// Terminal event; the stream ends after it.

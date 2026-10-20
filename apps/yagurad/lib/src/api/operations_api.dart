@@ -137,23 +137,100 @@ class OperationsApi extends pb.OperationsServiceBase with GuardedService {
     pb.CancelOperationRequest request,
   ) async => operationToPb(daemon.operations.cancel(request.operationId));
 
+  /// The first valid answer wins (design D13); the device that sent it is
+  /// the one `PromptResolved` names (empty in dev mode).
   @override
   Future<pb.Operation> respondToPrompt(
     ServiceCall call,
     pb.RespondToPromptRequest request,
-  ) => throw YaguraException(
-    'not_implemented',
-    'Operations.RespondToPrompt is not implemented in this version',
-  );
+  ) async {
+    final device = daemon.security?.gate.callerOf(call) ?? '';
+    return operationToPb(
+      daemon.operations.respondToPrompt(
+        request.operationId,
+        request.promptId,
+        request.value,
+        device,
+      ),
+    );
+  }
 
+  var _promptSubscribers = 0;
+
+  /// A snapshot of every pending prompt, then each prompt raised and resolved.
+  /// A subscriber that falls more than `maxPromptEvents` behind gets
+  /// `resync_required` and a new snapshot.
   @override
   Stream<pb.PromptEvent> watchPrompts(
     ServiceCall call,
     pb.WatchPromptsRequest request,
-  ) => throw YaguraException(
-    'not_implemented',
-    'Operations.WatchPrompts is not implemented in this version',
-  );
+  ) {
+    if (_promptSubscribers >= watchLimits.maxSubscribers) {
+      throw YaguraException(
+        'too_many_subscribers',
+        'this daemon already has ${watchLimits.maxSubscribers} prompt '
+            'subscribers',
+        details: {'limit': watchLimits.maxSubscribers},
+      );
+    }
+    final pressure = call is YaguraCall ? call.pressure : null;
+    final broker = daemon.operations.prompts;
+    StreamSubscription<PromptBrokerEvent>? source;
+    late final StreamController<pb.PromptEvent> controller;
+
+    void sendSnapshot() => controller.add(
+      pb.PromptEvent(
+        snapshot: pb.PromptSnapshot(
+          prompts: [for (final p in broker.snapshot()) pendingPromptToPb(p)],
+        ),
+      ),
+    );
+
+    bool resyncIfBehind() {
+      if (pressure == null) return false;
+      if (pressure.queuedMessages < watchLimits.maxPromptEvents &&
+          pressure.queuedBytes < watchLimits.maxBytes) {
+        return false;
+      }
+      pressure.dropQueuedData();
+      controller.add(
+        pb.PromptEvent(resyncRequired: pb.PromptsResyncRequired()),
+      );
+      sendSnapshot();
+      return true;
+    }
+
+    controller = StreamController<pb.PromptEvent>(
+      sync: true,
+      onListen: () {
+        _promptSubscribers++;
+        // Subscribe before reading the snapshot, in the same turn, so no
+        // change falls between them.
+        source = broker.events.listen((event) {
+          if (resyncIfBehind()) return;
+          controller.add(switch (event) {
+            PromptRaised(:final pending) => pb.PromptEvent(
+              raised: pendingPromptToPb(pending),
+            ),
+            PromptResolved(
+              :final promptId,
+              :final byDeviceId,
+              :final outcome,
+            ) =>
+              pb.PromptEvent(
+                resolved: promptResolvedToPb(promptId, byDeviceId, outcome),
+              ),
+          });
+        }, onDone: () => unawaited(controller.close()));
+        sendSnapshot();
+      },
+      onCancel: () async {
+        _promptSubscribers--;
+        await source?.cancel();
+      },
+    );
+    return controller.stream;
+  }
 
   /// The daemon's operation ids are `op` and 12 hex digits: a well-formed id
   /// that is not known was pruned, anything else never existed.
