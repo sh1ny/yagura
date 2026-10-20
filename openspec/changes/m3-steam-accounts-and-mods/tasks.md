@@ -177,7 +177,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
   - an echo of the command line, and a log file under the installation's `logs/` when the spike shows SteamCMD writes one.
 
   Add a fake Steam Web API server (`test/fixtures/fake_workshop_api.dart`) for `GetPublishedFileDetails`, with per-item results, `time_updated`, private or missing items, delays and failures. Verify: each fixture has a self-test under `test/fixtures/` that passes.
-- [ ] 1.3 Write the failing tests for this group's red rows (`default_layout_created`, `content_store_protected`), and `test/host/migration_7_test.dart`, which follows `migration_4_test.dart`. Verify: they fail because `content/` and the migration 7 tables are missing.
+- [x] 1.3 Write the failing tests for this group's red rows (`default_layout_created`, `content_store_protected`), and `test/host/migration_7_test.dart`, which follows `migration_4_test.dart`. Verify: they fail because `content/` and the migration 7 tables are missing.
 - [ ] 1.4 Add migration 7: `steam_accounts`, `operations.account_id`, `instance_mods` (with `stage_kind`), `content_versions`, `placed_keys`, `bound_files` and `replaced_secrets` (design D1, D6-D9, D11). Make `DataDirectory.prepare` create `content/` and `content/.staging/` (D6). Verify: `migration_7_test.dart` and `default_layout_created` pass, and those rows are flipped green. Re-run the green rows of this group (`data_directory_not_writable`; the `instance_roots_test.dart` rows run in the elevated workflow). Run `content_store_protected` in the elevated workflow and record the run in `docs/milestones/m3.md`, then flip it.
 
 ## 2. [M3] Lossless config parsers
