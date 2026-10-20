@@ -4,9 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers.dart';
 import 'connection_banner.dart';
 import 'instance_list.dart';
+import 'instance_notices.dart';
 import 'log_view.dart';
+import 'mods_view.dart';
 import 'operations_panel.dart';
 import 'settings_editor.dart';
+import 'steam_accounts_view.dart';
 
 /// Window width from which the list and the detail sit side by side.
 const double _wideBreakpoint = 900;
@@ -39,11 +42,32 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  void _openSteamAccounts(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Steam accounts')),
+          body: SteamAccountsView(daemonId: widget.daemonId),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final daemonId = widget.daemonId;
     return Scaffold(
-      appBar: AppBar(title: const Text('Yagura')),
+      appBar: AppBar(
+        title: const Text('Yagura'),
+        actions: [
+          IconButton(
+            key: const ValueKey('action:steam-accounts'),
+            tooltip: 'Steam accounts',
+            icon: const Icon(Icons.manage_accounts_outlined),
+            onPressed: () => _openSteamAccounts(context),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           ConnectionBanner(daemonId: daemonId),
@@ -111,7 +135,7 @@ class InstanceDetail extends ConsumerWidget {
       return const Center(child: Text('This instance no longer exists'));
     }
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Column(
         children: [
           Align(
@@ -124,9 +148,12 @@ class InstanceDetail extends ConsumerWidget {
               ),
             ),
           ),
+          InstanceAccountPicker(daemonId: daemonId, instance: instance),
+          InstanceNotices(daemonId: daemonId, instance: instance),
           const TabBar(
             tabs: [
               Tab(text: 'Settings'),
+              Tab(text: 'Mods'),
               Tab(text: 'Logs'),
             ],
           ),
@@ -134,6 +161,18 @@ class InstanceDetail extends ConsumerWidget {
             child: TabBarView(
               children: [
                 SettingsEditor(
+                  key: ValueKey(instance.id),
+                  daemonId: daemonId,
+                  instance: instance,
+                  invalidFields: instance.settingsInvalid
+                      ? invalidFieldsOf(
+                          ref
+                              .watch(settingsInvalidProvider(daemonId))
+                              .value?[instance.id],
+                        )
+                      : const {},
+                ),
+                ModsView(
                   key: ValueKey(instance.id),
                   daemonId: daemonId,
                   instance: instance,

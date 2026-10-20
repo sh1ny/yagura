@@ -152,19 +152,19 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | plugin-manifest → Plugin version changes re-validate instances | Running instance after an invalidating reload | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | running_instance_after_an_invalidating_reload | 8 | green |
 | plugin-manifest → Plugin version changes re-validate instances | Migration hook fails | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | migration_hook_fails | 8 | green |
 | plugin-manifest → Plugin version changes re-validate instances | Settings no longer valid | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | settings_no_longer_valid | 8 | green |
-| desktop-client → Config and plugin notices | External edit shown | apps/yagura_desktop/test/config_and_plugin_notices_test.dart | external_edit_shown | 9 | red |
-| desktop-client → Config and plugin notices | Settings invalid after a reload | apps/yagura_desktop/test/config_and_plugin_notices_test.dart | settings_invalid_after_a_reload | 9 | red |
-| desktop-client → Mods view | Mods added by id | apps/yagura_desktop/test/mods_view_test.dart | mods_added_by_id | 9 | red |
-| desktop-client → Mods view | Key conflict shown | apps/yagura_desktop/test/mods_view_test.dart | key_conflict_shown | 9 | red |
-| desktop-client → Mods view | Concurrent edit | apps/yagura_desktop/test/mods_view_test.dart | concurrent_edit | 9 | red |
-| desktop-client → Operations and interactive prompts | Steam Guard prompt | apps/yagura_desktop/test/operations_and_interactive_prompts_test.dart | steam_guard_prompt | 9 | red |
-| desktop-client → Operations and interactive prompts | Mobile approval prompt | apps/yagura_desktop/test/operations_and_interactive_prompts_test.dart | mobile_approval_prompt | 9 | red |
-| desktop-client → Operations and interactive prompts | Prompt from another device's operation | apps/yagura_desktop/test/operations_and_interactive_prompts_test.dart | prompt_from_another_device_s_operation | 9 | red |
-| desktop-client → Operations and interactive prompts | Prompt answered elsewhere | apps/yagura_desktop/test/operations_and_interactive_prompts_test.dart | prompt_answered_elsewhere | 9 | red |
-| desktop-client → Operations and interactive prompts | Code rejected | apps/yagura_desktop/test/operations_and_interactive_prompts_test.dart | code_rejected | 9 | red |
-| desktop-client → Steam accounts view | Account added from the desktop | apps/yagura_desktop/test/steam_accounts_view_test.dart | account_added_from_the_desktop | 9 | red |
-| desktop-client → Steam accounts view | Account needs re-login | apps/yagura_desktop/test/steam_accounts_view_test.dart | account_needs_re_login | 9 | red |
-| desktop-client → Steam accounts view | Removal refused | apps/yagura_desktop/test/steam_accounts_view_test.dart | removal_refused | 9 | red |
+| desktop-client → Config and plugin notices | External edit shown | apps/yagura_desktop/test/config_and_plugin_notices_test.dart | external_edit_shown | 9 | green |
+| desktop-client → Config and plugin notices | Settings invalid after a reload | apps/yagura_desktop/test/config_and_plugin_notices_test.dart | settings_invalid_after_a_reload | 9 | green |
+| desktop-client → Mods view | Mods added by id | apps/yagura_desktop/test/mods_view_test.dart | mods_added_by_id | 9 | green |
+| desktop-client → Mods view | Key conflict shown | apps/yagura_desktop/test/mods_view_test.dart | key_conflict_shown | 9 | green |
+| desktop-client → Mods view | Concurrent edit | apps/yagura_desktop/test/mods_view_test.dart | concurrent_edit | 9 | green |
+| desktop-client → Operations and interactive prompts | Steam Guard prompt | apps/yagura_desktop/test/operations_and_interactive_prompts_test.dart | steam_guard_prompt | 9 | green |
+| desktop-client → Operations and interactive prompts | Mobile approval prompt | apps/yagura_desktop/test/operations_and_interactive_prompts_test.dart | mobile_approval_prompt | 9 | green |
+| desktop-client → Operations and interactive prompts | Prompt from another device's operation | apps/yagura_desktop/test/operations_and_interactive_prompts_test.dart | prompt_from_another_device_s_operation | 9 | green |
+| desktop-client → Operations and interactive prompts | Prompt answered elsewhere | apps/yagura_desktop/test/operations_and_interactive_prompts_test.dart | prompt_answered_elsewhere | 9 | green |
+| desktop-client → Operations and interactive prompts | Code rejected | apps/yagura_desktop/test/operations_and_interactive_prompts_test.dart | code_rejected | 9 | green |
+| desktop-client → Steam accounts view | Account added from the desktop | apps/yagura_desktop/test/steam_accounts_view_test.dart | account_added_from_the_desktop | 9 | green |
+| desktop-client → Steam accounts view | Account needs re-login | apps/yagura_desktop/test/steam_accounts_view_test.dart | account_needs_re_login | 9 | green |
+| desktop-client → Steam accounts view | Removal refused | apps/yagura_desktop/test/steam_accounts_view_test.dart | removal_refused | 9 | green |
 | daemon-protocol → Methods a daemon version does not implement | Method not built yet | apps/yagurad/test/api/methods_a_daemon_version_does_not_implement_test.dart | method_not_built_yet | 11 | green |
 | daemon-protocol → Methods a daemon version does not implement | Service not built yet | apps/yagurad/test/api/methods_a_daemon_version_does_not_implement_test.dart | service_not_built_yet | 11 | red |
 
@@ -276,7 +276,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 ## 9. [M3] Desktop: prompts, accounts, mods and notices
 
 - [x] 9.1 Extend `DaemonTransport` (`lib/src/transport.dart`) and `test/support/fake_daemon.dart` with the Steam and Mods methods, `WatchPrompts` and `RespondToPrompt`. Write the failing widget tests for this group's rows. Verify: they fail because the views are missing.
-- [ ] 9.2 Implement the desktop side:
+- [x] 9.2 Implement the desktop side:
   - handle `prompt`, `promptResolved` and `eventsDropped` in `connection.dart:564-643` instead of dropping them, and open `WatchPrompts` per connected daemon;
   - the prompt dialog for the code kinds and mobile approval, answered elsewhere, and code rejected;
   - the Steam accounts view, which clears the password field after the call and stores it nowhere, and shows reauth and refused removal;

@@ -181,12 +181,13 @@ class _InstanceTile extends StatelessWidget {
       String key,
       String tooltip,
       IconData icon,
-      VoidCallback run,
-    ) => IconButton(
+      VoidCallback run, {
+      bool allowed = true,
+    }) => IconButton(
       key: ValueKey('action:$key:$id'),
       tooltip: tooltip,
       icon: Icon(icon),
-      onPressed: enabled ? run : null,
+      onPressed: enabled && allowed ? run : null,
     );
     return ListTile(
       selected: selected,
@@ -197,6 +198,7 @@ class _InstanceTile extends StatelessWidget {
         children: [
           Text(instanceStateLabel(state)),
           if (instance.pluginId.isNotEmpty) Text(instance.pluginId),
+          if (instance.settingsInvalid) const Text('settings invalid'),
         ],
       ),
       trailing: Row(
@@ -218,6 +220,8 @@ class _InstanceTile extends StatelessWidget {
                 'Start',
                 Icons.play_arrow,
                 () => _run(context, () => connection.startInstance(instance)),
+                // The daemon refuses a start until valid settings are saved.
+                allowed: !instance.settingsInvalid,
               ),
             if (state == InstanceState.INSTANCE_STATE_RUNNING)
               action(
