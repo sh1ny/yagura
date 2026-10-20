@@ -183,7 +183,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 ## 2. [M3] Lossless config parsers
 
 - [x] 2.1 Collect real-file corpora under `packages/yagura_formats/test/corpus/`: DayZ `serverDZ.cfg`, `cfggameplay.json`, `BEServer_x64.cfg`, a generic INI with `;` and `#` comments, files with a BOM, CRLF and LF line endings, and trailing whitespace. Verify: each corpus file is present with its source noted in `corpus/README.md`.
-- [ ] 2.2 Write the failing tests for this group's rows, plus `corpus_round_trips_byte_for_byte`, which covers every corpus file in every format, in `round_trip_preservation_test.dart`. Verify: they fail because the parsers are missing.
+- [x] 2.2 Write the failing tests for this group's rows, plus `corpus_round_trips_byte_for_byte`, which covers every corpus file in every format, in `round_trip_preservation_test.dart`. Verify: they fail because the parsers are missing.
 - [ ] 2.3 Implement `IniDocument`, `DayzCfgDocument` and `KvDocument` with the `JsonDocument` surface (`parse`, `toSource`, `get`, `set`), on token trees that keep comments, whitespace, line endings, BOM and order (D9). Verify: this group's rows and the corpus test pass, the rows are flipped green, and `dart analyze packages/yagura_formats` is clean.
 
 ## 3. [M3] Config binder and hook edits
