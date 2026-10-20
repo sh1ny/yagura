@@ -54,17 +54,6 @@ The manifest's `settings` SHALL support the types `string`, `integer`, `number`,
 - **WHEN** a row in `itemStackOverrides` omits required `class`
 - **THEN** validation fails with `INVALID_ARGUMENT` naming `itemStackOverrides[1].class`
 
-### Requirement: Secret settings stay unset without a secret store
-A `default` on a `secret` setting SHALL be rejected at load. This version has no secret store, so a value for a `secret` setting SHALL be refused with `FAILED_PRECONDITION` reason `secret_store_unavailable`, and secret settings stay unset. An omitted secret key or the placeholder the daemon returns for it is not a value: it is accepted and leaves the field unset.
-
-#### Scenario: Secret values refused
-- **WHEN** a client submits a value for a `secret` setting, when creating an instance or updating its settings
-- **THEN** the call fails with `FAILED_PRECONDITION` reason `secret_store_unavailable`, nothing is saved, and reading the settings returns the field as `{"secret": true, "set": false}`
-
-#### Scenario: Settings saved with the secret placeholder
-- **WHEN** a client saves settings it read from the daemon, with a changed port and the secret field still `{"secret": true, "set": false}`
-- **THEN** the save succeeds, the port is changed, and the secret field stays unset
-
 ### Requirement: Launch templates
 The manifest SHALL declare the executable per OS and the launch arguments as templates over `settings`, `ports`, `paths` and `os`, supporting conditional entries and list joins. The daemon renders them at start into an argument list without passing through a shell.
 
@@ -131,3 +120,45 @@ The manifest's executable SHALL be the process that runs for the server's lifeti
 #### Scenario: Bootstrapper exits
 - **WHEN** a manifest names a launcher executable that exits within 5 s while spawning the real server
 - **THEN** the start fails with `launch_failed` as specified for the health window, naming the exited executable
+
+### Requirement: Secret settings are write-only
+A `default` on a `secret` setting SHALL be rejected at load, and so SHALL a `secret` field inside an `object` or `list` setting: secret settings are top-level. A secret value SHALL enter only through `SetSecret`, be stored in the secret store and never be returned: reads give `{"secret": true, "set": <bool>}`. In other calls either placeholder or an omitted key leaves the stored value unchanged, and a value fails with `INVALID_ARGUMENT` reason `secret_via_set_secret`. `DeleteSecret` clears it.
+
+#### Scenario: Secret values are write-only
+- **WHEN** a client reads the settings of an instance with a `secret` setting that has a value
+- **THEN** the field is returned as `{"secret": true, "set": true}` and the value is not returned
+
+#### Scenario: Settings saved with the secret placeholder
+- **WHEN** a client saves settings it read from the daemon, with a changed port and the secret field still `{"secret": true, "set": true}`
+- **THEN** the save succeeds, the port is changed, and the stored secret value is unchanged
+
+#### Scenario: Secret value in a settings save
+- **WHEN** a client calls `UpdateSettings` with a plain value for a `secret` setting
+- **THEN** the call fails with `INVALID_ARGUMENT` reason `secret_via_set_secret`, and nothing is saved
+
+#### Scenario: Secret value in a create
+- **WHEN** a client calls `CreateInstance` with a plain value for a `secret` setting
+- **THEN** the call fails with `INVALID_ARGUMENT` reason `secret_via_set_secret`, and no instance is created
+
+#### Scenario: Secret cleared
+- **WHEN** a client calls `DeleteSecret` for a secret setting that has a value
+- **THEN** the value is removed from the secret store and reads return `{"secret": true, "set": false}`
+
+#### Scenario: Default on a secret rejected
+- **WHEN** a manifest declares `default: "changeme"` on a `secret` setting
+- **THEN** the plugin is `rejected` at load with an error naming the setting
+
+#### Scenario: Nested secret rejected
+- **WHEN** a manifest declares a `list` setting `servers` whose rows have a `password` field of type `secret`
+- **THEN** the plugin is `rejected` at load with an error naming `servers.password`
+
+### Requirement: Required secrets are checked at start
+An instance SHALL be created without its secret values. Start SHALL fail with `FAILED_PRECONDITION` reason `secret_required` naming any `required` secret setting that is unset.
+
+#### Scenario: Required secret unset at start
+- **WHEN** a client starts an instance whose `required` secret setting `rcon_password` is unset
+- **THEN** the call fails with `FAILED_PRECONDITION` reason `secret_required` naming `rcon_password`, and the state is unchanged
+
+#### Scenario: Required secret set
+- **WHEN** a client sets `rcon_password` with `SetSecret` and then starts the instance
+- **THEN** the start proceeds past the settings check
