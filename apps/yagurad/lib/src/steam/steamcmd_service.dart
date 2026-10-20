@@ -227,6 +227,158 @@ class SteamCmdService implements SteamService {
   }
 
   @override
+  Future<List<SteamWorkshopItemResult>> downloadWorkshopItems(
+    SteamWorkshopRequest request,
+    SteamRunReporter reporter,
+    CancelToken cancel,
+  ) async {
+    final account = request.account;
+    if (account != null && (request.username ?? '').isEmpty) {
+      throw YaguraException(
+        'steam_account_required',
+        'the Steam account $account has no username',
+        details: {'appId': request.workshopAppId},
+      );
+    }
+    final installation = account ?? anonymousInstallation;
+    _requireAvailable(installation);
+    final release = await _lockFor(installation).acquire(
+      cancel: cancel,
+      onPosition: (_) => reporter.step('waiting_for_steamcmd'),
+    );
+    try {
+      _requireAvailable(installation);
+      cancel.throwIfCancelled();
+      await _ensureBootstrapped(installation, reporter, cancel);
+      return await _runWorkshop(installation, request, reporter, cancel);
+    } finally {
+      release();
+    }
+  }
+
+  /// One `+login` and a `+workshop_download_item` per item (design D5). Each
+  /// item's own line says how it ended; the run is repeated once after a new
+  /// login when the cached one had expired.
+  Future<List<SteamWorkshopItemResult>> _runWorkshop(
+    String installation,
+    SteamWorkshopRequest request,
+    SteamRunReporter reporter,
+    CancelToken cancel,
+  ) async {
+    reporter.step('steam_login');
+    final account = request.account != null;
+    var loggedInAgain = false;
+    while (true) {
+      final outcomes = <String, WorkshopLine>{};
+      var finished = 0;
+      void settle(String item, WorkshopLine line) {
+        if (outcomes.containsKey(item)) return;
+        outcomes[item] = line;
+        reporter.progress(percent: ++finished * 100 / request.items.length);
+      }
+
+      final outcome = await _execute(
+        installation: installation,
+        arguments: [
+          '+login',
+          account ? request.username! : 'anonymous',
+          for (final item in request.items) ...[
+            '+workshop_download_item',
+            '${request.workshopAppId}',
+            item,
+          ],
+          '+quit',
+        ],
+        anyOutputIsProgress: false,
+        reporter: reporter,
+        cancel: cancel,
+        // Each item's lines are the run's progress: a long run of many items
+        // keeps the stall timer fed.
+        countsAsProgress: (line) => _patterns.workshopLine(line) != null,
+        onLine: (line) {
+          switch (_patterns.workshopLine(line)) {
+            case WorkshopStarted():
+              reporter.step('download');
+            case final WorkshopDownloaded done:
+              settle(done.item, done);
+            case final WorkshopFailed failed:
+              settle(failed.item, failed);
+            case null:
+              break;
+          }
+        },
+      );
+      final lines = outcome.tail.toList();
+      final lastLines = _lastLines(lines);
+      if (account) {
+        final login = _patterns.classifyLogin(lines);
+        if (login != null && login.kind != LoginKind.ok) {
+          if (login.kind == LoginKind.reauthNeeded || login.isGuard) {
+            final password = request.rememberedPassword?.call();
+            if (password == null || password.isEmpty || loggedInAgain) {
+              throw YaguraException(
+                'steam_reauth_required',
+                'the Steam login of this account has expired; log in again '
+                    'with its password',
+                details: {'account': request.account},
+              );
+            }
+            loggedInAgain = true;
+            await _loginStep(
+              installation,
+              request.username!,
+              password,
+              reporter,
+              cancel,
+            );
+            reporter.step('steam_login');
+            continue;
+          }
+          if (login.reason != null) {
+            throw YaguraException(
+              login.reason!,
+              login.message!,
+              details: {
+                'appId': request.workshopAppId,
+                'pattern': login.kind.wire,
+              },
+            );
+          }
+        }
+      }
+      return [
+        for (final item in request.items)
+          switch (outcomes[item]) {
+            WorkshopDownloaded() => SteamWorkshopItemResult(item),
+            final WorkshopFailed failed => SteamWorkshopItemResult(
+              item,
+              YaguraException(
+                failed.reason,
+                failed.message,
+                details: {'item': item, 'appId': request.workshopAppId},
+              ),
+            ),
+            _ => SteamWorkshopItemResult(
+              item,
+              YaguraException(
+                'steam_unknown_error',
+                'SteamCMD exited with code ${exitCodeText(outcome.exitCode)} '
+                    'without a result for the workshop item $item; its last '
+                    '${lastLines.length} output lines:\n${lastLines.join('\n')}',
+                details: {
+                  'item': item,
+                  'appId': request.workshopAppId,
+                  'exitCode': outcome.exitCode,
+                  'lines': lastLines,
+                },
+              ),
+            ),
+          },
+      ];
+    }
+  }
+
+  @override
   Future<void> removeInstallation(String account) async {
     // A run in the installation ends first.
     final release = await _lockFor(account).acquire();
@@ -698,6 +850,7 @@ class SteamCmdService implements SteamService {
     void Function(void Function(String why) cutShort)? onGuardMobile,
     void Function(String line)? onLine,
     void Function(SteamProgress progress)? onProgress,
+    bool Function(String line)? countsAsProgress,
   }) async {
     cancel.throwIfCancelled();
     final directory = p.join(steamcmdRoot, installation);
@@ -740,7 +893,9 @@ class SteamCmdService implements SteamService {
       onLine: (line) {
         followed = true;
         lastSignalAt = DateTime.now();
-        if (anyOutputIsProgress) lastProgressAt = lastSignalAt;
+        if (anyOutputIsProgress || (countsAsProgress?.call(line) ?? false)) {
+          lastProgressAt = lastSignalAt;
+        }
         if (_patterns.progressFor(line) case final progress?) {
           report(progress);
         } else {
@@ -795,7 +950,9 @@ class SteamCmdService implements SteamService {
         tail.add(line);
         if (tail.length > 200) tail.removeFirst();
         lastSignalAt = DateTime.now();
-        if (anyOutputIsProgress) lastProgressAt = lastSignalAt;
+        if (anyOutputIsProgress || (countsAsProgress?.call(line) ?? false)) {
+          lastProgressAt = lastSignalAt;
+        }
         final progress = _patterns.progressFor(line);
         if (progress == null) {
           reporter.log(line);

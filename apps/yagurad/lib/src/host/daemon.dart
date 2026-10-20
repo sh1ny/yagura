@@ -10,6 +10,7 @@ import '../admin/admin_server.dart';
 import '../admin/admin_service.dart';
 import '../admin/admin_transport.dart';
 import '../config/bound_file_store.dart';
+import '../content/content.dart';
 import '../hooks/hooks.dart';
 import '../instances/health_check.dart';
 import '../instances/instance.dart' show aclMigrationFailedReason;
@@ -81,6 +82,7 @@ class DaemonConfig {
     this.healthPollInterval = const Duration(milliseconds: 250),
     this.processHealthSettle = const Duration(seconds: 2),
     this.pendingRunWait = const Duration(seconds: 10),
+    this.workshopEndpoint,
   });
 
   final String dataDirectory;
@@ -184,6 +186,10 @@ class DaemonConfig {
 
   /// How long startup waits for a live relay to record its server (D2).
   final Duration pendingRunWait;
+
+  /// The Steam Web API `GetPublishedFileDetails` URL the workshop client
+  /// reads; defaults to Steam's. A seam for tests.
+  final Uri? workshopEndpoint;
 }
 
 /// The daemon core: startup sequence and the services group 8 serves.
@@ -200,6 +206,9 @@ class Daemon {
     required this.instances,
     required this.operations,
     required this.steamAccounts,
+    required this.content,
+    required ContentStore contentStore,
+    required WorkshopClient workshopClient,
     required this.logs,
     required this.startupNotices,
     required this.hooks,
@@ -218,11 +227,15 @@ class Daemon {
        _database = database, // ignore: prefer_initializing_formals
        _admin = admin, // ignore: prefer_initializing_formals
        _steam = steam, // ignore: prefer_initializing_formals
+       _contentStore = contentStore, // ignore: prefer_initializing_formals
+       _workshopClient = workshopClient, // ignore: prefer_initializing_formals
        _logSync = logSync; // ignore: prefer_initializing_formals
 
   final DataDirLock _lock;
   final YaguraDatabase _database;
   final SteamService _steam;
+  final ContentStore _contentStore;
+  final WorkshopClient _workshopClient;
   final AdminServer? _admin;
   final InstanceLogSync _logSync;
   var _closed = false;
@@ -234,6 +247,9 @@ class Daemon {
 
   /// The Steam accounts (design D1).
   final SteamAccounts steamAccounts;
+
+  /// Acquires workshop items into the content store (design D5, D6).
+  final ContentAcquirer content;
   final LogHub logs;
   final List<StartupNotice> startupNotices;
 
@@ -402,6 +418,23 @@ class Daemon {
       clock: config.clock,
       log: (message) => stderr.writeln('yagurad: $message'),
     );
+    final workshopClient = WorkshopClient(
+      endpoint: config.workshopEndpoint ?? WorkshopClient.defaultEndpoint,
+    );
+    final contentStore = ContentStore(
+      database: database,
+      contentPath: dataDirectory.contentPath,
+      clock: config.clock,
+      log: (message) => stderr.writeln('yagurad: $message'),
+    );
+    final content = ContentAcquirer(
+      runner: runner,
+      store: contentStore,
+      workshop: workshopClient,
+      steam: config.steam,
+      steamcmdRoot: dataDirectory.steamcmdPath,
+      log: (message) => stderr.writeln('yagurad: $message'),
+    );
     final registry = PluginRegistry(
       pluginsDirectory: dataDirectory.pluginsPath,
       hooks: hooks,
@@ -497,6 +530,9 @@ class Daemon {
     // After the runner marked the unfinished operations interrupted: an
     // account still being added is gone with its password and installation.
     await degraded('steam_accounts', steamAccounts.recoverAdding);
+    // The staging area a killed daemon left is emptied, and versions nothing
+    // uses any more are collected (design D6).
+    await degraded('content_store', contentStore.startup);
     // After the recovery has ended the runs whose relay is gone: what is
     // left names the versions still in use.
     if (config.versionSweeper case final sweeper?) {
@@ -643,6 +679,9 @@ class Daemon {
       instances: manager,
       operations: runner,
       steamAccounts: steamAccounts,
+      content: content,
+      contentStore: contentStore,
+      workshopClient: workshopClient,
       logs: logs,
       startupNotices: List.unmodifiable(notices),
       hooks: hooks,
@@ -714,6 +753,8 @@ class Daemon {
     await instances.close();
     await logs.close();
     await operations.close();
+    _contentStore.close();
+    _workshopClient.close();
     await _steam.close();
     security?.close();
     _database.close();

@@ -1,3 +1,4 @@
+import '../errors.dart';
 import '../operations/cancel_token.dart';
 import '../operations/prompt_broker.dart';
 
@@ -78,6 +79,42 @@ class SteamLoginRequest {
   final String password;
 }
 
+/// A SteamCMD run that downloads workshop items (design D5): one
+/// `+workshop_download_item <app> <item>` per item.
+class SteamWorkshopRequest {
+  const SteamWorkshopRequest({
+    required this.workshopAppId,
+    required this.items,
+    this.account,
+    this.username,
+    this.rememberedPassword,
+  });
+
+  /// The app the workshop belongs to (221100 for DayZ).
+  final int workshopAppId;
+  final List<String> items;
+
+  /// Steam account id, or null for the anonymous login.
+  final String? account;
+  final String? username;
+
+  /// The password the daemon remembers for [account], read when the cached
+  /// login turned out to be expired.
+  final String? Function()? rememberedPassword;
+}
+
+/// How one item of a workshop run ended.
+class SteamWorkshopItemResult {
+  const SteamWorkshopItemResult(this.item, [this.error]);
+
+  final String item;
+
+  /// Why the item was not downloaded; null when it was.
+  final YaguraException? error;
+
+  bool get ok => error == null;
+}
+
 /// The Steam service (design D7). `SteamCmdService` implements it; tests of
 /// the other services use a fake.
 abstract interface class SteamService {
@@ -97,6 +134,17 @@ abstract interface class SteamService {
   /// [OperationCancelled].
   Future<void> login(
     SteamLoginRequest request,
+    SteamRunReporter reporter,
+    CancelToken cancel,
+  );
+
+  /// Downloads the workshop items of [request] in one SteamCMD run, into
+  /// `steamapps/workshop/content/<app>/<item>/` below the installation of the
+  /// account (the anonymous installation without one), and says how each
+  /// item ended. The run as a whole failing (login, stall) throws; a cancel
+  /// throws [OperationCancelled].
+  Future<List<SteamWorkshopItemResult>> downloadWorkshopItems(
+    SteamWorkshopRequest request,
     SteamRunReporter reporter,
     CancelToken cancel,
   );

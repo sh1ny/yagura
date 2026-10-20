@@ -183,7 +183,7 @@ class PromptBroker {
       expiresAt: _clock().add(spec.wait),
       acceptsAnswer: spec.acceptsAnswer,
     );
-    final entry = _Entry(this, prompt, [subject], onResolved);
+    final entry = _Entry(this, prompt, [_Member(subject, onResolved)]);
     entry.timer = Timer(
       spec.wait,
       () => _resolve(entry, PromptOutcome.expired),
@@ -191,6 +191,27 @@ class PromptBroker {
     _entries[prompt.id] = entry;
     _events.add(PromptRaised(entry.pending));
     return entry;
+  }
+
+  /// Attaches [subject] to the pending prompt [ticket] raised for another
+  /// subject (design D2, "Prompts in pipeline runs"): one prompt serves every
+  /// operation that waits on the same run. Publishes no new `PromptRaised`.
+  /// [onResolved] runs when the prompt is resolved, or when the subject is
+  /// detached by [cancelOperation]. A prompt that is no longer pending is
+  /// ignored.
+  void join(
+    PromptTicket ticket,
+    PromptSubject subject, {
+    void Function(Prompt prompt, PromptResult result)? onResolved,
+  }) {
+    final entry = _entries[ticket.prompt.id];
+    if (entry == null || _closed) return;
+    if (entry.members.any(
+      (m) => m.subject.operationId == subject.operationId,
+    )) {
+      return;
+    }
+    entry.members.add(_Member(subject, onResolved));
   }
 
   /// Answers [promptId] of [operationId] with [value] on behalf of
@@ -231,11 +252,23 @@ class PromptBroker {
     _resolve(entry, PromptOutcome.answered, value: value, by: byDeviceId);
   }
 
-  /// Resolves the pending prompt of [operationId] as cancelled.
+  /// Ends the wait of [operationId] on its pending prompt. A prompt that
+  /// other operations still wait on stays pending and only loses this
+  /// subject; one that nobody else waits on is resolved as cancelled.
   void cancelOperation(String operationId) {
     for (final entry in _entries.values.toList()) {
-      if (entry.subjects.any((s) => s.operationId == operationId)) {
+      final member = entry.members
+          .where((m) => m.subject.operationId == operationId)
+          .firstOrNull;
+      if (member == null) continue;
+      if (entry.members.length == 1) {
         _resolve(entry, PromptOutcome.cancelled);
+      } else {
+        entry.members.remove(member);
+        member.onResolved?.call(
+          entry.prompt,
+          const PromptResult(PromptOutcome.cancelled),
+        );
       }
     }
   }
@@ -259,25 +292,34 @@ class PromptBroker {
     if (_closed || _entries.remove(entry.prompt.id) == null) return;
     entry.timer?.cancel();
     final result = PromptResult(outcome, value: value, byDeviceId: by);
-    entry.onResolved?.call(entry.prompt, result);
+    for (final member in entry.members.toList()) {
+      member.onResolved?.call(entry.prompt, result);
+    }
     _events.add(PromptResolved(entry.prompt.id, by, outcome));
     entry.completer.complete(result);
   }
 }
 
+class _Member {
+  _Member(this.subject, this.onResolved);
+
+  final PromptSubject subject;
+  final void Function(Prompt prompt, PromptResult result)? onResolved;
+}
+
 class _Entry implements PromptTicket {
-  _Entry(this._broker, this.prompt, this.subjects, this.onResolved);
+  _Entry(this._broker, this.prompt, this.members);
 
   final PromptBroker _broker;
   @override
   final Prompt prompt;
-  final List<PromptSubject> subjects;
-  final void Function(Prompt prompt, PromptResult result)? onResolved;
+  final List<_Member> members;
   final completer = Completer<PromptResult>();
   Timer? timer;
 
-  PendingPrompt get pending =>
-      PendingPrompt(prompt, List.unmodifiable(subjects));
+  List<PromptSubject> get subjects => [for (final m in members) m.subject];
+
+  PendingPrompt get pending => PendingPrompt(prompt, subjects);
 
   @override
   Future<PromptResult> get result => completer.future;

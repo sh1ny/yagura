@@ -6,7 +6,7 @@
 # apps/yagurad; a test fails when the embedded copy is out of date.
 
 # Version of this table; bump it when patterns change.
-version: 3
+version: 4
 
 # Steps the output moves through. The first line matching `match` starts the
 # step; `steam_login` is also started by the daemon before SteamCMD prints.
@@ -101,3 +101,21 @@ login:
   live:
     connection_log: 'logs/connection_log.txt'
     guard_mobile: 'Waiting for confirmation'
+
+# Lines of a `+workshop_download_item` run (design D5). The wording is
+# modelled from SteamCMD's usual output; no real workshop run is recorded in
+# docs/spikes/m3-steam-guard.md. Each item gets a `started` line and then a
+# `downloaded` or a `failed` line, which are the run's progress: they reset
+# the stall timer. A failed item takes the reason of the first `reasons`
+# entry whose `why` matches SteamCMD's parenthesised text.
+workshop:
+  started: 'Downloading item (?<item>\d+)'
+  downloaded: 'Success\. Downloaded item (?<item>\d+)'
+  failed: 'ERROR! Download item (?<item>\d+) failed \((?<why>[^)]*)\)'
+  reasons:
+    - why: 'File Not Found|Access Denied'
+      reason: workshop_item_unavailable
+      message: "SteamCMD could not download the workshop item {item} (SteamCMD: {why}): it is gone, private or not available to this account."
+    - why: '.*'
+      reason: steam_unknown_error
+      message: "SteamCMD could not download the workshop item {item} (SteamCMD: {why})."

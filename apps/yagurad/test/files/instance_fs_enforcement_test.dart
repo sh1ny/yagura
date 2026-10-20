@@ -22,6 +22,9 @@ final _fileCall = RegExp(
 /// Files under `lib/src` allowed to make those calls, and why.
 const _allowed = <String, String>{
   // Daemon-owned locations, none of them inside an instance directory.
+  'content/content_store.dart':
+      'the content store and its staging area in <data>/content; the SteamCMD '
+      'tree is read through ConfinedFs.copyOut, which refuses links',
   'host/data_dir_lock.dart': 'the lock file in the data directory',
   'firewall/powershell_firewall.dart':
       'the request files for PowerShell in <data>/tmp or the install folder tmp, '

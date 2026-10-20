@@ -224,6 +224,19 @@ class FakeSteamService implements SteamService {
     if (loginFailure case final error?) throw error;
   }
 
+  /// The workshop runs requested.
+  final workshopRuns = <SteamWorkshopRequest>[];
+
+  @override
+  Future<List<SteamWorkshopItemResult>> downloadWorkshopItems(
+    SteamWorkshopRequest request,
+    SteamRunReporter reporter,
+    CancelToken cancel,
+  ) async {
+    workshopRuns.add(request);
+    return [for (final item in request.items) SteamWorkshopItemResult(item)];
+  }
+
   @override
   Future<void> removeInstallation(String account) async => removed.add(account);
 

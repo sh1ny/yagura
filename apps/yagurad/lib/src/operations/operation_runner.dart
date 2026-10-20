@@ -41,6 +41,14 @@ abstract interface class OperationContext {
   /// for input until the ticket resolves; its [PromptTicket.result] says how.
   PromptTicket raisePrompt(PromptSpec spec);
 
+  /// Reports step `waiting_for_steamcmd` at [position] in line: the operation
+  /// waits on a pipeline run that has no lock or slot yet (design D6).
+  void waiting(int position);
+
+  /// Joins the pending prompt [ticket] of a pipeline run this operation waits
+  /// on (design D2, "Prompts in pipeline runs").
+  void joinPrompt(PromptTicket ticket);
+
   /// Progress of [step]; [percent] is 0-100 or -1 when unknown. Only the
   /// latest per step is retained.
   void progress(
@@ -360,6 +368,32 @@ class OperationRunner {
       controller.onCancel = () => op.listeners.remove(controller);
     }
     return controller.stream;
+  }
+
+  /// Takes the SteamCMD installation lock of [installation], then a heavy
+  /// slot unless [slot] is false, and returns the function that gives both
+  /// back (design D6: the mod pipeline's runs hold them, not the operations
+  /// that wait on them).
+  Future<void Function()> acquireHeavy({
+    String installation = 'anonymous',
+    bool slot = true,
+    CancelToken? cancel,
+    void Function(int position)? onPosition,
+  }) async {
+    final releaseLock = await _lockFor(installation)
+        .acquire(cancel: cancel, onPosition: onPosition);
+    try {
+      final releaseSlot = slot
+          ? await _slots.acquire(cancel: cancel, onPosition: onPosition)
+          : () {};
+      return () {
+        releaseSlot();
+        releaseLock();
+      };
+    } on Object {
+      releaseLock();
+      rethrow;
+    }
   }
 
   // ---- queries ------------------------------------------------------------
@@ -732,23 +766,46 @@ class _Context implements OperationContext {
       }
     }
 
-    final releaseLock = await _runner
-        ._lockFor(installation)
-        .acquire(cancel: cancel, onPosition: onPosition);
+    final release = await _runner.acquireHeavy(
+      installation: installation,
+      slot: slot,
+      cancel: cancel,
+      onPosition: onPosition,
+    );
     try {
-      final releaseSlot = slot
-          ? await _runner._slots.acquire(cancel: cancel, onPosition: onPosition)
-          : () {};
-      try {
-        if (waiting) _op.step = before;
-        _checkOpen();
-        cancel.throwIfCancelled();
-        return await body();
-      } finally {
-        releaseSlot();
-      }
+      if (waiting) _op.step = before;
+      _checkOpen();
+      cancel.throwIfCancelled();
+      return await body();
     } finally {
-      releaseLock();
+      release();
+    }
+  }
+
+  @override
+  void waiting(int position) {
+    _checkOpen();
+    _op.waitPosition = position;
+    if (_op.step != 'waiting_for_steamcmd') beginStep('waiting_for_steamcmd');
+  }
+
+  @override
+  void joinPrompt(PromptTicket ticket) {
+    _checkOpen();
+    cancel.throwIfCancelled();
+    _runner.prompts.join(
+      ticket,
+      PromptSubject(
+        operationId: _op.id,
+        instanceId: _op.instanceId,
+        accountId: _op.accountId,
+      ),
+      onResolved: (prompt, result) =>
+          _runner._promptResolved(_op, prompt, result),
+    );
+    // A prompt that ended meanwhile is not joined.
+    if (_runner.prompts.pendingFor(_op.id)?.id == ticket.prompt.id) {
+      _runner._promptRaised(_op, ticket.prompt);
     }
   }
 

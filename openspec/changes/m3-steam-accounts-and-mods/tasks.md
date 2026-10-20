@@ -86,20 +86,20 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | steam-content → SteamCMD is installed and managed by the daemon | First install bootstraps SteamCMD | apps/yagurad/test/steam/steamcmd_is_installed_and_managed_by_the_daemon_test.dart | first_install_bootstraps_steamcmd | 5 | green |
 | steam-content → SteamCMD is installed and managed by the daemon | Account installation bootstrapped | apps/yagurad/test/steam/steamcmd_is_installed_and_managed_by_the_daemon_test.dart | account_installation_bootstrapped | 5 | green |
 | steam-content → SteamCMD is installed and managed by the daemon | SteamCMD download fails | apps/yagurad/test/steam/steamcmd_is_installed_and_managed_by_the_daemon_test.dart | steamcmd_download_fails | 5 | green |
-| mod-management → Shared, versioned, immutable content store | Two instances share one download | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | two_instances_share_one_download | 6 | red |
-| mod-management → Shared, versioned, immutable content store | Update while another instance runs | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | update_while_another_instance_runs | 6 | red |
-| mod-management → Shared, versioned, immutable content store | Update requested for a running instance | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | update_requested_for_a_running_instance | 6 | red |
-| mod-management → Shared, versioned, immutable content store | One of two waiters cancels | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | one_of_two_waiters_cancels | 6 | red |
-| mod-management → Shared, versioned, immutable content store | Interrupted download | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | interrupted_download | 6 | red |
-| mod-management → Shared, versioned, immutable content store | Removing a mod from one instance | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | removing_a_mod_from_one_instance | 6 | red |
-| mod-management → Shared, versioned, immutable content store | Unreferenced version collected | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | unreferenced_version_collected | 6 | red |
-| mod-management → Shared, versioned, immutable content store | Not enough disk for a mod | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | not_enough_disk_for_a_mod | 6 | red |
+| mod-management → Shared, versioned, immutable content store | Two instances share one download | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | two_instances_share_one_download | 6 | green |
+| mod-management → Shared, versioned, immutable content store | Update while another instance runs | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | update_while_another_instance_runs | 6 | green |
+| mod-management → Shared, versioned, immutable content store | Update requested for a running instance | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | update_requested_for_a_running_instance | 6 | green |
+| mod-management → Shared, versioned, immutable content store | One of two waiters cancels | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | one_of_two_waiters_cancels | 6 | green |
+| mod-management → Shared, versioned, immutable content store | Interrupted download | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | interrupted_download | 6 | green |
+| mod-management → Shared, versioned, immutable content store | Removing a mod from one instance | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | removing_a_mod_from_one_instance | 6 | green |
+| mod-management → Shared, versioned, immutable content store | Unreferenced version collected | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | unreferenced_version_collected | 6 | green |
+| mod-management → Shared, versioned, immutable content store | Not enough disk for a mod | apps/yagurad/test/mods/shared_versioned_immutable_content_store_test.dart | not_enough_disk_for_a_mod | 6 | green |
 | steam-content → SteamCMD runs are bounded and cleaned up | Stalled download | apps/yagurad/test/steam/steamcmd_runs_are_bounded_and_cleaned_up_test.dart | stalled_download | 5 | green |
 | steam-content → SteamCMD runs are bounded and cleaned up | Long download that keeps progressing | apps/yagurad/test/steam/steamcmd_runs_are_bounded_and_cleaned_up_test.dart | long_download_that_keeps_progressing | 5 | green |
 | steam-content → SteamCMD runs are bounded and cleaned up | Stray SteamCMD after a crash | apps/yagurad/test/steam/steamcmd_runs_are_bounded_and_cleaned_up_test.dart | stray_steamcmd_after_a_crash | 5 | green |
 | steam-content → SteamCMD runs are bounded and cleaned up | Stray SteamCMD cannot be terminated | apps/yagurad/test/steam/steamcmd_runs_are_bounded_and_cleaned_up_test.dart | stray_steamcmd_cannot_be_terminated | 5 | green |
-| steam-content → Workshop downloads | Workshop item downloaded | apps/yagurad/test/steam/workshop_downloads_test.dart | workshop_item_downloaded | 6 | red |
-| steam-content → Workshop downloads | Item removed from the workshop | apps/yagurad/test/steam/workshop_downloads_test.dart | item_removed_from_the_workshop | 6 | red |
+| steam-content → Workshop downloads | Workshop item downloaded | apps/yagurad/test/steam/workshop_downloads_test.dart | workshop_item_downloaded | 6 | green |
+| steam-content → Workshop downloads | Item removed from the workshop | apps/yagurad/test/steam/workshop_downloads_test.dart | item_removed_from_the_workshop | 6 | green |
 | daemon-protocol → Instance state and event stream | Snapshot then deltas | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | snapshot_then_deltas | 7 | green |
 | daemon-protocol → Instance state and event stream | Mod update count delta | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | mod_update_count_delta | 7 | red |
 | daemon-protocol → Instance state and event stream | State-only delta | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | state_only_delta | 7 | green |
@@ -238,7 +238,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 - [x] 6.1 Write the failing tests for this group's red rows against the fake Web API and fake SteamCMD. Verify: they fail because the workshop client and the content store are missing.
 - [x] 6.2 Implement the workshop metadata client (D5): batches of 100, 1 request/s, a 15 s timeout, a configurable base URL, the version re-read after download, and `workshop_item_changing`. Verify: `workshop_item_downloaded` and `item_removed_from_the_workshop` pass.
-- [ ] 6.3 Implement the content store (D6):
+- [x] 6.3 Implement the content store (D6):
   - pipeline-owned acquisition runs that take the runner's installation lock and heavy slot, with their own cancel token and progress fanned out to waiters;
   - waiters that hold no lock or slot (`waiting_for_steamcmd`);
   - a shared prompt for each run (D2 "Prompts in pipeline runs");
