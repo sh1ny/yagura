@@ -62,3 +62,26 @@ The daemon SHALL persist instances, settings, mods and operations in its databas
 #### Scenario: Secrets excluded from instance.json
 - **WHEN** an instance has a value set for its `secret` setting `rconPassword`
 - **THEN** `instance.json` contains `"rconPassword": {"secret": true}` and the value appears nowhere in the file
+
+### Requirement: Error reasons have defined exits
+An `error` instance's reason SHALL allow only these exits: `crash_loop` by Start or Acknowledge; `update_interrupted` and update failures by Update, Validate or Acknowledge; `restore_interrupted` by a restore or Acknowledge; `settings_invalid` by saving valid settings; `plugin_missing` by a reload that restores the plugin; `run_record_rejected` by Stop or Acknowledge. Stop (no operation running) and Delete (none queued or running) work from any reason; other requests fail with `invalid_state`.
+
+#### Scenario: Acknowledge a crash loop
+- **WHEN** a client acknowledges an instance in `error` with `crash_loop`
+- **THEN** the instance becomes `stopped` and its restart counter is reset
+
+#### Scenario: Start refused with invalid settings
+- **WHEN** a client starts an instance in `error` with `settings_invalid`
+- **THEN** the call fails with `FAILED_PRECONDITION` reason `invalid_state` naming `settings_invalid`, and the state is unchanged
+
+#### Scenario: Update clears an interrupted update
+- **WHEN** a client updates an instance in `error` with `update_interrupted` and the update succeeds
+- **THEN** the instance ends `stopped` and the error reason is cleared
+
+#### Scenario: Acknowledge a rejected run record
+- **WHEN** a client acknowledges an instance in `error` with `run_record_rejected`
+- **THEN** the instance becomes `stopped`, its run record is cleared, and a warning naming the relay PID is kept on the instance
+
+#### Scenario: Start refused after a rejected run record
+- **WHEN** a client starts an instance in `error` with `run_record_rejected`
+- **THEN** the call fails with `FAILED_PRECONDITION` reason `invalid_state` naming `run_record_rejected`

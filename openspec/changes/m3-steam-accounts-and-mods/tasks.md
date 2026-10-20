@@ -21,6 +21,17 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | host-service → Data directory layout | Instance on another drive | apps/yagurad/integration_test/admin/instance_roots_test.dart | instance_on_another_drive (elevated) | 1 | green |
 | host-service → Data directory layout | Root writable by non-administrators | apps/yagurad/integration_test/admin/instance_roots_test.dart | root_writable_by_non_administrators (elevated) | 1 | green |
 | host-service → Data directory layout | Root still in use | apps/yagurad/integration_test/admin/instance_roots_test.dart | root_still_in_use (elevated) | 1 | green |
+| host-service → Startup sequence | Migration with backup | apps/yagurad/test/host/startup_sequence_test.dart | migration_with_backup | 11 | green |
+| host-service → Startup sequence | Migration fails | apps/yagurad/test/host/startup_sequence_test.dart | migration_fails | 11 | green |
+| host-service → Startup sequence | Data directory used by a dev daemon first | apps/yagurad/test/host/startup_sequence_test.dart | data_directory_used_by_a_dev_daemon_first | 11 | green |
+| host-service → Startup sequence | Data directory created by an earlier daemon | apps/yagurad/integration_test/service/startup_sequence_service_test.dart | data_directory_created_by_an_earlier_daemon (elevated) | 11 | green |
+| host-service → Startup sequence | Data directory is a link | apps/yagurad/integration_test/service/startup_sequence_service_test.dart | data_directory_is_a_link (elevated) | 11 | green |
+| host-service → Startup sequence | Layout marker planted by a standard user | apps/yagurad/integration_test/service/startup_sequence_service_test.dart | layout_marker_planted_by_a_standard_user (elevated) | 11 | green |
+| host-service → Startup sequence | Link in the data directory at first service start | apps/yagurad/integration_test/service/startup_sequence_service_test.dart | link_in_the_data_directory_at_first_service_start (elevated) | 11 | green |
+| host-service → Startup sequence | Firewall unavailable at startup | apps/yagurad/test/host/startup_sequence_test.dart | firewall_unavailable_at_startup | 11 | green |
+| host-service → Unreadable secrets are reset in service mode | Secrets protected for another account | apps/yagurad/test/host/secret_store_test.dart | secrets_protected_for_another_account | 11 | green |
+| host-service → Unreadable secrets are reset in service mode | Secrets protected on another machine | apps/yagurad/test/host/secret_store_test.dart | secrets_protected_on_another_machine | 11 | green |
+| host-service → Unreadable secrets are reset in service mode | DPAPI fault deletes nothing | apps/yagurad/test/host/secret_store_test.dart | dpapi_fault_deletes_nothing | 11 | green |
 | config-bindings → Round-trip preservation | Unchanged file stays identical | packages/yagura_formats/test/round_trip_preservation_test.dart | unchanged_file_stays_identical | 2 | green |
 | config-bindings → Round-trip preservation | Comments and unknown keys survive | packages/yagura_formats/test/round_trip_preservation_test.dart | comments_and_unknown_keys_survive | 2 | green |
 | config-bindings → Round-trip preservation | Unparseable file | packages/yagura_formats/test/round_trip_preservation_test.dart | unparseable_file | 2 | green |
@@ -100,6 +111,13 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | steam-content → SteamCMD runs are bounded and cleaned up | Stray SteamCMD cannot be terminated | apps/yagurad/test/steam/steamcmd_runs_are_bounded_and_cleaned_up_test.dart | stray_steamcmd_cannot_be_terminated | 5 | green |
 | steam-content → Workshop downloads | Workshop item downloaded | apps/yagurad/test/steam/workshop_downloads_test.dart | workshop_item_downloaded | 6 | green |
 | steam-content → Workshop downloads | Item removed from the workshop | apps/yagurad/test/steam/workshop_downloads_test.dart | item_removed_from_the_workshop | 6 | green |
+| steam-content → Install, update and validate apps | Update reports progress | apps/yagurad/test/steam/install_update_and_validate_apps_test.dart | update_reports_progress | 11 | green |
+| steam-content → Install, update and validate apps | SteamCMD runs without SYSTEM rights | apps/yagurad/integration_test/service/steamcmd_account_test.dart | steamcmd_runs_without_system_rights (elevated) | 11 | green |
+| steam-content → Install, update and validate apps | SteamCMD separated from game servers | apps/yagurad/integration_test/service/steamcmd_account_test.dart | steamcmd_separated_from_game_servers (elevated) | 11 | green |
+| steam-content → Install, update and validate apps | Link planted into a system folder during an update | apps/yagurad/integration_test/service/steamcmd_account_test.dart | link_planted_into_a_system_folder_during_an_update (elevated) | 11 | green |
+| steam-content → Install, update and validate apps | Two instances of one app installed at once | apps/yagurad/test/steam/install_update_and_validate_apps_test.dart | two_instances_of_one_app_installed_at_once | 11 | green |
+| steam-content → Install, update and validate apps | Not enough disk space | apps/yagurad/test/steam/install_update_and_validate_apps_test.dart | not_enough_disk_space | 11 | green |
+| steam-content → Install, update and validate apps | First install without a known size | apps/yagurad/test/steam/install_update_and_validate_apps_test.dart | first_install_without_a_known_size | 11 | green |
 | daemon-protocol → Instance state and event stream | Snapshot then deltas | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | snapshot_then_deltas | 7 | green |
 | daemon-protocol → Instance state and event stream | Mod update count delta | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | mod_update_count_delta | 7 | green |
 | daemon-protocol → Instance state and event stream | State-only delta | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | state_only_delta | 7 | green |
@@ -117,6 +135,11 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | instance-lifecycle → Updates stop and restart a running server | Update while running | apps/yagurad/test/instances/updates_stop_and_restart_a_running_server_test.dart | update_while_running | 7 | green |
 | instance-lifecycle → Updates stop and restart a running server | Update fails after stop | apps/yagurad/test/instances/updates_stop_and_restart_a_running_server_test.dart | update_fails_after_stop | 7 | green |
 | instance-lifecycle → Updates stop and restart a running server | Mod update fails after stop | apps/yagurad/test/instances/updates_stop_and_restart_a_running_server_test.dart | mod_update_fails_after_stop | 7 | green |
+| instance-lifecycle → Error reasons have defined exits | Acknowledge a crash loop | apps/yagurad/test/instances/error_reasons_have_defined_exits_test.dart | acknowledge_a_crash_loop | 11 | green |
+| instance-lifecycle → Error reasons have defined exits | Start refused with invalid settings | apps/yagurad/test/instances/error_reasons_have_defined_exits_test.dart | start_refused_with_invalid_settings | 11 | green |
+| instance-lifecycle → Error reasons have defined exits | Update clears an interrupted update | apps/yagurad/test/instances/error_reasons_have_defined_exits_test.dart | update_clears_an_interrupted_update | 11 | green |
+| instance-lifecycle → Error reasons have defined exits | Acknowledge a rejected run record | apps/yagurad/test/instances/error_reasons_have_defined_exits_test.dart | acknowledge_a_rejected_run_record | 11 | green |
+| instance-lifecycle → Error reasons have defined exits | Start refused after a rejected run record | apps/yagurad/test/instances/error_reasons_have_defined_exits_test.dart | start_refused_after_a_rejected_run_record | 11 | green |
 | mod-management → Key files and post-processing | Bikeys synced | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | bikeys_synced | 7 | green |
 | mod-management → Key files and post-processing | Shared key kept | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | shared_key_kept | 7 | green |
 | mod-management → Key files and post-processing | Admin's own key with the same name | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | admin_s_own_key_with_the_same_name | 7 | green |
@@ -338,5 +361,6 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 - Archive this change after its PR merges, and run `specwright-roadmap close` for M3 once exit criteria 2 and 3 have the user's results.
 - The material this change took from `platform-backlog` (groups 14-17, decisions D8 and D19, and the M3 requirements) is already deleted there. M4 starts from what is left.
+- Once this change is archived, `platform-backlog`'s config-bindings delta still ADDs "Supported formats", which this change adds first, and its archive would refuse it. Turn that block into a MODIFIED one that keeps this change's scenarios ("Format of a later version" and the others) before M4 plans from it. It cannot be changed earlier: a MODIFIED block fails validation until the main spec has the requirement.
 - When a task adds a dependency to any workspace package, re-run the dependency skill discovery and update `.claude/skills/UPSTREAM.json`.
 - Releases are off (`release.enabled: false`), so no version bump task.

@@ -130,7 +130,7 @@ The daemon SHALL download and bootstrap SteamCMD on first need into its data dir
 - **THEN** the operation fails with `steamcmd_unavailable` and the HTTP status or network error, and no partial SteamCMD directory is left marked as ready
 
 ### Requirement: SteamCMD runs are bounded and cleaned up
-A SteamCMD step SHALL fail after 15 minutes without download progress or 12 hours in total. Download progress SHALL be read while SteamCMD runs, from its own log, because SteamCMD reports its console output to the daemon only when it exits. SteamCMD processes SHALL end when the daemon ends, and at startup the daemon SHALL terminate any SteamCMD process running from its SteamCMD directories before accepting operations. If one cannot be terminated, that installation is unavailable: operations that need it fail with `steamcmd_unavailable` and start no SteamCMD process until a sweep, retried every 60 s, succeeds.
+A SteamCMD step SHALL fail after 15 minutes without download progress or 12 hours in total, reading progress from its log (console output arrives only at exit). SteamCMD processes SHALL end with the daemon; at startup the daemon SHALL terminate any SteamCMD running from its directories before accepting operations. One it cannot terminate makes that installation unavailable: operations needing it fail with `steamcmd_unavailable`, starting no SteamCMD, until a sweep retried every 60 s succeeds.
 
 #### Scenario: Stalled download
 - **WHEN** SteamCMD reports no download progress for 15 minutes
@@ -147,3 +147,34 @@ A SteamCMD step SHALL fail after 15 minutes without download progress or 12 hour
 #### Scenario: Stray SteamCMD cannot be terminated
 - **WHEN** the startup sweep cannot terminate a SteamCMD process running from the anonymous installation
 - **THEN** the API listener still opens with a notice, installs fail with `steamcmd_unavailable` without starting another SteamCMD, and installs run again once a retried sweep succeeds
+
+### Requirement: Install, update and validate apps
+The daemon SHALL install and update an instance's app with `app_update <app_id>` (plugin `branch`, optional beta password) into the instance directory, with progress and a `validate` option, after requiring free space of twice the app's last size here, else twice `steam.size_hint_bytes` (neither: skip it, warn `disk_check_skipped`). In service mode SteamCMD SHALL run as a low-privilege account on its own desktop, unable to write system folders or the data directory outside SteamCMD installs.
+
+#### Scenario: Update reports progress
+- **WHEN** an update downloads 1.2 GB
+- **THEN** progress events report bytes and percent at least every 2 s until completion
+
+#### Scenario: SteamCMD runs without SYSTEM rights
+- **WHEN** an install runs in service mode
+- **THEN** the SteamCMD process runs as `yagura-steam`, not as LocalSystem
+
+#### Scenario: SteamCMD separated from game servers
+- **WHEN** instance A updates while instance B's server runs
+- **THEN** SteamCMD runs on a window station and desktop other than the one B's server runs on
+
+#### Scenario: Link planted into a system folder during an update
+- **WHEN** instance A is updating and a junction inside A's directory points at `C:\Windows\System32` while SteamCMD writes through it
+- **THEN** SteamCMD's writes through the junction fail with access denied, and no file in system folders or in the data directory outside SteamCMD installations changes
+
+#### Scenario: Two instances of one app installed at once
+- **WHEN** two Valheim instances are installed concurrently
+- **THEN** the installs run one after the other, the second reports step `waiting_for_steamcmd` meanwhile, and each instance directory contains the full app
+
+#### Scenario: Not enough disk space
+- **WHEN** the volume has less free space than twice the app's last known size
+- **THEN** the operation fails with `insufficient_disk` naming the volume, free bytes and required bytes, before SteamCMD downloads anything
+
+#### Scenario: First install without a known size
+- **WHEN** an app is installed for the first time on this host and its manifest has no `steam.size_hint_bytes`
+- **THEN** the install runs without the disk check, and the operation shows warning `disk_check_skipped`
