@@ -4,23 +4,10 @@
 
 Gives the admin one desktop application to manage several Yagura daemons, rendering each game's settings from its plugin schema and showing operations, prompts, logs and consoles live.
 
-## ADDED Requirements
-
-### Requirement: Operations and interactive prompts
-The client SHALL show running and queued operations with progress, and SHALL prompt the admin when an operation asks for input (Steam Guard code or mobile approval), sending the answer back to the daemon.
-
-#### Scenario: Steam Guard prompt
-- **WHEN** an operation enters `waiting_for_input` with a prompt of kind `authenticator`
-- **THEN** the client shows a code entry dialog naming the Steam account, and submits the code to that operation
-
-#### Scenario: Prompt answered elsewhere
-- **WHEN** another client answers the same prompt first
-- **THEN** this client's dialog closes and shows that the prompt was answered by the other device
-
 ## MODIFIED Requirements
 
 ### Requirement: Forms rendered from plugin schemas
-The client SHALL render instance settings from the plugin's settings schema: an input per type, nested groups for objects, editable tables for lists, grouping and an advanced section, client-side validation with the schema's constraints, and the daemon's field errors shown on the fields.
+The client SHALL render instance settings from the plugin's settings schema: an input per type, nested groups for objects, editable tables for lists, grouping and an advanced section, client-side validation with the schema's constraints, and the daemon's field errors shown on the fields. Saving SHALL send the revision the form was loaded from. Secret values entered in the form SHALL be sent only with `SetSecret`.
 
 #### Scenario: Repeatable list as a table
 - **WHEN** an ARK:SA instance's settings are opened
@@ -33,6 +20,14 @@ The client SHALL render instance settings from the plugin's settings schema: an 
 #### Scenario: Unknown field type
 - **WHEN** a schema contains a type the client does not know
 - **THEN** the field is shown read-only with its raw JSON value and a notice, and the rest of the form works
+
+#### Scenario: Create an instance with a secret
+- **WHEN** the user creates an instance and enters an RCON password in the form
+- **THEN** the client calls `CreateInstance` without the value, then `SetSecret` with it, and shows the instance with the secret `set`
+
+#### Scenario: Someone else saved first
+- **WHEN** saving fails with `revision_conflict`
+- **THEN** the client reloads the instance, shows which fields differ from the user's unsaved edits, and keeps the edits for the user to re-apply
 
 ### Requirement: Logs and console views
 The client SHALL show each instance's log sources with backlog and live follow, search within the loaded lines, pause, and a console for RCON-capable instances with command history. While paused, a view SHALL hold up to 10,000 new lines; beyond that it drops the oldest held lines and shows their count on resume.
