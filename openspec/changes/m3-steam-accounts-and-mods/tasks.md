@@ -53,8 +53,8 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | plugin-manifest → Stop and health declarations | Unsupported stop strategy | packages/yagura_plugin/test/stop_and_health_declarations_test.dart | unsupported_stop_strategy | 4 | green |
 | plugin-manifest → Stop and health declarations | Bindings and mods sections accepted | packages/yagura_plugin/test/stop_and_health_declarations_test.dart | bindings_and_mods_sections_accepted | 4 | green |
 | plugin-manifest → Stop and health declarations | Invalid health regex | packages/yagura_plugin/test/stop_and_health_declarations_test.dart | invalid_health_regex | 4 | green |
-| steam-content → Game Server Login Tokens | Token injected at launch | apps/yagurad/test/steam/game_server_login_tokens_test.dart | token_injected_at_launch | 4 | red |
-| steam-content → Game Server Login Tokens | Required token missing | apps/yagurad/test/steam/game_server_login_tokens_test.dart | required_token_missing | 4 | red |
+| steam-content → Game Server Login Tokens | Token injected at launch | apps/yagurad/test/steam/game_server_login_tokens_test.dart | token_injected_at_launch | 4 | green |
+| steam-content → Game Server Login Tokens | Required token missing | apps/yagurad/test/steam/game_server_login_tokens_test.dart | required_token_missing | 4 | green |
 | daemon-protocol → Long operations are asynchronous with resumable progress | Reconnect without losing events | apps/yagurad/test/api/long_operations_are_asynchronous_with_resumable__test.dart | reconnect_without_losing_events | 5 | green |
 | daemon-protocol → Long operations are asynchronous with resumable progress | Missed events no longer retained | apps/yagurad/test/api/long_operations_are_asynchronous_with_resumable__test.dart | missed_events_no_longer_retained | 5 | red |
 | daemon-protocol → Long operations are asynchronous with resumable progress | Pending prompt after reconnect | apps/yagurad/test/api/long_operations_are_asynchronous_with_resumable__test.dart | pending_prompt_after_reconnect | 5 | red |
@@ -203,7 +203,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 - [x] 4.1 Write the failing tests for this group's red rows. Add a `windows`-tagged test `integration_test/process/secret_launch_args_test.dart` that starts a real relay in console mode and checks that the server's argv holds the value and no run file does. Verify: they fail because of the missing namespaces and channel.
 - [x] 4.2 Accept `mods` (sources `steam_workshop` and `server_managed`; `url_archive` rejected with `unsupported_in_this_version` naming `mods.source`; stage modes; `stage_dir`, default `server`; `link_name`; `copy_fallback`; key rules; roles) and `steam.gslt` in the loader and schema. Keep rejecting the `rcon` section, stop `rcon` and health `query`. Add the `mods.<role>` and `secrets.<setting>` template namespaces (`templates.dart:104-110,179-181`). Verify: the plugin-manifest and supported-formats rows of this group pass and are flipped green, and the manifest docs are regenerated.
-- [ ] 4.3 Implement D4:
+- [x] 4.3 Implement D4:
   - `LaunchInput` written and read in both modes (`windows_process_host.dart:173-185`, `run_command.dart:195-205`), with `launch_input_missing`;
   - the launcher-to-relay stdin pipe through `STARTF_USESTDHANDLES` in `CreateProcessAsUserW` and `spawnProcess`;
   - the relay reading the line before `writeRelay` (`launcher_modes.dart:248,280-300`);

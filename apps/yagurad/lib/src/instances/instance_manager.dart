@@ -541,9 +541,21 @@ class InstanceManager {
   /// Fails `secret_required` naming the `required` secret settings of
   /// [record] that are unset.
   void requireSecrets(InstanceRecord record) {
-    final defs = registry.find(record.pluginId)?.manifest.settings;
+    final manifest = registry.find(record.pluginId)?.manifest;
+    final defs = manifest?.settings;
     if (defs == null) return;
     final set = setSecretsOf(record);
+    // The token comes first: its setting may also be `required`, and the
+    // message that names Steam's login token is the useful one.
+    if (manifest?.steam?.gslt case GsltSpec(:final setting, required: true)
+        when !set.contains(setting)) {
+      throw YaguraException(
+        'gslt_required',
+        'the game server login token $setting is not set; set it with '
+            'SetSecret before starting',
+        details: {'instanceId': record.id, 'settings': setting},
+      );
+    }
     final missing = [
       for (final MapEntry(key: name, value: def) in defs.entries)
         if (def.type == SettingType.secret &&

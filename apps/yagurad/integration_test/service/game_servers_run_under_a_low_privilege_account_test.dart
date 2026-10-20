@@ -217,7 +217,15 @@ void main() {
     final id = row['id']! as String;
     final directory = row['directory']! as String;
     await client.instances.setSecret(
-      pb.SetSecretRequest(instanceId: id, key: 'gslt', value: _token),
+      pb.SetSecretRequest(
+        instanceId: id,
+        // The revision this client last read (concurrent edits, M2).
+        expectedRevision: (await client.instances.getInstance(
+          pb.GetInstanceRequest(instanceId: id),
+        )).revision,
+        key: 'gslt',
+        value: _token,
+      ),
     );
     await client.succeeded(
       await client.instances.stop(pb.LifecycleRequest(instanceId: id)),
