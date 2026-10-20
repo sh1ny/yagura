@@ -101,52 +101,52 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | steam-content → Workshop downloads | Workshop item downloaded | apps/yagurad/test/steam/workshop_downloads_test.dart | workshop_item_downloaded | 6 | green |
 | steam-content → Workshop downloads | Item removed from the workshop | apps/yagurad/test/steam/workshop_downloads_test.dart | item_removed_from_the_workshop | 6 | green |
 | daemon-protocol → Instance state and event stream | Snapshot then deltas | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | snapshot_then_deltas | 7 | green |
-| daemon-protocol → Instance state and event stream | Mod update count delta | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | mod_update_count_delta | 7 | red |
+| daemon-protocol → Instance state and event stream | Mod update count delta | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | mod_update_count_delta | 7 | green |
 | daemon-protocol → Instance state and event stream | State-only delta | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | state_only_delta | 7 | green |
 | daemon-protocol → Instance state and event stream | Slow subscriber | apps/yagurad/test/api/instance_state_and_event_stream_test.dart | slow_subscriber | 7 | green |
 | instance-lifecycle → Durable state with a portable instance file | Change persisted and mirrored | apps/yagurad/test/instances/durable_state_with_a_portable_instance_file_test.dart | change_persisted_and_mirrored | 7 | green |
-| instance-lifecycle → Durable state with a portable instance file | Mod list mirrored | apps/yagurad/test/instances/durable_state_with_a_portable_instance_file_test.dart | mod_list_mirrored | 7 | red |
+| instance-lifecycle → Durable state with a portable instance file | Mod list mirrored | apps/yagurad/test/instances/durable_state_with_a_portable_instance_file_test.dart | mod_list_mirrored | 7 | green |
 | instance-lifecycle → Durable state with a portable instance file | instance.json write fails | apps/yagurad/test/instances/durable_state_with_a_portable_instance_file_test.dart | instance_json_write_fails | 7 | green |
 | instance-lifecycle → Durable state with a portable instance file | Secrets excluded from instance.json | apps/yagurad/test/instances/durable_state_with_a_portable_instance_file_test.dart | secrets_excluded_from_instance_json | 7 | green |
 | instance-lifecycle → One operation per instance at a time | Concurrent requests on one instance | apps/yagurad/test/instances/one_operation_per_instance_at_a_time_test.dart | concurrent_requests_on_one_instance | 7 | green |
-| instance-lifecycle → One operation per instance at a time | Heavy limit counts mod downloads | apps/yagurad/test/instances/one_operation_per_instance_at_a_time_test.dart | heavy_limit_counts_mod_downloads | 7 | red |
+| instance-lifecycle → One operation per instance at a time | Heavy limit counts mod downloads | apps/yagurad/test/instances/one_operation_per_instance_at_a_time_test.dart | heavy_limit_counts_mod_downloads | 7 | green |
 | instance-lifecycle → One operation per instance at a time | Stop requested while starting | apps/yagurad/test/instances/one_operation_per_instance_at_a_time_test.dart | stop_requested_while_starting | 7 | green |
 | instance-lifecycle → One operation per instance at a time | Stop during the health wait | apps/yagurad/test/instances/one_operation_per_instance_at_a_time_test.dart | stop_during_the_health_wait | 7 | green |
 | instance-lifecycle → One operation per instance at a time | Queued operation becomes invalid | apps/yagurad/test/instances/one_operation_per_instance_at_a_time_test.dart | queued_operation_becomes_invalid | 7 | green |
 | instance-lifecycle → One operation per instance at a time | Queue full | apps/yagurad/test/instances/one_operation_per_instance_at_a_time_test.dart | queue_full | 7 | green |
-| instance-lifecycle → Updates stop and restart a running server | Update while running | apps/yagurad/test/instances/updates_stop_and_restart_a_running_server_test.dart | update_while_running | 7 | red |
+| instance-lifecycle → Updates stop and restart a running server | Update while running | apps/yagurad/test/instances/updates_stop_and_restart_a_running_server_test.dart | update_while_running | 7 | green |
 | instance-lifecycle → Updates stop and restart a running server | Update fails after stop | apps/yagurad/test/instances/updates_stop_and_restart_a_running_server_test.dart | update_fails_after_stop | 7 | green |
-| instance-lifecycle → Updates stop and restart a running server | Mod update fails after stop | apps/yagurad/test/instances/updates_stop_and_restart_a_running_server_test.dart | mod_update_fails_after_stop | 7 | red |
-| mod-management → Key files and post-processing | Bikeys synced | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | bikeys_synced | 7 | red |
-| mod-management → Key files and post-processing | Shared key kept | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | shared_key_kept | 7 | red |
-| mod-management → Key files and post-processing | Admin's own key with the same name | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | admin_s_own_key_with_the_same_name | 7 | red |
-| mod-management → Key files and post-processing | Mod removed takes its key | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | mod_removed_takes_its_key | 7 | red |
-| mod-management → Load order and roles | Reorder changes launch order | apps/yagurad/test/mods/load_order_and_roles_test.dart | reorder_changes_launch_order | 7 | red |
-| mod-management → Load order and roles | Unknown role | apps/yagurad/test/mods/load_order_and_roles_test.dart | unknown_role | 7 | red |
-| mod-management → Mod changes require a stopped instance to apply | Mods applied by start | apps/yagurad/test/mods/mod_changes_require_a_stopped_instance_to_apply_test.dart | mods_applied_by_start | 7 | red |
-| mod-management → Mod changes require a stopped instance to apply | Add while running | apps/yagurad/test/mods/mod_changes_require_a_stopped_instance_to_apply_test.dart | add_while_running | 7 | red |
-| mod-management → Mod changes require a stopped instance to apply | ApplyMods while running | apps/yagurad/test/mods/mod_changes_require_a_stopped_instance_to_apply_test.dart | applymods_while_running | 7 | red |
-| mod-management → Mod update detection and update | Update available flagged | apps/yagurad/test/mods/mod_update_detection_and_update_test.dart | update_available_flagged | 7 | red |
-| mod-management → Mod update detection and update | Only changed mods re-staged | apps/yagurad/test/mods/mod_update_detection_and_update_test.dart | only_changed_mods_re_staged | 7 | red |
-| mod-management → Mod update detection and update | Update check cannot reach Steam | apps/yagurad/test/mods/mod_update_detection_and_update_test.dart | update_check_cannot_reach_steam | 7 | red |
-| mod-management → Plugins declare mod support and strategy | Plugin without mod support | apps/yagurad/test/mods/plugins_declare_mod_support_and_strategy_test.dart | plugin_without_mod_support | 7 | red |
-| mod-management → Plugins declare mod support and strategy | Server-managed mods | apps/yagurad/test/mods/plugins_declare_mod_support_and_strategy_test.dart | server_managed_mods | 7 | red |
-| mod-management → Plugins declare mod support and strategy | Source of a later version | apps/yagurad/test/mods/plugins_declare_mod_support_and_strategy_test.dart | source_of_a_later_version | 7 | red |
-| mod-management → Staging by link with copy fallback | DayZ mod linked | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | dayz_mod_linked | 7 | red |
-| mod-management → Staging by link with copy fallback | Title unavailable when added | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | title_unavailable_when_added | 7 | red |
-| mod-management → Staging by link with copy fallback | Admin folder with the staged name | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | admin_folder_with_the_staged_name | 7 | red |
-| mod-management → Staging by link with copy fallback | Mod renamed on the workshop | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | mod_renamed_on_the_workshop | 7 | red |
-| mod-management → Staging by link with copy fallback | Link not permitted | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | link_not_permitted | 7 | red |
-| mod-management → Staging by link with copy fallback | Staged link replaced by the server | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | staged_link_replaced_by_the_server | 7 | red |
+| instance-lifecycle → Updates stop and restart a running server | Mod update fails after stop | apps/yagurad/test/instances/updates_stop_and_restart_a_running_server_test.dart | mod_update_fails_after_stop | 7 | green |
+| mod-management → Key files and post-processing | Bikeys synced | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | bikeys_synced | 7 | green |
+| mod-management → Key files and post-processing | Shared key kept | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | shared_key_kept | 7 | green |
+| mod-management → Key files and post-processing | Admin's own key with the same name | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | admin_s_own_key_with_the_same_name | 7 | green |
+| mod-management → Key files and post-processing | Mod removed takes its key | apps/yagurad/test/mods/key_files_and_post_processing_test.dart | mod_removed_takes_its_key | 7 | green |
+| mod-management → Load order and roles | Reorder changes launch order | apps/yagurad/test/mods/load_order_and_roles_test.dart | reorder_changes_launch_order | 7 | green |
+| mod-management → Load order and roles | Unknown role | apps/yagurad/test/mods/load_order_and_roles_test.dart | unknown_role | 7 | green |
+| mod-management → Mod changes require a stopped instance to apply | Mods applied by start | apps/yagurad/test/mods/mod_changes_require_a_stopped_instance_to_apply_test.dart | mods_applied_by_start | 7 | green |
+| mod-management → Mod changes require a stopped instance to apply | Add while running | apps/yagurad/test/mods/mod_changes_require_a_stopped_instance_to_apply_test.dart | add_while_running | 7 | green |
+| mod-management → Mod changes require a stopped instance to apply | ApplyMods while running | apps/yagurad/test/mods/mod_changes_require_a_stopped_instance_to_apply_test.dart | applymods_while_running | 7 | green |
+| mod-management → Mod update detection and update | Update available flagged | apps/yagurad/test/mods/mod_update_detection_and_update_test.dart | update_available_flagged | 7 | green |
+| mod-management → Mod update detection and update | Only changed mods re-staged | apps/yagurad/test/mods/mod_update_detection_and_update_test.dart | only_changed_mods_re_staged | 7 | green |
+| mod-management → Mod update detection and update | Update check cannot reach Steam | apps/yagurad/test/mods/mod_update_detection_and_update_test.dart | update_check_cannot_reach_steam | 7 | green |
+| mod-management → Plugins declare mod support and strategy | Plugin without mod support | apps/yagurad/test/mods/plugins_declare_mod_support_and_strategy_test.dart | plugin_without_mod_support | 7 | green |
+| mod-management → Plugins declare mod support and strategy | Server-managed mods | apps/yagurad/test/mods/plugins_declare_mod_support_and_strategy_test.dart | server_managed_mods | 7 | green |
+| mod-management → Plugins declare mod support and strategy | Source of a later version | apps/yagurad/test/mods/plugins_declare_mod_support_and_strategy_test.dart | source_of_a_later_version | 7 | green |
+| mod-management → Staging by link with copy fallback | DayZ mod linked | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | dayz_mod_linked | 7 | green |
+| mod-management → Staging by link with copy fallback | Title unavailable when added | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | title_unavailable_when_added | 7 | green |
+| mod-management → Staging by link with copy fallback | Admin folder with the staged name | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | admin_folder_with_the_staged_name | 7 | green |
+| mod-management → Staging by link with copy fallback | Mod renamed on the workshop | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | mod_renamed_on_the_workshop | 7 | green |
+| mod-management → Staging by link with copy fallback | Link not permitted | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | link_not_permitted | 7 | green |
+| mod-management → Staging by link with copy fallback | Staged link replaced by the server | apps/yagurad/test/mods/staging_by_link_with_copy_fallback_test.dart | staged_link_replaced_by_the_server | 7 | green |
 | plugin-hooks → Hook input and output contract | Context contents | apps/yagurad/test/hooks/hook_input_and_output_contract_test.dart | context_contents | 7 | green |
 | plugin-hooks → Hook input and output contract | Context with a secret set | apps/yagurad/test/hooks/hook_input_and_output_contract_test.dart | context_with_a_secret_set | 7 | green |
-| plugin-hooks → Hook input and output contract | Staged mods in the context | apps/yagurad/test/hooks/hook_input_and_output_contract_test.dart | staged_mods_in_the_context | 7 | red |
+| plugin-hooks → Hook input and output contract | Staged mods in the context | apps/yagurad/test/hooks/hook_input_and_output_contract_test.dart | staged_mods_in_the_context | 7 | green |
 | plugin-hooks → Hook input and output contract | Invalid result shape | apps/yagurad/test/hooks/hook_input_and_output_contract_test.dart | invalid_result_shape | 7 | green |
 | plugin-hooks → Hook points | Pre-start hook adds arguments | apps/yagurad/test/hooks/hook_points_test.dart | pre_start_hook_adds_arguments | 7 | green |
-| plugin-hooks → Hook points | Mods-staged hook edits a config | apps/yagurad/test/hooks/hook_points_test.dart | mods_staged_hook_edits_a_config | 7 | red |
+| plugin-hooks → Hook points | Mods-staged hook edits a config | apps/yagurad/test/hooks/hook_points_test.dart | mods_staged_hook_edits_a_config | 7 | green |
 | plugin-hooks → Hook points | Hook not exported | apps/yagurad/test/hooks/hook_points_test.dart | hook_not_exported | 7 | green |
-| plugin-hooks → Sandboxed host API | Reading a staged mod | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | reading_a_staged_mod | 7 | red |
-| plugin-hooks → Sandboxed host API | Edit into a staged mod refused | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | edit_into_a_staged_mod_refused | 7 | red |
+| plugin-hooks → Sandboxed host API | Reading a staged mod | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | reading_a_staged_mod | 7 | green |
+| plugin-hooks → Sandboxed host API | Edit into a staged mod refused | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | edit_into_a_staged_mod_refused | 7 | green |
 | log-streaming → Secrets masked in log streams | Password echoed by the server | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | password_echoed_by_the_server | 8 | green |
 | log-streaming → Secrets masked in log streams | Backlog and crash lines masked | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | backlog_and_crash_lines_masked | 8 | green |
 | log-streaming → Secrets masked in log streams | Replaced secret still masked | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | replaced_secret_still_masked | 8 | green |
@@ -272,7 +272,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
   - the `stage_mods` step in Start, the `update_mods` step in Update, and heavy-step accounting.
 
   Verify: the staging, key, hook-point and lifecycle rows pass.
-- [ ] 7.5 Implement the update check timer (D14): every 6 h ± 30 min, first run 10 min after start, backoff from 5 min doubling to 6 h, and `mod_updates_available` deltas on `WatchInstances`. Verify: the update-detection and `mod_update_count_delta` rows pass. Flip this group's rows green and re-run its green rows (`instance_state_and_event_stream_test.dart`, `one_operation_per_instance_at_a_time_test.dart`, `durable_state_with_a_portable_instance_file_test.dart`, `hook_points_test.dart`, `hook_input_and_output_contract_test.dart`, `updates_stop_and_restart_a_running_server_test.dart`).
+- [x] 7.5 Implement the update check timer (D14): every 6 h ± 30 min, first run 10 min after start, backoff from 5 min doubling to 6 h, and `mod_updates_available` deltas on `WatchInstances`. Verify: the update-detection and `mod_update_count_delta` rows pass. Flip this group's rows green and re-run its green rows (`instance_state_and_event_stream_test.dart`, `one_operation_per_instance_at_a_time_test.dart`, `durable_state_with_a_portable_instance_file_test.dart`, `hook_points_test.dart`, `hook_input_and_output_contract_test.dart`, `updates_stop_and_restart_a_running_server_test.dart`).
 
 ## 8. [M3] Plugin migrations and log masking
 

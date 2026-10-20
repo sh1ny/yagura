@@ -21,6 +21,9 @@ import '../instances/instance_store.dart';
 import '../logs/instance_log_sync.dart';
 import '../logs/log_hub.dart';
 import '../logs/log_match_watch.dart';
+import '../mods/mod_check_schedule.dart';
+import '../mods/mods_service.dart';
+import '../mods/stage_link.dart';
 import '../operations/operations.dart';
 import '../platform/acl_writer.dart';
 import '../plugins/plugin_registry.dart';
@@ -83,6 +86,9 @@ class DaemonConfig {
     this.processHealthSettle = const Duration(seconds: 2),
     this.pendingRunWait = const Duration(seconds: 10),
     this.workshopEndpoint,
+    this.workshopMinInterval = WorkshopClient.defaultMinInterval,
+    this.modCheckSchedule = const ModCheckSchedule(),
+    this.stageLink = defaultStageLink,
   });
 
   final String dataDirectory;
@@ -190,6 +196,16 @@ class DaemonConfig {
   /// The Steam Web API `GetPublishedFileDetails` URL the workshop client
   /// reads; defaults to Steam's. A seam for tests.
   final Uri? workshopEndpoint;
+
+  /// The least time between two requests to the Steam Web API; a seam for
+  /// tests.
+  final Duration workshopMinInterval;
+
+  /// When the daemon looks for newer mod versions (design D14).
+  final ModCheckSchedule modCheckSchedule;
+
+  /// Creates the directory link of a staged mod; a seam for tests.
+  final StageLinkCreator stageLink;
 }
 
 /// The daemon core: startup sequence and the services group 8 serves.
@@ -207,6 +223,7 @@ class Daemon {
     required this.operations,
     required this.steamAccounts,
     required this.content,
+    required this.mods,
     required ContentStore contentStore,
     required WorkshopClient workshopClient,
     required this.logs,
@@ -250,6 +267,9 @@ class Daemon {
 
   /// Acquires workshop items into the content store (design D5, D6).
   final ContentAcquirer content;
+
+  /// The mod list, staging and update checks of the instances (design D7).
+  final ModsService mods;
   final LogHub logs;
   final List<StartupNotice> startupNotices;
 
@@ -420,6 +440,7 @@ class Daemon {
     );
     final workshopClient = WorkshopClient(
       endpoint: config.workshopEndpoint ?? WorkshopClient.defaultEndpoint,
+      minInterval: config.workshopMinInterval,
     );
     final contentStore = ContentStore(
       database: database,
@@ -520,6 +541,19 @@ class Daemon {
         }
       }
     });
+    final mods = ModsService(
+      manager: manager,
+      runner: runner,
+      acquirer: content,
+      workshop: workshopClient,
+      contentStore: contentStore,
+      database: database,
+      schedule: config.modCheckSchedule,
+      stageLink: config.stageLink,
+      clock: config.clock,
+      log: (message) => stderr.writeln('yagurad: $message'),
+    );
+    manager.mods = mods;
     manager.logMatchWatch = (id, source, pattern) =>
         LogHubMatchWatch.open(logs, id, source, pattern);
     manager.logTail = (id, lines) async {
@@ -670,6 +704,7 @@ class Daemon {
     manager.pluginsReloaded.listen((_) => logs.rebuildMaskers());
     manager.autostartInstances();
     started.complete();
+    mods.start();
 
     return Daemon._(
       dataDirectory: dataDirectory,
@@ -680,6 +715,7 @@ class Daemon {
       operations: runner,
       steamAccounts: steamAccounts,
       content: content,
+      mods: mods,
       contentStore: contentStore,
       workshopClient: workshopClient,
       logs: logs,
@@ -749,6 +785,7 @@ class Daemon {
     _closed = true;
     await _admin?.close();
     firewall?.close();
+    mods.close();
     await _logSync.close();
     await instances.close();
     await logs.close();
