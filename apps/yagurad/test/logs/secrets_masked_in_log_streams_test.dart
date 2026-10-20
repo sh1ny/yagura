@@ -8,6 +8,7 @@ import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/logs/logs.dart';
 
 import '../support/daemon_support.dart';
+import '../support/secret_support.dart';
 import '../support/temp_support.dart';
 import 'log_test_support.dart';
 
@@ -34,7 +35,9 @@ void main() {
   test('password_echoed_by_the_server', () async {
     final env = TestEnv();
     env.installValheim();
-    final daemon = await env.start();
+    final daemon = await env.start(
+      secretProtector: FakeSecretProtector(devSid),
+    );
     final instance = await loggingInstance(daemon);
     setPassword(daemon, instance, 'hunter22secret');
     final followed = Collector(daemon.logs.follow(instance.id));
@@ -57,7 +60,9 @@ void main() {
   test('backlog_and_crash_lines_masked', () async {
     final env = TestEnv();
     env.installValheim();
-    final daemon = await env.start();
+    final daemon = await env.start(
+      secretProtector: FakeSecretProtector(devSid),
+    );
     final instance = await createRunning(daemon);
     setPassword(daemon, instance, 'hunter22secret');
     final crashed = collectNotices(daemon, 'crashed');
@@ -88,7 +93,10 @@ void main() {
     final env = TestEnv();
     env.installValheim();
     var now = DateTime.utc(2026, 10, 17, 12);
-    final daemon = await env.start(clock: () => now);
+    final daemon = await env.start(
+      clock: () => now,
+      secretProtector: FakeSecretProtector(devSid),
+    );
     final instance = await loggingInstance(daemon);
     setPassword(daemon, instance, 'oldpassword1');
     setPassword(daemon, instance, 'newpassword2');
@@ -107,7 +115,9 @@ void main() {
   test('short_secret_inside_a_word', () async {
     final env = TestEnv();
     env.installValheim();
-    final daemon = await env.start();
+    final daemon = await env.start(
+      secretProtector: FakeSecretProtector(devSid),
+    );
     final instance = await loggingInstance(daemon);
     setPassword(daemon, instance, 'ab12');
     final followed = Collector(daemon.logs.follow(instance.id));
@@ -124,7 +134,9 @@ void main() {
   test('no_secrets_set', () async {
     final env = TestEnv();
     env.installValheim();
-    final daemon = await env.start();
+    final daemon = await env.start(
+      secretProtector: FakeSecretProtector(devSid),
+    );
     final instance = await loggingInstance(daemon);
     final followed = Collector(daemon.logs.follow(instance.id));
 
@@ -141,7 +153,10 @@ void main() {
     final env = TestEnv();
     env.installValheim();
     var now = DateTime.utc(2026, 10, 17, 12);
-    final daemon = await env.start(clock: () => now);
+    final daemon = await env.start(
+      clock: () => now,
+      secretProtector: FakeSecretProtector(devSid),
+    );
     final instance = await loggingInstance(daemon);
     setPassword(daemon, instance, 'firstpassword');
     setPassword(daemon, instance, 'secondpassword');
