@@ -9,6 +9,8 @@ import 'package:test/test.dart';
 import 'package:yagurad/src/steam/patterns.g.dart';
 import 'package:yaml/yaml.dart';
 
+import '../support/temp_support.dart';
+
 final _script = p.absolute(
   'test',
   'fixtures',
@@ -95,7 +97,7 @@ class _Live {
 void main() {
   late Directory root;
   setUp(() => root = Directory.systemTemp.createTempSync('fake_steamcmd_lg_'));
-  tearDown(() => root.deleteSync(recursive: true));
+  tearDown(() => deleteWithRetry(root));
 
   const real = {'FAKE_STEAMCMD_REAL_OUTPUT': '1'};
 

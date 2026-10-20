@@ -19,3 +19,18 @@ Directory canonicalSystemTemp() {
 /// A new directory below [canonicalSystemTemp].
 Directory createCanonicalTempSync([String prefix = '']) =>
     canonicalSystemTemp().createTempSync(prefix);
+
+/// Deletes [dir], retrying for up to 2 s: on Windows a process that was just
+/// killed can hold its working directory for a moment after its exit code
+/// arrives.
+Future<void> deleteWithRetry(Directory dir) async {
+  for (var attempt = 1; ; attempt++) {
+    try {
+      dir.deleteSync(recursive: true);
+      return;
+    } on FileSystemException {
+      if (attempt == 20) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+}
