@@ -6,7 +6,7 @@
 # apps/yagurad; a test fails when the embedded copy is out of date.
 
 # Version of this table; bump it when patterns change.
-version: 2
+version: 3
 
 # Steps the output moves through. The first line matching `match` starts the
 # step; `steam_login` is also started by the daemon before SteamCMD prints.
@@ -49,3 +49,55 @@ failures:
     reason: insufficient_disk
     match: "Failed to install app '\\d+' \\((Disk write failure|Not enough disk space)\\)"
     message: "SteamCMD could not write the app {app_id}: the volume is full or not writable."
+
+# How a login run ended (design D2), from SteamCMD build 1791918946 as
+# recorded in docs/spikes/m3-steam-guard.md. SteamCMD writes its stdout to a
+# pipe only when it exits, so `outcomes` classify the stdout lines of a
+# finished run: the outcomes are tried in this order, and the first one that
+# any line matches wins. Failures come first, so a later `...OK` line does
+# not hide one; `ok` comes before the guard kinds, so a code or approval that
+# came through in the same run counts as a login. `unverified: true` marks wording the spike did not see,
+# kept from SteamCMD's documentation. A run that matches none of these fails
+# verbatim as `steam_unknown_error`.
+login:
+  outcomes:
+    # `+login <user>` with no cached login asks for a password and then
+    # reports Invalid Password; it never had one, so this comes before
+    # login_invalid.
+    - kind: reauth_needed
+      reason: steam_reauth_required
+      match: 'Cached credentials not found|^password:'
+      message: "The Steam login of this account has expired; log in again with its password."
+    - kind: rate_limited
+      reason: steam_rate_limited
+      unverified: true
+      match: 'Rate Limit Exceeded'
+      message: "Steam refused the login for now (SteamCMD: Rate Limit Exceeded). Try again later."
+    # A code was passed and Steam refused it.
+    - kind: guard_invalid
+      reason: steam_guard_invalid
+      unverified: true
+      match: 'Invalid Login Auth Code|Two-factor code mismatch'
+      message: "Steam did not accept the Steam Guard code."
+    - kind: login_invalid
+      reason: steam_login_invalid
+      unverified: true
+      match: 'ERROR \(Invalid Password\)'
+      message: "Steam did not accept the username or password (SteamCMD: Invalid Password)."
+    # After a guard line, this one means the code or the approval came
+    # through in the same run: the run logged in.
+    - kind: ok
+      match: "Logging in user '.*' .*to Steam Public\\.\\.\\.OK"
+    - kind: guard_email
+      match: 'Please check your email for the message from Steam|Steam Guard code:ERROR \(Account Logon Denied\)'
+    - kind: guard_authenticator
+      unverified: true
+      match: 'Two-factor code:'
+    - kind: guard_mobile
+      match: 'Please confirm the login in the Steam Mobile app'
+  # Lines of the installation's logs/connection_log.txt, read while the run
+  # lives. The first match raises the mobile-approval prompt; the run's
+  # outcome still comes from its stdout at exit.
+  live:
+    connection_log: 'logs/connection_log.txt'
+    guard_mobile: 'Waiting for confirmation'
