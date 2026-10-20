@@ -17,7 +17,11 @@ final _maxPlayers = bindingYaml(
 /// Starts, stops and returns the instance with its file applied once.
 Future<void> startAndStop(Daemon daemon, Instance instance) async {
   final started = await runStart(daemon, instance.id);
-  expect(started.status, OperationStatus.succeeded, reason: started.resultMessage);
+  expect(
+    started.status,
+    OperationStatus.succeeded,
+    reason: started.resultMessage,
+  );
   expect(started.warnings, isEmpty);
   final stopped = await runStop(daemon, instance.id);
   expect(stopped.status, OperationStatus.succeeded);
@@ -36,7 +40,9 @@ void main() {
     );
     await startAndStop(daemon, instance);
 
-    file.writeAsStringSync('${file.readAsStringSync()}disableRespawnDialog = 1;\n');
+    file.writeAsStringSync(
+      '${file.readAsStringSync()}disableRespawnDialog = 1;\n',
+    );
     final done = await runStart(daemon, instance.id);
 
     expect(done.status, OperationStatus.succeeded, reason: done.resultMessage);
@@ -61,7 +67,10 @@ void main() {
     final done = await runStart(daemon, instance.id);
 
     expect(done.status, OperationStatus.succeeded, reason: done.resultMessage);
-    expect(file.readAsStringSync(), 'hostname = "Friends";\nmaxPlayers = 40;\n');
+    expect(
+      file.readAsStringSync(),
+      'hostname = "Friends";\nmaxPlayers = 40;\n',
+    );
     expect(daemon.instances.get(instance.id).state, InstanceState.running);
     final events = externalEdits(done.warnings);
     expect(events, hasLength(1));
@@ -137,7 +146,10 @@ void main() {
     final done = await runStart(daemon, instance.id);
 
     expect(done.status, OperationStatus.succeeded, reason: done.resultMessage);
-    expect(file.readAsStringSync(), 'hostname = "Friends";\nmaxPlayers = 40;\n');
+    expect(
+      file.readAsStringSync(),
+      'hostname = "Friends";\nmaxPlayers = 40;\n',
+    );
     expect(externalEdits(done.warnings), isEmpty);
   });
 }

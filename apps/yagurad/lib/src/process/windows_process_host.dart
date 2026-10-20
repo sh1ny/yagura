@@ -180,20 +180,20 @@ class WindowsProcessHost implements ProcessHost {
     // The password and the secret launch arguments go by standard input:
     // arguments and the environment are readable by other processes. The line
     // is written on every launch, so the launcher can tell a missing one.
-    helper.stdin
-        .writeln(
-          LaunchInput(
-            credentials: credentials,
-            secrets: request.secrets,
-          ).encode(),
-        );
+    helper.stdin.writeln(
+      LaunchInput(credentials: credentials, secrets: request.secrets).encode(),
+    );
     unawaited(helper.stdin.done.then<void>((_) {}, onError: (Object _) {}));
     // The launcher may end before it reads the line (a refused logon): the
     // broken pipe is its exit code's business, not an error of this write.
     unawaited(
-      helper.stdin.flush().then<void>((_) {}, onError: (Object _) {}).then(
-        (_) => helper.stdin.close().then<void>((_) {}, onError: (Object _) {}),
-      ),
+      helper.stdin
+          .flush()
+          .then<void>((_) {}, onError: (Object _) {})
+          .then(
+            (_) =>
+                helper.stdin.close().then<void>((_) {}, onError: (Object _) {}),
+          ),
     );
     final stderrText = helper.stderr
         .transform(const SystemEncoding().decoder)

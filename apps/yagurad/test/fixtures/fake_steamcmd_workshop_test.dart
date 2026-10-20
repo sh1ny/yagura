@@ -33,7 +33,19 @@ Future<(int, List<String>)> _run(
 void main() {
   late Directory root;
   setUp(() => root = Directory.systemTemp.createTempSync('fake_steamcmd_ws_'));
-  tearDown(() => root.deleteSync(recursive: true));
+  // A killed fake can hold its working directory for a moment after its
+  // exit code arrives (Windows), so the delete is retried briefly.
+  tearDown(() async {
+    for (var attempt = 1; ; attempt++) {
+      try {
+        root.deleteSync(recursive: true);
+        return;
+      } on FileSystemException {
+        if (attempt == 20) rethrow;
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    }
+  });
 
   String content(String app, String id, [Directory? base]) =>
       p.join((base ?? root).path, 'steamapps', 'workshop', 'content', app, id);

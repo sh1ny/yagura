@@ -36,7 +36,11 @@ exports.onPreStart = function () {
 
     final first = await runStart(daemon, instance.id);
 
-    expect(first.status, OperationStatus.succeeded, reason: first.resultMessage);
+    expect(
+      first.status,
+      OperationStatus.succeeded,
+      reason: first.resultMessage,
+    );
     final content = file.readAsStringSync();
     expect(content, original.replaceFirst('false', 'true'));
     final json = jsonDecode(content) as Map<String, Object?>;

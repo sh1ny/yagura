@@ -520,10 +520,7 @@ Future<int> _runRelay(String runDirectory, StringSink err) async {
         workingDirectory: launch.workingDirectory,
         inheritHandles: true,
         // Only the server's own standard handles: not the relay's input pipe.
-        handles: [
-          if (nul != Win32.invalidHandle) nul,
-          pipeWrite.value,
-        ],
+        handles: [if (nul != Win32.invalidHandle) nul, pipeWrite.value],
         stdin: nul == Win32.invalidHandle ? null : nul,
         stdout: pipeWrite.value,
         stderr: pipeWrite.value,

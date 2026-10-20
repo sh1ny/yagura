@@ -54,9 +54,16 @@ void main() {
       done.resultMessage,
       allOf(contains('serverDZ.cfg'), contains('maxPlayers')),
     );
-    expect(env.process.launches, isEmpty, reason: 'the process is not launched');
+    expect(
+      env.process.launches,
+      isEmpty,
+      reason: 'the process is not launched',
+    );
     expect(daemon.instances.get(instance.id).state, InstanceState.stopped);
-    expect(File(p.join(instance.directory, 'serverDZ.cfg')).existsSync(), false);
+    expect(
+      File(p.join(instance.directory, 'serverDZ.cfg')).existsSync(),
+      false,
+    );
   });
 
   test('missing_file_created_from_the_plugin_template', () async {
@@ -90,9 +97,8 @@ void main() {
     );
     // The plugin's own template is not touched.
     expect(
-      File(
-        p.join(env.pluginsDir, 'valheim', 'templates', 'serverDZ.cfg'),
-      ).readAsStringSync(),
+      File(p.join(env.pluginsDir, 'valheim', 'templates', 'serverDZ.cfg'))
+          .readAsStringSync(),
       contains('maxPlayers = 10;'),
     );
   });

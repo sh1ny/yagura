@@ -140,7 +140,13 @@ class Win32 {
         int Function(int, int, int)
       >('SetHandleInformation');
 
-  late final int Function(int, Pointer<Uint8>, int, Pointer<Uint32>, Pointer<Void>)
+  late final int Function(
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint32>,
+    Pointer<Void>,
+  )
   writeFile = _kernel
       .lookupFunction<
         Int32 Function(
