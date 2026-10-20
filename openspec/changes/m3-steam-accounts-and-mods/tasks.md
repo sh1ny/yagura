@@ -303,7 +303,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
   - `data_paths` and log sources under `server/`, `log_match` health, stop `signal` with a 60 s grace period, and no `rcon` section.
 
   Verify: `yagura plugin lint plugins/dayz` passes, and a loader test shows the plugin `loaded`.
-- [ ] 10.2 Add an in-process end-to-end test, `apps/yagurad/test/mods/dayz_mods_end_to_end_test.dart` (fake SteamCMD, fake Web API, fake process host). In it:
+- [x] 10.2 Add an in-process end-to-end test, `apps/yagurad/test/mods/dayz_mods_end_to_end_test.dart` (fake SteamCMD, fake Web API, fake process host). In it:
   - a DayZ instance with 12 workshop mods goes from mod ids to a launched server in one `Start`, with links, keys, `-mod=` order and the bound files;
   - a second instance with the same mod version shares one content-store directory;
   - a mod update re-links only the changed mod.
