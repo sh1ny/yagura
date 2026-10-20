@@ -21,6 +21,7 @@ import 'pressure.dart';
 import 'reflection.dart';
 import 'secure_listener.dart';
 import 'service_support.dart';
+import 'steam_api.dart';
 import 'stub_apis.dart';
 import 'system_api.dart';
 
@@ -80,7 +81,7 @@ class ApiServer {
         OperationsApi(daemon, log, watchLimits: watchLimits),
         LogsApi(daemon, log),
         PairingStub(),
-        SteamStub(),
+        SteamApi(daemon, log),
         ModsStub(),
         RconStub(),
         FirewallStub(),
@@ -123,7 +124,7 @@ class ApiServer {
         OperationsApi(daemon, log, watchLimits: watchLimits),
         LogsApi(daemon, log),
         PairingApi(daemon, security, log),
-        SteamStub(),
+        SteamApi(daemon, log),
         ModsStub(),
         RconStub(),
         // The stub stays where the daemon manages no rules (a host without a

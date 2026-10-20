@@ -299,26 +299,41 @@ class Lifecycle {
         'plugin ${manifest.id} does not install through Steam',
       );
     }
-    final account = spec.anonymous || record.steamAccountId.isEmpty
+    final accountId = spec.anonymous || record.steamAccountId.isEmpty
         ? null
         : record.steamAccountId;
+    // An account that is gone, still being added, or known to need its
+    // password again fails before SteamCMD starts.
+    final account = accountId == null
+        ? null
+        : _manager.accounts.useFor(accountId);
     InstanceFs(record.directory).createDirectory('server');
-    await ctx.heavy(
-      () => _manager.steam.installApp(
-        SteamAppRequest(
-          appId: spec.appId,
-          installDirectory: _serverDirectory(record),
-          instanceDirectory: record.directory,
-          validate: validate,
-          account: account,
-          accountRequired: !spec.anonymous,
-          sizeHintBytes: spec.sizeHintBytes,
+    try {
+      await ctx.heavy(
+        () => _manager.steam.installApp(
+          SteamAppRequest(
+            appId: spec.appId,
+            installDirectory: _serverDirectory(record),
+            instanceDirectory: record.directory,
+            validate: validate,
+            account: account?.id,
+            username: account?.username,
+            rememberedPassword: account?.rememberedPassword,
+            accountRequired: spec.login == SteamLogin.account,
+            sizeHintBytes: spec.sizeHintBytes,
+          ),
+          OperationSteamReporter(ctx),
+          ctx.cancel,
         ),
-        _Reporter(ctx),
-        ctx.cancel,
-      ),
-      installation: account == null ? 'anonymous' : 'account:$account',
-    );
+        installation: account == null ? 'anonymous' : 'account:${account.id}',
+      );
+    } on YaguraException catch (e) {
+      if (account != null && e.reason == 'steam_reauth_required') {
+        _manager.accounts.markReauthRequired(account.id);
+      }
+      rethrow;
+    }
+    if (account != null) _manager.accounts.markLoggedIn(account.id);
     ctx.cancel.throwIfCancelled();
   }
 
@@ -913,33 +928,4 @@ class Lifecycle {
       message: 'data paths were replaced by snapshot $snapshotId',
     );
   }
-}
-
-/// Maps a Steam run's reports to step and progress events of the operation.
-class _Reporter implements SteamRunReporter {
-  _Reporter(this._ctx);
-
-  final OperationContext _ctx;
-  var _step = '';
-
-  @override
-  void step(String name) {
-    _step = name;
-    _ctx.beginStep(name);
-  }
-
-  @override
-  void progress({double percent = -1, int bytesDone = 0, int bytesTotal = 0}) =>
-      _ctx.progress(
-        _step,
-        percent: percent,
-        bytesDone: bytesDone,
-        bytesTotal: bytesTotal,
-      );
-
-  @override
-  void log(String text) => _ctx.log(text);
-
-  @override
-  void warn(String warning) => _ctx.warn(warning);
 }

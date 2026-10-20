@@ -113,7 +113,11 @@ class PluginsApi extends pb.PluginsServiceBase with GuardedService {
       rconProtocol: 'none',
       steamLogin: manifest?.steam == null
           ? ''
-          : (manifest!.steam!.anonymous ? 'anonymous' : 'account'),
+          : switch (manifest!.steam!.login) {
+              plugin.SteamLogin.anonymous => 'anonymous',
+              plugin.SteamLogin.account => 'account',
+              plugin.SteamLogin.accountOptional => 'account_optional',
+            },
     );
   }
 

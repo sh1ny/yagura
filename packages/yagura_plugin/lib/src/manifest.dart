@@ -302,15 +302,30 @@ class GsltSpec {
   final bool required;
 }
 
+/// How a plugin's server is downloaded from Steam (`steam.login`).
+enum SteamLogin {
+  /// Always the anonymous login.
+  anonymous,
+
+  /// Needs the Steam account linked to the instance.
+  account,
+
+  /// The linked account when there is one, else the anonymous login.
+  accountOptional,
+}
+
 class SteamSpec {
   const SteamSpec({
     required this.appId,
-    this.anonymous = true,
+    this.login = SteamLogin.anonymous,
     this.sizeHintBytes,
     this.gslt,
   });
   final int appId;
-  final bool anonymous;
+  final SteamLogin login;
+
+  /// Whether the download never uses an account.
+  bool get anonymous => login == SteamLogin.anonymous;
   final int? sizeHintBytes;
   final GsltSpec? gslt;
 }
@@ -335,10 +350,8 @@ enum ModStage { link, copy, none }
 class ModKeyRule {
   const ModKeyRule({required this.from, required this.to});
 
-  factory ModKeyRule.fromJson(Map<String, Object?> json) => ModKeyRule(
-    from: json['from']! as String,
-    to: json['to']! as String,
-  );
+  factory ModKeyRule.fromJson(Map<String, Object?> json) =>
+      ModKeyRule(from: json['from']! as String, to: json['to']! as String);
 
   /// A glob over the files of the mod's content.
   final String from;
@@ -448,7 +461,11 @@ class PluginManifest {
           ? null
           : SteamSpec(
               appId: steam['app_id']! as int,
-              anonymous: steam['login'] != 'account',
+              login: switch (steam['login']) {
+                'account' => SteamLogin.account,
+                'account_optional' => SteamLogin.accountOptional,
+                _ => SteamLogin.anonymous,
+              },
               sizeHintBytes: steam['size_hint_bytes'] as int?,
               gslt: switch (steam['gslt']) {
                 final Map<String, Object?> gslt => GsltSpec.fromJson(gslt),

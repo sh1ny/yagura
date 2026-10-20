@@ -13,11 +13,6 @@ class PairingStub extends pb.PairingServiceBase with StubService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-class SteamStub extends pb.SteamServiceBase with StubService {
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
-
 class ModsStub extends pb.ModsServiceBase with StubService {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
