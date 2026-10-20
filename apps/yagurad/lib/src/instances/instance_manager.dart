@@ -2,13 +2,20 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:yagura_plugin/yagura_plugin.dart';
 
 import '../errors.dart';
+import '../files/files.dart';
+import '../firewall/firewall_backend.dart';
+import '../firewall/firewall_reconciler.dart';
+import '../firewall/rule_names.dart';
 import '../hooks/hooks.dart';
+import '../host/acl_layout.dart';
 import '../host/data_directory.dart';
+import '../host/secret_store.dart';
 import '../operations/operations.dart';
 import '../plugins/plugin_registry.dart';
 import '../process/process.dart';
@@ -16,7 +23,9 @@ import '../snapshots/snapshots.dart';
 import '../steam/steam.dart';
 import 'health_check.dart';
 import 'instance.dart';
+import 'instance_acls.dart';
 import 'instance_file.dart';
+import 'instance_roots.dart';
 import 'instance_store.dart';
 import 'lifecycle.dart';
 import 'restart_policy.dart';
@@ -28,9 +37,11 @@ import 'restart_policy.dart';
 class InstanceManager {
   InstanceManager({
     required this.store,
+    required this.secrets,
     required this.runner,
     required this.registry,
     required this.dataDirectory,
+    required this.roots,
     required this.apiPort,
     required this.os,
     required this.processHost,
@@ -38,6 +49,7 @@ class InstanceManager {
     required this.hooks,
     required this.snapshotter,
     required this.runs,
+    this.acls,
     HealthEvaluator? healthEvaluator,
     this.restartDelay = const Duration(seconds: 5),
     this.autostartInterval = const Duration(seconds: 10),
@@ -54,9 +66,15 @@ class InstanceManager {
   }
 
   final InstanceStore store;
+
+  /// Secret setting values, one secret per (instance, setting).
+  final SecretStore secrets;
   final OperationRunner runner;
   final PluginRegistry registry;
   final DataDirectory dataDirectory;
+
+  /// The places instance directories may live.
+  final HostRoots roots;
 
   /// The daemon API port, which no instance may use.
   final int apiPort;
@@ -71,6 +89,10 @@ class InstanceManager {
   /// Run records and crash timestamps; the supervisor in this class and in
   /// [Lifecycle] is their only writer.
   final RunStore runs;
+
+  /// Writes the instance DACL at create and for older instances; null in
+  /// development mode, which manages no ACLs.
+  final InstanceAcls? acls;
   final HealthEvaluator healthEvaluator;
 
   /// How long after a crash the instance is started again.
@@ -85,6 +107,10 @@ class InstanceManager {
   /// The last lines of an instance's log, for crash notices; set by the
   /// daemon once the log hub exists.
   Future<List<String>> Function(String instanceId, int lines)? logTail;
+
+  /// Keeps the firewall rules in step with the instances (design D11); set by
+  /// the daemon in service mode, null where the daemon manages no rules.
+  FirewallReconciler? firewall;
 
   /// Opens a `log_match` watch on [source] of an instance (set by the daemon
   /// once the log hub exists).
@@ -111,10 +137,8 @@ class InstanceManager {
 
   static final _random = Random.secure();
 
-  static Future<void> _removeTree(String directory) async {
-    final tree = Directory(directory);
-    if (tree.existsSync()) tree.deleteSync(recursive: true);
-  }
+  static Future<void> _removeTree(String directory) async =>
+      InstanceFs(directory).deleteTree('');
 
   // ---- reading ------------------------------------------------------------
 
@@ -168,6 +192,7 @@ class InstanceManager {
         plugin?.manifest.settings ?? const {},
         record.settings,
         const {'secret': true, 'set': false},
+        setSecrets: setSecretsOf(record),
       ),
       schemaVersion: plugin?.schemaVersion,
       steamAccountId: record.steamAccountId,
@@ -181,7 +206,25 @@ class InstanceManager {
       stateChangedAt: record.stateChangedAt,
       pid: record.server?.pid ?? 0,
       health: record.health,
+      revision: record.revision,
+      firewallStatus: switch (firewall) {
+        null => 'disabled',
+        final f when f.isDegraded(record.id) => 'degraded',
+        _ => 'ok',
+      },
     );
+  }
+
+  /// The top-level secret settings of [record] that hold a value.
+  Set<String> setSecretsOf(InstanceRecord record) {
+    final defs = registry.find(record.pluginId)?.manifest.settings;
+    if (defs == null) return const {};
+    return {
+      for (final MapEntry(key: name, value: def) in defs.entries)
+        if (def.type == SettingType.secret &&
+            secrets.contains(secretIdFor(record.id, name)))
+          name,
+    };
   }
 
   // ---- create -------------------------------------------------------------
@@ -223,8 +266,22 @@ class InstanceManager {
     _checkPorts(name, ports, excluding: null);
     final directory = _checkDirectory(request.directory, id);
 
-    final created = Directory(directory).existsSync() ? false : true;
-    Directory(directory).createSync(recursive: true);
+    final created = ConfinedFs.create(directory);
+    var aclLayout = 0;
+    if (acls case final acls?) {
+      try {
+        aclLayout = acls.apply(directory);
+      } on Object catch (e) {
+        if (created) InstanceFs(directory).deleteTree('');
+        if (e is AclLinkFound) {
+          throw confinedViolation(
+            e.path,
+            '${e.kind} in the new instance directory',
+          );
+        }
+        rethrow;
+      }
+    }
     final now = clock();
     final record = InstanceRecord(
       id: id,
@@ -242,13 +299,75 @@ class InstanceManager {
     try {
       store.save(record);
     } on Object {
-      if (created) Directory(directory).deleteSync(recursive: true);
+      if (created) InstanceFs(directory).deleteTree('');
       rethrow;
     }
+    if (aclLayout != 0) store.setAclLayout(id, aclLayout);
     _records[id] = record;
     writeInstanceFile(record);
     _emitChanged(record);
     return view(record);
+  }
+
+  /// Gives every instance whose ACL layout is below the current one the
+  /// instance DACL and the inherited entries (once, at the first service
+  /// start after M1 or a development daemon). A link met leaves the layout
+  /// unchanged and raises warning `acl_migration_failed` naming it; the
+  /// instance's launches fail until the admin removes the link. Returns the
+  /// messages of the instances that could not be migrated.
+  List<String> migrateInstanceAcls() {
+    final writer = acls;
+    if (writer == null) return const [];
+    final failed = <String>[];
+    for (final record in _records.values.toList()) {
+      if (store.aclLayout(record.id) >= currentAclLayout) continue;
+      if (_migrateAcls(writer, record) case final message?) {
+        _recoveryNotice(record, aclMigrationFailedReason, message);
+        failed.add(message);
+      }
+    }
+    return failed;
+  }
+
+  /// Gives [record] its permissions; returns why it could not (and keeps that
+  /// as the instance's warning), or null.
+  String? _migrateAcls(InstanceAcls writer, InstanceRecord record) {
+    try {
+      final reached = writer.apply(record.directory);
+      if (reached != 0) store.setAclLayout(record.id, reached);
+      return null;
+    } on Object catch (e) {
+      final path = e is AclLinkFound
+          ? InstanceFs(record.directory).absolute(e.path)
+          : record.directory;
+      final message = e is AclLinkFound
+          ? 'instance "${record.name}": $path is ${e.kind}; remove '
+                '${e.hardLinks ? 'the other names (fsutil hardlink list)' : 'it'}'
+                ' so the instance can be given its permissions'
+          : 'instance "${record.name}": its permissions could not be set: '
+                '${e is YaguraException ? e.message : e}';
+      record.warning = message;
+      store.save(record);
+      return message;
+    }
+  }
+
+  /// Refuses a launch of an instance whose permissions are not in place (design
+  /// D6: "that instance's launches fail until the link is removed"). The
+  /// migration is tried again first, so removing the link is enough; a
+  /// development daemon (no ACL writer) has nothing to check.
+  void requireAclLayout(InstanceRecord record) {
+    final writer = acls;
+    if (writer == null || store.aclLayout(record.id) >= currentAclLayout) {
+      return;
+    }
+    final message = _migrateAcls(writer, record);
+    if (message == null) return;
+    throw YaguraException(
+      aclMigrationFailedReason,
+      message,
+      details: {'instanceId': record.id},
+    );
   }
 
   // ---- settings -----------------------------------------------------------
@@ -265,23 +384,33 @@ class InstanceManager {
     );
   }
 
-  /// Saves settings and ports. Secret values are refused; an omitted secret
-  /// or its placeholder leaves it unset.
+  /// Saves settings and ports. Secret values are refused
+  /// (`secret_via_set_secret`); an omitted secret or its placeholder leaves
+  /// the stored value unchanged.
   Instance updateSettings(UpdateSettingsRequest request) {
     final record = _require(request.instanceId);
+    _checkRevision(record, request.expectedRevision);
     final plugin = _requirePlugin(record);
     final manifest = plugin.manifest;
     _checkSchemaVersion(request.schemaVersion, plugin);
     final settings = _validated(manifest, request.settings);
 
     var ports = record.ports;
-    if (request.ports case final overrides?) {
+    if (request.ports != null || request.exposure != null) {
       final current = {
         for (final port in record.ports)
           if (manifest.ports.any((d) => d.name == port.name && !d.isDerived))
             port.name: port.number,
       };
-      ports = _resolvePorts(manifest, {...current, ...overrides});
+      ports = _resolvePorts(
+        manifest,
+        {...current, ...?request.ports},
+        exposure: {
+          for (final port in record.ports)
+            if (port.purpose == PortPurpose.rcon) port.name: port.exposed,
+          ...?request.exposure,
+        },
+      );
     }
     _checkPorts(record.name, ports, excluding: record.id);
 
@@ -311,26 +440,120 @@ class InstanceManager {
         record.stateReason == settingsInvalidReason) {
       _applyState(record, InstanceState.stopped);
     }
-    _commit(record);
+    _commit(record, revisedFrom: record.revision);
+    // A port change moves the rules of an instance that is not running; one
+    // that runs keeps its launched ports until it is started again.
+    firewallChanged();
     return view(record);
   }
 
-  /// This version has no secret store (design D24).
-  Instance setSecret(String id, String key, String value) {
-    _require(id);
-    throw _noSecretStore(key);
+  /// Stores [value] as the secret setting [key] of instance [id] (design
+  /// D3). The value is never returned: the view reports `set: true`. A store
+  /// that refuses the write fails `secret_store_unavailable` and leaves the
+  /// previous value.
+  Instance setSecret(
+    String id,
+    String key,
+    String value, {
+    int? expectedRevision,
+  }) {
+    final record = _require(id);
+    _checkRevision(record, expectedRevision);
+    _requireSecretSetting(record, key);
+    final secretId = secretIdFor(id, key);
+    final bytes = Uint8List.fromList(utf8.encode(value));
+    Uint8List? previous;
+    try {
+      previous = secrets.get(secretId);
+    } on YaguraException {
+      // A value that cannot be opened is replaced, and counts as changed.
+    }
+    final changed =
+        previous == null ||
+        previous.length != bytes.length ||
+        !_sameBytes(previous, bytes);
+    secrets.put(secretId, bytes, instanceId: id, setting: key);
+    return _secretChanged(record, changed: changed);
   }
 
-  Instance deleteSecret(String id, String key) {
-    _require(id);
-    throw _noSecretStore(key);
+  static bool _sameBytes(Uint8List a, Uint8List b) {
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
-  YaguraException _noSecretStore(String key) => YaguraException(
-    'secret_store_unavailable',
-    'this version has no secret store, so the secret "$key" cannot be changed',
-    details: {'key': key},
-  );
+  /// Clears the secret setting [key] of instance [id].
+  Instance deleteSecret(String id, String key, {int? expectedRevision}) {
+    final record = _require(id);
+    _checkRevision(record, expectedRevision);
+    _requireSecretSetting(record, key);
+    final secretId = secretIdFor(id, key);
+    final changed = secrets.contains(secretId);
+    secrets.delete(secretId);
+    return _secretChanged(record, changed: changed);
+  }
+
+  /// A running server keeps the old value until it restarts, so a change of
+  /// the stored value marks the instance restart-required; a write of the
+  /// value already stored does not.
+  Instance _secretChanged(InstanceRecord record, {required bool changed}) {
+    if (changed &&
+        (record.state == InstanceState.running ||
+            record.state == InstanceState.starting)) {
+      record.restartRequired = true;
+    }
+    _commit(record, revisedFrom: record.revision);
+    return view(record);
+  }
+
+  /// Fails `revision_required` when [expected] is 0 (proto3 omitted) and
+  /// `revision_conflict` with the current revision when it is stale (design
+  /// D12). Null skips the check, for in-process callers. The check runs
+  /// before any change, so a refused call leaves the record untouched.
+  void _checkRevision(InstanceRecord record, int? expected) {
+    if (expected == null) return;
+    if (expected <= 0) {
+      throw YaguraException(
+        'revision_required',
+        'the call needs expected_revision, the revision the caller last read '
+            '(instance "${record.name}" is at ${record.revision})',
+        details: {'instanceId': record.id},
+      );
+    }
+    if (expected != record.revision) {
+      throw revisionConflict(record.id, record.revision);
+    }
+  }
+
+  void _requireSecretSetting(InstanceRecord record, String key) {
+    final def = _requirePlugin(record).manifest.settings[key];
+    if (def == null || def.type != SettingType.secret) {
+      throw _settingsInvalid([SettingError(key, 'is not a secret setting')]);
+    }
+  }
+
+  /// Fails `secret_required` naming the `required` secret settings of
+  /// [record] that are unset.
+  void requireSecrets(InstanceRecord record) {
+    final defs = registry.find(record.pluginId)?.manifest.settings;
+    if (defs == null) return;
+    final set = setSecretsOf(record);
+    final missing = [
+      for (final MapEntry(key: name, value: def) in defs.entries)
+        if (def.type == SettingType.secret &&
+            def.required &&
+            !set.contains(name))
+          name,
+    ];
+    if (missing.isEmpty) return;
+    throw YaguraException(
+      'secret_required',
+      'the required secret ${missing.join(', ')} is not set; set it with '
+          'SetSecret before starting',
+      details: {'instanceId': record.id, 'settings': missing.join(', ')},
+    );
+  }
 
   Map<String, Object?> _validated(
     PluginManifest manifest,
@@ -339,13 +562,13 @@ class InstanceManager {
     final validation = validateSettings(manifest, input);
     if (validation.isValid) return validation.values;
     final secret = validation.errors.where(
-      (e) => e.code == 'secret_store_unavailable',
+      (e) => e.code == 'secret_via_set_secret',
     );
     if (secret.isNotEmpty) {
       throw YaguraException(
-        'secret_store_unavailable',
-        'this version has no secret store: ${secret.map((e) => e.path).join(', ')} '
-            'cannot be set',
+        'secret_via_set_secret',
+        'a secret value is set with SetSecret, not in the settings: '
+            '${secret.map((e) => e.path).join(', ')}',
         details: {
           'fields': [for (final e in secret) e.path],
         },
@@ -369,8 +592,9 @@ class InstanceManager {
 
   List<PortAssignment> _resolvePorts(
     PluginManifest manifest,
-    Map<String, int> overrides,
-  ) {
+    Map<String, int> overrides, {
+    Map<String, bool> exposure = const {},
+  }) {
     final Map<String, int> numbers;
     try {
       numbers = resolvePorts(manifest, overrides);
@@ -386,7 +610,9 @@ class InstanceManager {
           number: numbers[decl.name]!,
           protocol: decl.protocol,
           purpose: decl.purpose,
-          exposed: decl.exposed,
+          exposed: decl.purpose == PortPurpose.rcon
+              ? exposure[decl.name] ?? decl.exposed
+              : decl.exposed,
         ),
     ];
   }
@@ -439,29 +665,51 @@ class InstanceManager {
   }
 
   /// The instance directory: `<data>/instances/<id>` by default, or a path
-  /// strictly under `<data>/instances` that overlaps no other instance
-  /// (design D21; configured roots come with the admin channel in M2).
+  /// strictly under `<data>/instances` or a root an administrator added with
+  /// `yagurad roots add` (design D5, D21) that overlaps no other instance.
   String _checkDirectory(String? requested, String id) {
     final root = p.normalize(p.absolute(dataDirectory.instancesPath));
     if (requested == null || requested.isEmpty) return p.join(root, id);
-    final directory = p.normalize(p.absolute(requested));
     Never refuse(String why) => throw YaguraException(
       'directory_not_allowed',
       'directory $requested is not allowed: $why',
       details: {'path': requested},
     );
-    if (!p.isWithin(root, directory)) {
-      refuse('instances live under $root');
+    // The real name of the folder, with Windows' reading of the path applied:
+    // `<root>\...` is the root, a short name or another case is the same
+    // folder, and a link on the way leads elsewhere. A path Windows would
+    // rewrite is refused.
+    final String directory;
+    try {
+      directory = roots.canonical(requested);
+    } on FormatException catch (e) {
+      refuse(e.message);
+    }
+    if (!roots.allows(directory)) {
+      refuse(
+        'instances live under ${[for (final r in roots.list()) r.path].join(', ')}',
+      );
     }
     for (final other in _records.values) {
-      final theirs = p.normalize(p.absolute(other.directory));
-      if (p.equals(directory, theirs) ||
-          p.isWithin(theirs, directory) ||
-          p.isWithin(directory, theirs)) {
+      final theirs = _canonicalOf(other.directory);
+      bool same(String a, String b) => a.toLowerCase() == b.toLowerCase();
+      bool within(String parent, String child) =>
+          p.isWithin(parent.toLowerCase(), child.toLowerCase());
+      if (same(directory, theirs) ||
+          within(theirs, directory) ||
+          within(directory, theirs)) {
         refuse('it overlaps instance "${other.name}" at ${other.directory}');
       }
     }
     return directory;
+  }
+
+  String _canonicalOf(String directory) {
+    try {
+      return roots.canonical(directory);
+    } on FormatException {
+      return p.normalize(p.absolute(directory));
+    }
   }
 
   String _newId() {
@@ -493,6 +741,7 @@ class InstanceManager {
     bool validateFiles = false,
   }) {
     final record = _guarded(id, OperationKind.update);
+    if (record.state == InstanceState.running) requireSecrets(record);
     return runner.enqueue(
       instanceId: id,
       kind: OperationKind.update,
@@ -508,6 +757,7 @@ class InstanceManager {
 
   Operation validate(String id) {
     final record = _guarded(id, OperationKind.validate);
+    if (record.state == InstanceState.running) requireSecrets(record);
     return runner.enqueue(
       instanceId: id,
       kind: OperationKind.validate,
@@ -523,6 +773,7 @@ class InstanceManager {
 
   Operation start(String id) {
     final record = _guarded(id, OperationKind.start);
+    requireSecrets(record);
     return runner.enqueue(
       instanceId: id,
       kind: OperationKind.start,
@@ -542,6 +793,7 @@ class InstanceManager {
 
   Operation restart(String id) {
     final record = _guarded(id, OperationKind.restart);
+    requireSecrets(record);
     return runner.enqueue(
       instanceId: id,
       kind: OperationKind.restart,
@@ -555,8 +807,10 @@ class InstanceManager {
     String id, {
     bool deleteFiles = false,
     String confirmName = '',
+    int? expectedRevision,
   }) {
     final record = _require(id);
+    _checkRevision(record, expectedRevision);
     if (deleteFiles && confirmName != record.name) {
       throw YaguraException(
         'confirmation_mismatch',
@@ -575,12 +829,99 @@ class InstanceManager {
     }
     checkAllowed(record, OperationKind.delete, execution: false);
     if (deleteFiles) requirePlugin(record);
-    return runner.enqueue(
-      instanceId: id,
-      kind: OperationKind.delete,
-      body: (context) =>
-          lifecycle.delete(context, record.id, deleteFiles: deleteFiles),
+    return _revised(
+      record,
+      () => runner.enqueue(
+        instanceId: id,
+        kind: OperationKind.delete,
+        body: (context) =>
+            lifecycle.delete(context, record.id, deleteFiles: deleteFiles),
+      ),
     );
+  }
+
+  // ---- firewall (design D11) ----------------------------------------------
+
+  /// The rules the firewall should hold now: for every instance that is not
+  /// `not_installed`, one per exposed port and protocol (`both` is two), and
+  /// the daemon's API port. While a run has not ended the rules follow the
+  /// ports it was launched with; otherwise the saved ports. A port of purpose
+  /// `rcon` is exposed only when the instance's setting says so
+  /// (`UpdateSettingsRequest.exposure`; a plugin may declare the default).
+  List<DesiredRule> desiredFirewallRules() {
+    final rules = [
+      DesiredRule(
+        owner: daemonRuleOwner,
+        portName: 'api',
+        protocol: 'tcp',
+        port: apiPort,
+      ),
+    ];
+    for (final record in _records.values) {
+      if (record.state == InstanceState.notInstalled) continue;
+      final launched = _launchedPorts(record.id);
+      for (final port in record.ports) {
+        if (!port.exposed) continue;
+        final number = launched?[port.name] ?? port.number;
+        for (final protocol in switch (port.protocol) {
+          PortProtocol.both => const ['tcp', 'udp'],
+          final single => [single.name],
+        }) {
+          rules.add(
+            DesiredRule(
+              owner: record.id,
+              portName: port.name,
+              protocol: protocol,
+              port: number,
+            ),
+          );
+        }
+      }
+    }
+    return rules;
+  }
+
+  /// The ports of the run of [id] that has not ended, if one is recorded.
+  Map<String, int>? _launchedPorts(String id) {
+    final unresolved = runs.unresolvedFor(id);
+    if (unresolved.isEmpty) return null;
+    final ports = unresolved.last.launchedPorts;
+    return ports.isEmpty ? null : ports;
+  }
+
+  /// Announces instances whose firewall status changed (`ok`/`degraded`).
+  void firewallStatusChanged(Set<String> owners) {
+    for (final id in owners) {
+      final record = _records[id];
+      if (record != null) _emitChanged(record);
+    }
+  }
+
+  /// Asks for a reconcile without waiting for it (a settings change, a
+  /// crash).
+  void firewallChanged() {
+    final reconciler = firewall;
+    if (reconciler != null && !_closed) unawaited(reconciler.request());
+  }
+
+  /// Reconciles for an operation and waits, so that the result of the
+  /// operation says `firewall_unavailable` when the rules could not be set
+  /// (at most twice the reconcile timeout). It never fails the operation, and
+  /// a cancelled operation stops waiting.
+  Future<void> syncFirewall(OperationContext ctx) async {
+    final reconciler = firewall;
+    if (reconciler == null || _closed) return;
+    try {
+      final result = await Future.any<ReconcileResult?>([
+        reconciler.requestAndWait(),
+        ctx.cancel.whenCancelled.then((_) => null),
+      ]);
+      if (result == null || result.ok) return;
+      ctx.warn('firewall_unavailable');
+      ctx.log(result.problem);
+    } on Object {
+      // Reported by the health flag; the operation goes on.
+    }
   }
 
   // ---- snapshots ----------------------------------------------------------
@@ -602,7 +943,12 @@ class InstanceManager {
   /// Replaces the instance's data paths with a snapshot, as an operation on
   /// its queue (design D12). Allowed from `stopped` and from
   /// `error: restore_interrupted`.
-  Operation restoreSnapshot(String id, String snapshotId) {
+  Operation restoreSnapshot(
+    String id,
+    String snapshotId, {
+    int? expectedRevision,
+  }) {
+    _checkRevision(_require(id), expectedRevision);
     final record = _guarded(id, OperationKind.restore);
     if (!snapshotter.list(id).any((s) => s.id == snapshotId)) {
       throw YaguraException(
@@ -611,12 +957,32 @@ class InstanceManager {
         details: {'instanceId': id, 'snapshotId': snapshotId},
       );
     }
-    return runner.enqueue(
-      instanceId: id,
-      kind: OperationKind.restore,
-      body: (context) =>
-          lifecycle.restoreSnapshot(context, record.id, snapshotId),
+    return _revised(
+      record,
+      () => runner.enqueue(
+        instanceId: id,
+        kind: OperationKind.restore,
+        body: (context) =>
+            lifecycle.restoreSnapshot(context, record.id, snapshotId),
+      ),
     );
+  }
+
+  /// Accepts an operation that changes the instance's configuration: the
+  /// revision is incremented in a transaction of its own, then [enqueue]
+  /// creates the operation. When [enqueue] refuses (`queue_full`), the
+  /// increment is undone, so a refused call changes nothing.
+  Operation _revised(InstanceRecord record, Operation Function() enqueue) {
+    final before = record.revision;
+    store.setRevision(record, before, before + 1);
+    try {
+      final operation = enqueue();
+      _emitChanged(record);
+      return operation;
+    } on Object {
+      store.setRevision(record, before + 1, before);
+      rethrow;
+    }
   }
 
   /// Clears an `error` after the cause was addressed (design D17).
@@ -638,8 +1004,22 @@ class InstanceManager {
       snapshotter.clearInterruptedRestore(record.id);
     }
     if (record.stateReason == crashLoopReason) runs.clearCrashes(record.id);
+    if (record.stateReason == runRecordRejectedReason) {
+      // The run record named no verified server; nothing is terminated. The
+      // run is over for the daemon, and the warning keeps the relay PID.
+      for (final run in runs.unresolvedFor(record.id)) {
+        runs.markEnded(run.runId, at: clock(), reason: runRecordRejectedReason);
+      }
+      record
+        ..runId = ''
+        ..server = null;
+    }
     final warning = switch (record.stateReason) {
       crashLoopReason => '',
+      runRecordRejectedReason =>
+        record.warning.isEmpty
+            ? 'the run record was rejected: no verified server'
+            : record.warning,
       restoreInterruptedReason =>
         'the restore was interrupted: data paths may be mixed',
       _ => 'the update did not finish: files may be inconsistent',
@@ -807,8 +1187,15 @@ class InstanceManager {
     if (!_events.isClosed) _events.add(InstanceRemoved(record.id));
   }
 
-  void _commit(InstanceRecord record) {
-    store.save(record);
+  /// Persists [record]. With [revisedFrom] the write is a configuration
+  /// change: it checks the stored revision and increments it in the same
+  /// transaction (design D12).
+  void _commit(InstanceRecord record, {int? revisedFrom}) {
+    if (revisedFrom == null) {
+      store.save(record);
+    } else {
+      store.saveRevised(record, revisedFrom);
+    }
     writeInstanceFile(record);
     _emitChanged(record);
   }
@@ -830,6 +1217,14 @@ class InstanceManager {
         record.id,
         'instance_file_stale',
         'instance.json could not be written: ${e.osError?.message ?? e.message}',
+      );
+    } on YaguraException catch (e) {
+      // A link in the way (design D8): the file is not written.
+      if (e.reason != 'sandbox_violation') rethrow;
+      notice(
+        record.id,
+        'instance_file_stale',
+        'instance.json could not be written: ${e.message}',
       );
     }
   }
@@ -978,6 +1373,12 @@ class InstanceManager {
             InstanceState.running ||
             InstanceState.stopping:
           await _recoverRun(record);
+        case InstanceState.error
+            when record.stateReason == runRecordRejectedReason:
+          // The rejected run stays unresolved until Stop verifies it again or
+          // Acknowledge ends it.
+          final rejected = runs.unresolvedFor(record.id).lastOrNull;
+          if (rejected != null) record.runId = rejected.runId;
         case InstanceState.notInstalled ||
             InstanceState.stopped ||
             InstanceState.error:
@@ -1008,19 +1409,29 @@ class InstanceManager {
   Future<void> _recoverRun(InstanceRecord record) async {
     RunningServer? server;
     RunRecord? adopted;
+    RunRecord? rejectedRun;
     // Newest run first: it is the one the instance's state refers to.
     for (final run in runs.unresolvedFor(record.id).reversed) {
-      if (adopted == null) {
-        final found = await _reattach(run);
-        if (found != null) {
-          server = found;
-          adopted = run;
+      if (adopted == null && rejectedRun == null) {
+        try {
+          final found = await _reattach(run);
+          if (found != null) {
+            server = found;
+            adopted = run;
+            continue;
+          }
+        } on YaguraException catch (e) {
+          if (e.reason != runRecordRejectedReason) rethrow;
+          _rejectRun(record, run, e.message);
+          rejectedRun = run;
           continue;
         }
       }
+      if (identical(run, rejectedRun)) continue;
       await _endLostRun(run);
     }
 
+    if (rejectedRun != null) return;
     if (server == null || adopted == null) {
       // A stop the admin asked for before the daemon went down stays asked.
       final last = runs.all(record.id).lastOrNull;
@@ -1030,10 +1441,17 @@ class InstanceManager {
         record.lastRequestedRunning = false;
       }
       setState(record, InstanceState.stopped);
+      // A server that exited while the daemon was down left its exit code in
+      // the relay's exit record; _endLostRun stored it in the run.
+      final exitCode = runs.all(record.id).lastOrNull?.exitCode;
       _recoveryNotice(
         record,
         'lost_while_daemon_down',
-        'the server was not re-attached after the daemon restarted',
+        exitCode == null
+            ? 'the server was not re-attached after the daemon restarted'
+            : 'the server exited with code $exitCode while the daemon was '
+                  'down',
+        exitCode: exitCode ?? 0,
       );
       return;
     }
@@ -1041,6 +1459,9 @@ class InstanceManager {
     record
       ..server = server
       ..runId = adopted.runId;
+    if (server.recordRejected) {
+      _runRecordNotice(record, adopted, server);
+    }
     if (adopted.state == RunState.pending) {
       runs.markRunning(
         adopted.runId,
@@ -1059,10 +1480,80 @@ class InstanceManager {
     }
   }
 
+  /// Puts [record] in `error: run_record_rejected` for [run]: nothing was
+  /// terminated, the run stays unresolved, and the warning names the relay.
+  void _rejectRun(InstanceRecord record, RunRecord run, String message) {
+    setState(
+      record,
+      InstanceState.error,
+      reason: runRecordRejectedReason,
+      warning: message,
+    );
+    record.runId = run.runId;
+    _recoveryNotice(record, runRecordRejectedReason, message);
+  }
+
+  /// The notice for a server found by the fallback of a rejected run record.
+  void _runRecordNotice(
+    InstanceRecord record,
+    RunRecord run,
+    RunningServer server,
+  ) {
+    final message =
+        'the run record of run ${run.runId} named no verified server; '
+        'the relay ${server.relay?.pid ?? run.relay?.pid ?? 0} has server '
+        '${server.pid}, which is now supervised';
+    record.warning = message;
+    _recoveryNotice(record, runRecordRejectedReason, message);
+  }
+
+  /// Verifies the unresolved run of an instance in `error: run_record_rejected`
+  /// again (the Stop exit). Returns true when a verified server was adopted
+  /// and the normal stop can go on; false when the process is gone (the run
+  /// ended and the instance is `stopped`); throws `run_record_rejected` again
+  /// when it is still not verified.
+  Future<bool> retryRejectedRun(InstanceRecord record) async {
+    final run = runs.unresolvedFor(record.id).lastOrNull;
+    if (run == null) {
+      setState(record, InstanceState.stopped);
+      return false;
+    }
+    final RunningServer? server;
+    try {
+      server = await _reattach(run);
+    } on YaguraException catch (e) {
+      if (e.reason != runRecordRejectedReason) rethrow;
+      record.warning = e.message;
+      saveChanges(record);
+      throw YaguraException(
+        runRecordRejectedReason,
+        e.message,
+        details: {...e.details, 'instanceId': record.id},
+      );
+    }
+    if (server == null) {
+      await _endLostRun(run);
+      record.server = null;
+      record.runId = '';
+      record.lastRequestedRunning = false;
+      setState(record, InstanceState.stopped);
+      return false;
+    }
+    record
+      ..server = server
+      ..runId = run.runId;
+    if (run.state == RunState.pending) {
+      runs.markRunning(run.runId, server: server.identity, relay: server.relay);
+    }
+    setState(record, InstanceState.running);
+    watchExit(record, server);
+    return true;
+  }
+
   /// The live server a run recorded, or null when there is none: no process
   /// has exactly the recorded PID, executable and start time.
   Future<RunningServer?> _reattach(RunRecord run) async {
-    final files = RunFiles(run.directory);
+    final files = RunFiles.forRun(run.directory);
     var serverId = run.server;
     var relayId = run.relay;
     if (serverId == null) {
@@ -1071,20 +1562,33 @@ class InstanceManager {
       final deadline = clock().add(pendingRunWait);
       while (true) {
         final relay = files.readRelay();
+        // The daemon's own record of the relay (the launcher reported it)
+        // wins over relay.json, which the game-server account can rewrite.
+        relayId ??= relay?.relay;
         if (relay?.server case final found?) {
           serverId = found;
-          relayId = relay!.relay;
           break;
         }
         if (relay == null ||
-            !await processHost.isAlive(relay.relay) ||
+            !await processHost.isAlive(relayId ?? relay.relay) ||
             clock().isAfter(deadline)) {
           break;
         }
         await Future<void>.delayed(const Duration(milliseconds: 50));
       }
     }
-    if (serverId == null) return null;
+    if (serverId == null) {
+      // No recorded server. The daemon's own record of the relay (the file can
+      // be rewritten by the game-server account) still names the relay, and
+      // the relay's child running as the account is the server (design D9): a
+      // live server is not left untracked.
+      if (run.relay == null) return null;
+      return processHost.reattach(
+        null,
+        relay: run.relay,
+        runDirectory: run.directory,
+      );
+    }
     return processHost.reattach(
       serverId,
       relay: relayId,
@@ -1103,7 +1607,16 @@ class InstanceManager {
         // Best effort: the run is over either way.
       }
     }
-    runs.markEnded(run.runId, at: clock(), reason: 'lost');
+    // A server that exited while the daemon was down: the relay recorded how.
+    final exitCode = run.directory.isEmpty
+        ? null
+        : RunFiles.forRun(run.directory).readExitCode();
+    runs.markEnded(
+      run.runId,
+      at: clock(),
+      reason: exitCode == null ? 'lost' : 'exited_while_daemon_down',
+      exitCode: exitCode,
+    );
   }
 
   /// Waits out the rest of the grace period of a stop that was requested
@@ -1184,6 +1697,7 @@ class InstanceManager {
       now: now,
     );
     record.server = null;
+    firewallChanged();
     switch (action) {
       case RestartAction.restart:
         setState(record, InstanceState.stopped);
@@ -1280,8 +1794,13 @@ class InstanceManager {
     }());
   }
 
-  void _recoveryNotice(InstanceRecord record, String kind, String message) {
-    final notice = InstanceNotice(record.id, kind, message);
+  void _recoveryNotice(
+    InstanceRecord record,
+    String kind,
+    String message, {
+    int exitCode = 0,
+  }) {
+    final notice = InstanceNotice(record.id, kind, message, exitCode: exitCode);
     _recoveryNotices.add(notice);
     if (!_events.isClosed) _events.add(notice);
   }
@@ -1290,9 +1809,17 @@ class InstanceManager {
   /// stale only when the daemon died between commit and write).
   void rewriteInstanceFiles() {
     for (final record in _records.values) {
-      if (Directory(record.directory).existsSync()) {
-        writeInstanceFile(record);
-      }
+      if (_directoryMayExist(record.directory)) writeInstanceFile(record);
+    }
+  }
+
+  /// Whether the instance directory is there; a link in its place counts as
+  /// there, so the write that follows reports it.
+  bool _directoryMayExist(String directory) {
+    try {
+      return InstanceFs(directory).stat('') != null;
+    } on YaguraException {
+      return true;
     }
   }
 
@@ -1311,15 +1838,23 @@ class InstanceManager {
   void _sweepMarked(Directory directory) {
     for (final entry
         in directory.listSync(followLinks: false).whereType<Directory>()) {
-      final marker = File(p.join(entry.path, '.yagura', 'deleting'));
+      final fs = InstanceFs(entry.path);
       final owner = _records.values.any(
         (r) => p.equals(p.normalize(p.absolute(r.directory)), entry.path),
       );
-      if (marker.existsSync()) {
+      final bool marked;
+      try {
+        marked = fs.exists(InstanceFs.deletingMarker);
+      } on YaguraException {
+        // A link under the directory: its marker cannot be read, and nothing
+        // below it is entered.
+        continue;
+      }
+      if (marked) {
         if (owner) {
-          marker.deleteSync();
+          fs.delete(InstanceFs.deletingMarker);
         } else {
-          entry.deleteSync(recursive: true);
+          fs.deleteTree('');
         }
       } else if (!owner) {
         _sweepMarked(entry);

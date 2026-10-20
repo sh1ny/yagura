@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:fixnum/fixnum.dart';
 import 'package:flutter/material.dart';
@@ -35,6 +36,31 @@ class FakeDaemon implements DaemonTransport {
   /// Thrown by the next `UpdateSettings` when set.
   DaemonCallException? updateFailure;
 
+  /// While set, `GetInfo` and `WatchInstances` fail with it (a daemon that
+  /// rejects this client).
+  DaemonCallException? failure;
+
+  /// Every `SetSecret` call: (instance id, key, value, expected revision).
+  final List<({String instanceId, String key, String value, int revision})>
+  secretCalls = [];
+
+  /// Runs at the start of every `SetSecret` (to change the instance
+  /// meanwhile, as another device would).
+  void Function()? beforeSetSecret;
+
+  /// Thrown by `SetSecret` when set.
+  DaemonCallException? setSecretFailure;
+
+  /// When true a successful `UpdateSettings` stores the new settings and ports
+  /// and bumps the revision, as the real daemon does.
+  bool updateBumpsRevision = false;
+
+  /// The CSRs of `RenewCertificate` calls.
+  final List<Uint8List> renewals = [];
+
+  /// Answers `RenewCertificate`.
+  Future<EnrollResponse> Function(Uint8List csr)? onRenew;
+
   final List<StreamController<InstanceEvent>> _watchers = [];
   final Map<String, List<OperationEvent>> _opEvents = {};
   final Map<String, List<StreamController<OperationEvent>>> _opWatchers = {};
@@ -52,6 +78,7 @@ class FakeDaemon implements DaemonTransport {
   @override
   Future<DaemonInfo> getInfo() async {
     calls.add('GetInfo');
+    if (failure case final f?) throw f;
     if (!up) throw const DaemonCallException(code: 14, reason: 'unavailable');
     return DaemonInfo(
       daemonVersion: '0.1.0',
@@ -64,6 +91,7 @@ class FakeDaemon implements DaemonTransport {
   @override
   Stream<InstanceEvent> watchInstances() {
     calls.add('WatchInstances');
+    if (failure case final f?) return Stream.error(f);
     if (!up) {
       return Stream.error(const DaemonCallException(code: 14));
     }
@@ -76,15 +104,15 @@ class FakeDaemon implements DaemonTransport {
   }
 
   /// The daemon goes away: every open stream fails and calls are refused.
-  void kill() {
+  void kill({DaemonCallException error = const DaemonCallException(code: 14)}) {
     up = false;
     for (final c in [..._watchers, ..._followers]) {
-      c.addError(const DaemonCallException(code: 14));
+      c.addError(error);
       c.close();
     }
     for (final list in _opWatchers.values) {
       for (final c in list) {
-        c.addError(const DaemonCallException(code: 14));
+        c.addError(error);
         c.close();
       }
     }
@@ -139,7 +167,43 @@ class FakeDaemon implements DaemonTransport {
   Future<Instance> setSecret(SetSecretRequest request) async {
     _requireUp();
     calls.add('SetSecret:${request.instanceId}:${request.key}');
-    return instances.firstWhere((i) => i.id == request.instanceId);
+    secretCalls.add((
+      instanceId: request.instanceId,
+      key: request.key,
+      value: request.value,
+      revision: request.expectedRevision.toInt(),
+    ));
+    beforeSetSecret?.call();
+    if (setSecretFailure case final failure?) throw failure;
+    final current = instances.firstWhere((i) => i.id == request.instanceId);
+    if (request.expectedRevision != current.revision) {
+      throw const DaemonCallException(code: 9, reason: 'revision_conflict');
+    }
+    final settings = jsonDecode(current.settings.json) as Map<String, Object?>;
+    settings[request.key] = {'secret': true, 'set': true};
+    final updated = current.deepCopy()
+      ..settings = JsonDocument(
+        json: jsonEncode(settings),
+        schemaVersion: current.settings.schemaVersion,
+      )
+      ..revision = current.revision + 1;
+    emitChanged(updated);
+    return updated;
+  }
+
+  @override
+  Future<Instance> getInstance(String instanceId) async {
+    _requireUp();
+    calls.add('GetInstance:$instanceId');
+    return instances.firstWhere((i) => i.id == instanceId);
+  }
+
+  @override
+  Future<EnrollResponse> renewCertificate(Uint8List csrDer) async {
+    _requireUp();
+    calls.add('RenewCertificate');
+    renewals.add(csrDer);
+    return onRenew!(csrDer);
   }
 
   @override
@@ -176,7 +240,19 @@ class FakeDaemon implements DaemonTransport {
     _requireUp();
     calls.add('CreateInstance:${request.pluginId}');
     creates.add(request);
-    return makeInstance(id: 'new', name: request.name);
+    final created = Instance(
+      id: 'new',
+      name: request.name,
+      pluginId: request.pluginId,
+      state: InstanceState.INSTANCE_STATE_NOT_INSTALLED,
+      settings: request.settings,
+      revision: Int64(1),
+    );
+    instances = [...instances, created];
+    for (final c in _watchers) {
+      c.add(InstanceEvent(changed: created));
+    }
+    return created;
   }
 
   @override
@@ -189,7 +265,12 @@ class FakeDaemon implements DaemonTransport {
     if (request.expectedRevision != current.revision) {
       throw const DaemonCallException(code: 9, reason: 'revision_conflict');
     }
-    return current;
+    if (!updateBumpsRevision) return current;
+    final updated = current.deepCopy()
+      ..settings = request.settings
+      ..revision = current.revision + 1;
+    emitChanged(updated);
+    return updated;
   }
 
   @override

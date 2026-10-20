@@ -261,6 +261,9 @@ class DaemonHealth extends $pb.GeneratedMessage {
     $core.bool? hooksDegraded,
     $core.bool? pluginsOk,
     $core.Iterable<$core.String>? notBuilt,
+    $core.bool? adminChannelOk,
+    $core.bool? serviceAccountsOk,
+    $1.Timestamp? serverCertNotAfter,
   }) {
     final result = DaemonHealth._();
     if (databaseOk != null) result.databaseOk = databaseOk;
@@ -274,6 +277,10 @@ class DaemonHealth extends $pb.GeneratedMessage {
     if (hooksDegraded != null) result.hooksDegraded = hooksDegraded;
     if (pluginsOk != null) result.pluginsOk = pluginsOk;
     if (notBuilt != null) result.notBuilt.addAll(notBuilt);
+    if (adminChannelOk != null) result.adminChannelOk = adminChannelOk;
+    if (serviceAccountsOk != null) result.serviceAccountsOk = serviceAccountsOk;
+    if (serverCertNotAfter != null)
+      result.serverCertNotAfter = serverCertNotAfter;
     return result;
   }
 
@@ -305,6 +312,10 @@ class DaemonHealth extends $pb.GeneratedMessage {
     ..aOB(8, _omitFieldNames ? '' : 'hooksDegraded')
     ..aOB(9, _omitFieldNames ? '' : 'pluginsOk')
     ..pPS(10, _omitFieldNames ? '' : 'notBuilt')
+    ..aOB(11, _omitFieldNames ? '' : 'adminChannelOk')
+    ..aOB(12, _omitFieldNames ? '' : 'serviceAccountsOk')
+    ..aOM<$1.Timestamp>(13, _omitFieldNames ? '' : 'serverCertNotAfter',
+        subBuilder: $1.Timestamp.$_createMessage)
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -414,6 +425,40 @@ class DaemonHealth extends $pb.GeneratedMessage {
   /// "firewall" in M1); their *_ok fields are false and carry no meaning.
   @$pb.TagNumber(10)
   $pb.PbList<$core.String> get notBuilt => $_getList(9);
+
+  /// Service mode only. False when the named pipe of the admin channel is
+  /// squatted by another process (notice admin_channel_squatted) or not served.
+  @$pb.TagNumber(11)
+  $core.bool get adminChannelOk => $_getBF(10);
+  @$pb.TagNumber(11)
+  set adminChannelOk($core.bool value) => $_setBool(10, value);
+  @$pb.TagNumber(11)
+  $core.bool hasAdminChannelOk() => $_has(10);
+  @$pb.TagNumber(11)
+  void clearAdminChannelOk() => $_clearField(11);
+
+  /// The yagura-srv and yagura-steam accounts exist, are configured and their
+  /// ACLs are in place (service mode).
+  @$pb.TagNumber(12)
+  $core.bool get serviceAccountsOk => $_getBF(11);
+  @$pb.TagNumber(12)
+  set serviceAccountsOk($core.bool value) => $_setBool(11, value);
+  @$pb.TagNumber(12)
+  $core.bool hasServiceAccountsOk() => $_has(11);
+  @$pb.TagNumber(12)
+  void clearServiceAccountsOk() => $_clearField(12);
+
+  /// End of the server certificate; unset in dev mode, which serves plaintext.
+  @$pb.TagNumber(13)
+  $1.Timestamp get serverCertNotAfter => $_getN(12);
+  @$pb.TagNumber(13)
+  set serverCertNotAfter($1.Timestamp value) => $_setField(13, value);
+  @$pb.TagNumber(13)
+  $core.bool hasServerCertNotAfter() => $_has(12);
+  @$pb.TagNumber(13)
+  void clearServerCertNotAfter() => $_clearField(13);
+  @$pb.TagNumber(13)
+  $1.Timestamp ensureServerCertNotAfter() => $_ensure(12);
 }
 
 class ListAuditRequest extends $pb.GeneratedMessage {

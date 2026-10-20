@@ -356,6 +356,11 @@ class Port extends $pb.GeneratedMessage {
   @$pb.TagNumber(4)
   void clearPurpose() => $_clearField(4);
 
+  /// Firewall rule wanted. In UpdateSettings the daemon honors it for a port of
+  /// purpose rcon only, the per-instance choice to open it: every other port
+  /// follows the plugin. A request that names the rcon port always sets it from
+  /// this field, so an unset (false) value closes the port; a request that does
+  /// not name the rcon port leaves the choice as it is.
   @$pb.TagNumber(5)
   $core.bool get exposed => $_getBF(4);
   @$pb.TagNumber(5)

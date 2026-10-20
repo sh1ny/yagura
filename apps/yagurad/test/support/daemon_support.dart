@@ -4,17 +4,27 @@ import 'dart:math';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/admin/admin_transport.dart';
 import 'package:yagurad/src/errors.dart';
+import 'package:yagurad/src/firewall/firewall_backend.dart';
+import 'package:yagurad/src/platform/acl_writer.dart';
 import 'package:yagurad/src/host/daemon.dart';
+import 'package:yagurad/src/host/data_dir_protector.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
 import 'package:yagurad/src/instances/instance.dart';
+import 'package:yagurad/src/instances/instance_acls.dart';
 import 'package:yagurad/src/logs/log_hub.dart';
 import 'package:yagurad/src/logs/log_models.dart';
 import 'package:yagurad/src/operations/operations.dart';
+import 'package:yagurad/src/host/secret_store.dart';
 import 'package:yagurad/src/process/process.dart';
+import 'package:yagurad/src/service/service_accounts.dart';
+import 'package:yagurad/src/service/version_sweeper.dart';
 import 'package:yagurad/src/snapshots/snapshots.dart';
 import 'package:yagurad/src/steam/steam.dart';
+
+import 'temp_support.dart';
 
 /// The Valheim reference manifest of `packages/yagura_plugin`.
 const valheimFixture = '../../packages/yagura_plugin/test/fixtures/valheim';
@@ -42,6 +52,9 @@ class FakeServer implements RunningServer {
 
   @override
   ProcessIdentity? get relay => null;
+
+  @override
+  bool recordRejected = false;
 
   final _exit = Completer<int>();
 
@@ -112,12 +125,31 @@ class FakeProcessHost implements ProcessHost {
         : StoppedBy.graceful;
   }
 
+  /// The server of each relay (by relay PID) that a re-attach without a
+  /// recorded server finds as the verified relay's child (design D9).
+  final relayChildren = <int, FakeServer>{};
+
+  /// When set, a re-attach fails `run_record_rejected` naming this relay
+  /// PID: the run record does not match a verified process (design D9).
+  int? rejectedRelayPid;
+
   @override
   Future<RunningServer?> reattach(
-    ProcessIdentity identity, {
+    ProcessIdentity? identity, {
     ProcessIdentity? relay,
     String runDirectory = '',
   }) async {
+    if (identity == null) {
+      final child = relay == null ? null : relayChildren[relay.pid];
+      return child?..recordRejected = true;
+    }
+    if (rejectedRelayPid case final pid?) {
+      throw YaguraException(
+        'run_record_rejected',
+        'the run record names no verified server (relay $pid)',
+        details: {'relayPid': pid},
+      );
+    }
     for (final server in survivors) {
       if (server.identity == identity) return server;
     }
@@ -229,7 +261,11 @@ class FakeSnapshotter implements Snapshotter {
 /// A fresh data directory for one test, with helpers to prepare plugins and
 /// start daemons on it.
 class TestEnv {
-  TestEnv() : root = Directory.systemTemp.createTempSync('yagurad_test_') {
+  /// A fresh directory under [parent] (the temp folder by default). The
+  /// service rows pass a folder under `%ProgramData%`, as a real install has
+  /// its data, so the service accounts reach it the way they would there.
+  TestEnv({Directory? parent})
+    : root = (parent ?? canonicalSystemTemp()).createTempSync('yagurad_test_') {
     addTearDown(() async {
       for (final daemon in List.of(_daemons)) {
         await daemon.close();
@@ -305,6 +341,20 @@ class TestEnv {
     SteamService? steamService,
     Snapshotter? snapshots,
     DateTime Function()? clock,
+    bool serviceMode = false,
+    SecretProtector? secretProtector,
+    AdminListener Function()? adminListener,
+    AdminConnector Function()? adminProbe,
+    Duration? adminStartupWait,
+    AclWriter? aclWriter,
+    AccountSids? accountSids,
+    DataDirProtector? dataDirProtector,
+    ServiceAccounts? serviceAccounts,
+    InstanceAcls? instanceAcls,
+    Future<List<InternetAddress>> Function()? hostAddresses,
+    VersionSweeper? versionSweeper,
+    FirewallBackend? firewall,
+    Duration firewallTimeout = const Duration(seconds: 30),
     // Nothing polls by itself unless a test says so: tests call `pollNow`.
     LogHubOptions logOptions = const LogHubOptions.manual(),
   }) async {
@@ -323,6 +373,22 @@ class TestEnv {
         snapshotter: realSnapshots ? null : snapshots ?? snapshotter,
         removeDirectory: removeDirectory,
         clock: clock,
+        serviceMode: serviceMode,
+        secretProtector: secretProtector,
+        adminListener: adminListener,
+        adminProbe: adminProbe,
+        adminStartupWait: adminStartupWait ?? const Duration(seconds: 3),
+        aclWriter: aclWriter,
+        accountSids: accountSids,
+        dataDirProtector: dataDirProtector,
+        serviceAccounts: serviceAccounts == null
+            ? null
+            : (_) => serviceAccounts,
+        instanceAcls: instanceAcls,
+        hostAddresses: hostAddresses,
+        versionSweeper: versionSweeper,
+        firewall: firewall,
+        firewallTimeout: firewallTimeout,
         logOptions: logOptions,
         hookHost: hookHost,
         os: os,

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:fixnum/fixnum.dart';
 import 'package:grpc/grpc.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -22,6 +23,7 @@ void main() {
       api.instances.updateSettings(
         pb.UpdateSettingsRequest(
           instanceId: instance.id,
+          expectedRevision: Int64(1),
           settings: pb.JsonDocument(json: huge),
         ),
       ),

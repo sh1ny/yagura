@@ -6,32 +6,6 @@ Gives the admin one desktop application to manage several Yagura daemons, render
 
 ## ADDED Requirements
 
-### Requirement: Multiple paired daemons
-The client SHALL keep a list of paired daemons with name, address and connection state (`connected`, `connecting`, `offline`, `incompatible`, `revoked`, `expired`), connect to all of them with the `System.GetInfo` negotiation of one connection, and reconnect with backoff up to 60 s, fetching a fresh instance snapshot and resuming streams after each reconnect.
-
-#### Scenario: Two daemons online
-- **WHEN** the client starts with two paired daemons that are reachable
-- **THEN** both are listed as `connected` with their instances grouped under each
-
-#### Scenario: Daemon offline
-- **WHEN** one daemon is unreachable
-- **THEN** it is listed `offline` with the last error and last-seen time, the other daemon remains usable, and reconnection is retried
-
-#### Scenario: Device revoked
-- **WHEN** a daemon rejects the client with `device_revoked`
-- **THEN** the daemon is listed `revoked`, the client stops reconnecting to it, and offers to pair again
-
-### Requirement: Pairing from the client
-The client SHALL pair a daemon from a pairing string, generating its device key in the OS keychain, and SHALL store the daemon's CA and its client certificate there.
-
-#### Scenario: Pair a new daemon
-- **WHEN** the admin pastes a valid pairing string and enters a device name
-- **THEN** the daemon is added as `connected`, and the only key material sent to the daemon is the CSR (the private key stays in the keychain)
-
-#### Scenario: Malformed pairing string
-- **WHEN** the admin pastes text that is not a pairing string
-- **THEN** the client shows `invalid_pairing_string` and makes no network call
-
 ### Requirement: Operations and interactive prompts
 The client SHALL show running and queued operations with progress, and SHALL prompt the admin when an operation asks for input (Steam Guard code or mobile approval), sending the answer back to the daemon.
 
@@ -42,17 +16,6 @@ The client SHALL show running and queued operations with progress, and SHALL pro
 #### Scenario: Prompt answered elsewhere
 - **WHEN** another client answers the same prompt first
 - **THEN** this client's dialog closes and shows that the prompt was answered by the other device
-
-### Requirement: Device certificate renewal by the client
-The client SHALL renew its certificate with each daemon when fewer than 30 days of validity remain, on connect and daily while connected; if renewal is refused or the certificate has expired, it SHALL show the daemon as `expired` and offer to pair again.
-
-#### Scenario: Renewal on connect
-- **WHEN** the client connects to a daemon with 20 days left on its certificate
-- **THEN** it renews, stores the new certificate in the keychain, and keeps the connection
-
-#### Scenario: Certificate already expired
-- **WHEN** the client's certificate for a daemon has expired
-- **THEN** the daemon is listed `expired` and the client offers re-pairing instead of retrying
 
 ## MODIFIED Requirements
 
@@ -66,10 +29,6 @@ The client SHALL render instance settings from the plugin's settings schema: an 
 #### Scenario: Daemon rejects a value
 - **WHEN** the daemon returns a field violation for `ports.game`
 - **THEN** the error is shown under the port field and the other edits stay in the form
-
-#### Scenario: Someone else saved first
-- **WHEN** saving fails with `revision_conflict`
-- **THEN** the client reloads the instance, shows which fields differ from the user's unsaved edits, and keeps the edits for the user to re-apply
 
 #### Scenario: Unknown field type
 - **WHEN** a schema contains a type the client does not know
@@ -89,9 +48,3 @@ The client SHALL show each instance's log sources with backlog and live follow, 
 #### Scenario: Pause longer than the buffer
 - **WHEN** 15,000 lines arrive while a log view is paused
 - **THEN** on resume the view shows a notice for 5,000 dropped lines followed by the newest 10,000 lines in order
-
-## REMOVED Requirements
-
-### Requirement: Connection to one daemon
-**Reason**: M2 replaces the single development connection with several paired daemons.
-**Migration**: Multiple paired daemons keeps the version negotiation and reconnect behaviour for each daemon.

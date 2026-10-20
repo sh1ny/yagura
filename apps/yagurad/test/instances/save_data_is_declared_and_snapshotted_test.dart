@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagura_proto/yagura_proto.dart' as pb;
 import 'package:yagurad/src/errors.dart';
 import 'package:yagurad/src/host/daemon.dart';
 import 'package:yagurad/src/instances/instance.dart';
@@ -11,6 +12,8 @@ import 'package:yagurad/src/platform/disk_space.dart';
 import 'package:yagurad/src/snapshots/snapshots.dart';
 
 import '../support/daemon_support.dart';
+import '../support/secret_support.dart';
+import '../support/secure_support.dart';
 
 /// Writes the world save of an instance.
 File writeSave(String directory, String content) {
@@ -185,11 +188,23 @@ void main() {
   test('snapshot_skipped_on_request', () async {
     final env = TestEnv();
     env.installValheim();
-    final daemon = await env.start(snapshots: realSnapshotter(env));
+    final clock = TestClock();
+    final daemon = await env.start(
+      snapshots: realSnapshotter(env),
+      serviceMode: true,
+      secretProtector: FakeSecretProtector(serviceSid),
+      clock: clock.call,
+    );
+    final h = await SecureHarness.start(env, daemon: daemon, clock: clock);
+    final desk = await h.pair('desk-01');
     final instance = await createInstalled(daemon);
     writeSave(instance.directory, 'world');
 
-    final done = await update(daemon, instance.id, skipSnapshot: true);
+    // The request comes from a device, over the API.
+    final started = await desk.instances.update(
+      pb.LifecycleRequest(instanceId: instance.id, skipSnapshot: true),
+    );
+    final done = await daemon.operations.whenDone(started.id);
 
     expect(done.status, OperationStatus.succeeded);
     expect(done.resultMessage, contains('snapshot: skipped'));
@@ -198,6 +213,27 @@ void main() {
         .whereType<StepStartedEvent>()
         .map((e) => e.step);
     expect(steps, isNot(contains('snapshot')));
+
+    // The audit log records the request with the requesting device.
+    final entries = (await desk.system.listAudit(pb.ListAuditRequest()))
+        .entries;
+    final entry = entries.singleWhere(
+      (e) => e.method == 'yagura.v1.Instances/Update',
+    );
+    expect(entry.deviceId, desk.deviceId);
+    expect(entry.target, contains(instance.id));
+    expect(entry.target, contains('skip_snapshot'));
+    expect(entry.result, 'ok');
+
+    // Without the request a snapshot is taken and the audit entry says so.
+    final plain = await desk.instances.update(
+      pb.LifecycleRequest(instanceId: instance.id),
+    );
+    await daemon.operations.whenDone(plain.id);
+    expect(daemon.instances.listSnapshots(instance.id), hasLength(1));
+    final latest = (await desk.system.listAudit(pb.ListAuditRequest())).entries
+        .firstWhere((e) => e.method == 'yagura.v1.Instances/Update');
+    expect(latest.target, isNot(contains('skip_snapshot')));
   });
 
   test('pre_delete_snapshot_of_a_deleted_instance', () async {

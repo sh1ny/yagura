@@ -6,52 +6,13 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagura_proto/yagura_proto.dart' as pb;
 import 'package:yagurad/src/api/bind_address.dart';
-import 'package:yagurad/src/cli/run_command.dart';
 import 'package:yagurad/src/errors.dart';
 
+import '../support/cli_support.dart';
+import '../support/api_support.dart';
 import '../support/daemon_support.dart';
-
-/// A `yagurad run` in this process: collects its output, reports where it
-/// listens and stops when [stop] is called.
-class RunningCli {
-  RunningCli(List<String> arguments, {Directory? data})
-    : data = data ?? Directory.systemTemp.createTempSync('yagurad_cli_') {
-    addTearDown(() async {
-      stop();
-      await exit;
-      if (this.data.existsSync()) this.data.deleteSync(recursive: true);
-    });
-    exit = runCli(
-      ['run', ...arguments, '--data-dir', p.join(this.data.path, 'data')],
-      CliEnvironment(
-        out: _out,
-        err: _err,
-        stop: _stop.future,
-        onListening: (address, port) {
-          listening.complete((address, port));
-        },
-      ),
-    );
-    // A run that ends without listening ends the wait too.
-    unawaited(exit.then((_) => _ended = true));
-  }
-
-  final Directory data;
-  final _out = StringBuffer();
-  final _err = StringBuffer();
-  final _stop = Completer<void>();
-  final listening = Completer<(InternetAddress, int)>();
-  late final Future<int> exit;
-  var _ended = false;
-
-  String get output => '$_out';
-  String get errors => '$_err';
-  bool get ended => _ended;
-
-  void stop() {
-    if (!_stop.isCompleted) _stop.complete();
-  }
-}
+import '../support/secret_support.dart';
+import '../support/secure_support.dart';
 
 void main() {
   test('dev_mode_on_loopback', () async {
@@ -133,14 +94,116 @@ void main() {
   });
 
   test('started_without_dev_mode', () async {
-    final cli = RunningCli(['--bind', '127.0.0.1:0']);
+    // The Windows service: LocalSystem, `--service`.
+    final cli = RunningCli(
+      ['--service', '--bind', '127.0.0.1:0'],
+      isLocalSystem: () => true,
+      secretProtector: FakeSecretProtector(serviceSid),
+    );
+    final (_, port) = await cli.whenListening();
 
-    final code = await cli.exit;
+    // It serves mutual TLS: a plaintext client gets nowhere, a TLS client
+    // with the CA but no certificate is turned away by the gate.
+    final plain = ClientChannel(
+      '127.0.0.1',
+      port: port,
+      options: const ChannelOptions(
+        credentials: ChannelCredentials.insecure(),
+        connectTimeout: Duration(seconds: 5),
+      ),
+    );
+    addTearDown(plain.terminate);
+    await expectLater(
+      pb.SystemClient(plain).getInfo(
+        pb.GetInfoRequest(),
+        options: CallOptions(timeout: const Duration(seconds: 5)),
+      ),
+      throwsA(isA<GrpcError>()),
+    );
+    final tls = untrustedChannelTo(port);
+    await expectLater(
+      pb.SystemClient(tls).getInfo(pb.GetInfoRequest()),
+      failsWithStatus(StatusCode.unauthenticated, 'unauthenticated'),
+    );
+    expect(cli.errors, isNot(contains('DEV MODE')));
 
-    expect(code, isNonZero);
-    expect(cli.errors, contains('secure_mode_unavailable'));
-    expect(cli.listening.isCompleted, isFalse, reason: 'no listener opened');
-    expect(Directory(p.join(cli.data.path, 'data')).existsSync(), isFalse);
+    cli.stop();
+    expect(await cli.exit, 0);
+  });
+
+  test('LocalSystem without --service is not service mode', () async {
+    // A scheduled task or `PsExec -s` runs as SYSTEM but is not the service
+    // (design D6): --service is required as well as the token.
+    for (final arguments in [
+      ['--bind', '127.0.0.1:0'],
+      ['--console', '--bind', '127.0.0.1:0'],
+    ]) {
+      final cli = RunningCli(arguments, isLocalSystem: () => true);
+
+      final code = await cli.exit;
+
+      expect(code, isNonZero, reason: '$arguments');
+      expect(
+        cli.errors,
+        contains('service_mode_required'),
+        reason: '$arguments',
+      );
+      expect(cli.listening.isCompleted, isFalse, reason: 'no listener opened');
+      expect(
+        Directory(p.join(cli.data.path, 'data')).existsSync(),
+        isFalse,
+        reason: 'the daemon did not even start',
+      );
+    }
+  });
+
+  test('started_from_a_console_without_dev_mode', () async {
+    // `yagurad run` and `yagurad run --service`, from a console: the token
+    // is not LocalSystem.
+    for (final arguments in [
+      ['--bind', '127.0.0.1:0'],
+      ['--console', '--bind', '127.0.0.1:0'],
+      ['--service', '--bind', '127.0.0.1:0'],
+    ]) {
+      final cli = RunningCli(arguments, isLocalSystem: () => false);
+
+      final code = await cli.exit;
+
+      expect(code, isNonZero, reason: '$arguments');
+      expect(
+        cli.errors,
+        contains('service_mode_required'),
+        reason: '$arguments',
+      );
+      expect(cli.listening.isCompleted, isFalse, reason: 'no listener opened');
+      expect(
+        Directory(p.join(cli.data.path, 'data')).existsSync(),
+        isFalse,
+        reason: 'the daemon did not even start',
+      );
+    }
+  });
+
+  test('the service name of a second service is a known option', () async {
+    // A service other than the default passes `--service-name` (design D6).
+    final cli = RunningCli([
+      '--service',
+      '--service-name',
+      'yagurad-b',
+      '--bind',
+      '127.0.0.1:0',
+    ], isLocalSystem: () => false);
+
+    expect(await cli.exit, isNonZero);
+    expect(cli.errors, contains('service_mode_required'));
+    expect(cli.errors, isNot(contains('--service-name')));
+  });
+
+  test('--dev with --service is a usage error', () async {
+    final cli = RunningCli(['--dev', '--service', '--bind', '127.0.0.1:0']);
+
+    expect(await cli.exit, isNonZero);
+    expect(cli.listening.isCompleted, isFalse);
   });
 
   group('bind address', () {

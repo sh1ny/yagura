@@ -2,9 +2,19 @@ import 'dart:convert';
 
 import 'package:yagura_plugin/yagura_plugin.dart';
 
+import '../errors.dart';
 import '../host/database.dart';
 import '../process/process.dart';
 import 'instance.dart';
+
+/// The `revision_conflict` failure for [instanceId], carrying the current
+/// [revision] in its details (design D12).
+YaguraException revisionConflict(String instanceId, int revision) =>
+    YaguraException(
+      'revision_conflict',
+      'instance $instanceId is at revision $revision; reload and retry',
+      details: {'instanceId': instanceId, 'revision': revision},
+    );
 
 /// The mutable record of one instance. The instance manager is its only
 /// writer; [InstanceStore] mirrors it to SQLite.
@@ -28,6 +38,7 @@ class InstanceRecord {
     this.lastRequestedRunning = false,
     this.restartRequired = false,
     this.settingsInvalid = false,
+    this.revision = 1,
   });
 
   final String id;
@@ -51,6 +62,9 @@ class InstanceRecord {
   bool lastRequestedRunning;
   bool restartRequired;
   bool settingsInvalid;
+
+  /// The configuration revision (design D12).
+  int revision;
   final DateTime createdAt;
   DateTime stateChangedAt;
 
@@ -124,6 +138,7 @@ class InstanceStore {
           lastRequestedRunning: row['last_requested_state']! == 'running',
           restartRequired: (row['restart_required']! as int) != 0,
           settingsInvalid: (row['settings_invalid']! as int) != 0,
+          revision: row['revision']! as int,
           createdAt: DateTime.fromMillisecondsSinceEpoch(
             row['created_at']! as int,
           ),
@@ -134,63 +149,116 @@ class InstanceStore {
     ];
   }
 
+  /// The ACL layout version of the instance directory (`instances.acl_layout`).
+  int aclLayout(String id) {
+    final rows = _database.sqlite.select(
+      'SELECT acl_layout FROM instances WHERE id = ?',
+      [id],
+    );
+    return rows.isEmpty ? 0 : rows.first['acl_layout']! as int;
+  }
+
+  void setAclLayout(String id, int version) {
+    _database.sqlite.execute(
+      'UPDATE instances SET acl_layout = ? WHERE id = ?',
+      [version, id],
+    );
+  }
+
   /// Writes [record] and its ports in one transaction.
   void save(InstanceRecord record) {
+    _database.transaction(() => _write(record, record.revision));
+  }
+
+  /// Writes [record] as the revision after [expected], in one transaction
+  /// that first checks the stored revision (design D12): a mismatch fails
+  /// `revision_conflict` and writes nothing. The record's revision is set
+  /// once the transaction committed.
+  void saveRevised(InstanceRecord record, int expected) {
     _database.transaction(() {
-      final db = _database.sqlite;
-      final values = [
-        record.name,
-        record.pluginId,
-        record.pluginVersion,
-        record.directory,
-        record.state.wireName,
-        record.stateReason,
-        record.warning,
-        jsonEncode(record.settings),
-        record.steamAccountId,
-        record.restartPolicy,
-        record.autostart ? 1 : 0,
-        record.lastRequestedRunning ? 'running' : '',
-        record.restartRequired ? 1 : 0,
-        record.settingsInvalid ? 1 : 0,
-        record.stateChangedAt.millisecondsSinceEpoch,
-      ];
-      db.execute(
-        'UPDATE instances SET name = ?, plugin_id = ?, plugin_version = ?, '
-        'directory = ?, state = ?, state_reason = ?, warning = ?, '
-        'settings_json = ?, steam_account_id = ?, restart_policy = ?, '
-        'autostart = ?, last_requested_state = ?, restart_required = ?, '
-        'settings_invalid = ?, state_changed_at = ? WHERE id = ?',
-        [...values, record.id],
-      );
-      if (db.updatedRows == 0) {
-        db.execute(
-          'INSERT INTO instances (name, plugin_id, plugin_version, directory, '
-          'state, state_reason, warning, settings_json, steam_account_id, '
-          'restart_policy, autostart, last_requested_state, restart_required, '
-          'settings_invalid, state_changed_at, id, created_at) '
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [...values, record.id, record.createdAt.millisecondsSinceEpoch],
-        );
-      }
-      db.execute('DELETE FROM instance_ports WHERE instance_id = ?', [
-        record.id,
-      ]);
-      for (final port in record.ports) {
-        db.execute(
-          'INSERT INTO instance_ports (instance_id, name, number, protocol, '
-          'purpose, exposed) VALUES (?, ?, ?, ?, ?, ?)',
-          [
-            record.id,
-            port.name,
-            port.number,
-            port.protocol.name,
-            port.purpose.name,
-            port.exposed ? 1 : 0,
-          ],
-        );
-      }
+      _requireStored(record.id, expected);
+      _write(record, expected + 1);
     });
+    record.revision = expected + 1;
+  }
+
+  /// Sets the stored revision of [record] to [revision] after checking that
+  /// it is [expected] (an accepted restore, or the undo of one).
+  void setRevision(InstanceRecord record, int expected, int revision) {
+    _database.transaction(() {
+      _requireStored(record.id, expected);
+      _database.sqlite.execute(
+        'UPDATE instances SET revision = ? WHERE id = ?',
+        [revision, record.id],
+      );
+    });
+    record.revision = revision;
+  }
+
+  void _requireStored(String id, int expected) {
+    final rows = _database.sqlite.select(
+      'SELECT revision FROM instances WHERE id = ?',
+      [id],
+    );
+    final stored = rows.isEmpty ? null : rows.first['revision']! as int;
+    if (stored != null && stored != expected) {
+      throw revisionConflict(id, stored);
+    }
+  }
+
+  void _write(InstanceRecord record, int revision) {
+    final db = _database.sqlite;
+    final values = [
+      record.name,
+      record.pluginId,
+      record.pluginVersion,
+      record.directory,
+      record.state.wireName,
+      record.stateReason,
+      record.warning,
+      jsonEncode(record.settings),
+      record.steamAccountId,
+      record.restartPolicy,
+      record.autostart ? 1 : 0,
+      record.lastRequestedRunning ? 'running' : '',
+      record.restartRequired ? 1 : 0,
+      record.settingsInvalid ? 1 : 0,
+      record.stateChangedAt.millisecondsSinceEpoch,
+      revision,
+    ];
+    db.execute(
+      'UPDATE instances SET name = ?, plugin_id = ?, plugin_version = ?, '
+      'directory = ?, state = ?, state_reason = ?, warning = ?, '
+      'settings_json = ?, steam_account_id = ?, restart_policy = ?, '
+      'autostart = ?, last_requested_state = ?, restart_required = ?, '
+      'settings_invalid = ?, state_changed_at = ?, revision = ? WHERE id = ?',
+      [...values, record.id],
+    );
+    if (db.updatedRows == 0) {
+      db.execute(
+        'INSERT INTO instances (name, plugin_id, plugin_version, directory, '
+        'state, state_reason, warning, settings_json, steam_account_id, '
+        'restart_policy, autostart, last_requested_state, restart_required, '
+        'settings_invalid, state_changed_at, revision, id, created_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [...values, record.id, record.createdAt.millisecondsSinceEpoch],
+      );
+    }
+    db.execute('DELETE FROM instance_ports WHERE instance_id = ?', [record.id]);
+    for (final port in record.ports) {
+      db.execute(
+        'INSERT INTO instance_ports (instance_id, name, number, protocol, '
+        'purpose, exposed) VALUES (?, ?, ?, ?, ?, ?)',
+        [
+          record.id,
+          port.name,
+          port.number,
+          port.protocol.name,
+          port.purpose.name,
+          port.exposed ? 1 : 0,
+        ],
+      );
+    }
   }
 
   /// Removes the instance's rows (its ports go with it); operation rows stay.

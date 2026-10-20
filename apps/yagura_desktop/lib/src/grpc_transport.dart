@@ -1,9 +1,16 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:fixnum/fixnum.dart';
 import 'package:grpc/grpc.dart';
 import 'package:protobuf/protobuf.dart' show GeneratedMessage;
 import 'package:protobuf/well_known_types/google/protobuf/any.pb.dart';
+import 'package:yagura_pki/yagura_pki.dart' show certificatePem;
 import 'package:yagura_proto/yagura_proto.dart';
 
+import 'credentials.dart';
+import 'dialer.dart';
 import 'transport.dart';
 
 /// Default address of the daemon's development connection.
@@ -13,26 +20,72 @@ const int kDevPort = 7443;
 /// [DaemonTransport] over a plaintext loopback gRPC channel (dev mode).
 final class GrpcTransport implements DaemonTransport {
   GrpcTransport({String host = kDevHost, int port = kDevPort})
-    : _channel = ClientChannel(
-        host,
-        port: port,
-        options: const ChannelOptions(
-          credentials: ChannelCredentials.insecure(),
+    : this._(
+        ClientChannel(
+          host,
+          port: port,
+          options: const ChannelOptions(
+            credentials: ChannelCredentials.insecure(),
+          ),
         ),
-      ) {
+      );
+
+  /// Mutual TLS: [credentials].caDer is the only trusted root and the server
+  /// is checked against [authority], whatever [host] says (design D13).
+  GrpcTransport.secure({
+    required String host,
+    required int port,
+    required String authority,
+    required DeviceCredentials credentials,
+  }) : this._secure(
+         host: host,
+         port: port,
+         authority: authority,
+         credentials: credentials,
+         tls: TlsVerdict(),
+       );
+
+  GrpcTransport._secure({
+    required String host,
+    required int port,
+    required String authority,
+    required DeviceCredentials credentials,
+    required TlsVerdict tls,
+  }) : this._(
+         ClientChannel(
+           host,
+           port: port,
+           options: ChannelOptions(
+             credentials: PinnedChannelCredentials(
+               authority: authority,
+               caDer: credentials.caDer,
+               certificateDer: credentials.certificateDer,
+               keyPem: credentials.keyPem,
+               verdict: tls,
+             ),
+           ),
+         ),
+         tls,
+       );
+
+  GrpcTransport._(this._channel, [TlsVerdict? tls])
+    : _tls = tls ?? TlsVerdict() {
     _system = SystemClient(_channel);
     _instances = InstancesClient(_channel);
     _operations = OperationsClient(_channel);
     _logs = LogsClient(_channel);
     _plugins = PluginsClient(_channel);
+    _pairing = PairingClient(_channel);
   }
 
   final ClientChannel _channel;
+  final TlsVerdict _tls;
   late final SystemClient _system;
   late final InstancesClient _instances;
   late final OperationsClient _operations;
   late final LogsClient _logs;
   late final PluginsClient _plugins;
+  late final PairingClient _pairing;
 
   /// Client deadline for unary calls (docs/protocol.md).
   static const _unaryTimeout = Duration(seconds: 30);
@@ -43,7 +96,7 @@ final class GrpcTransport implements DaemonTransport {
     try {
       return await call();
     } on GrpcError catch (e) {
-      throw toCallException(e);
+      throw toCallException(e, certificateRejected: _tls.rejected);
     }
   }
 
@@ -51,7 +104,7 @@ final class GrpcTransport implements DaemonTransport {
     try {
       yield* open();
     } on GrpcError catch (e) {
-      throw toCallException(e);
+      throw toCallException(e, certificateRejected: _tls.rejected);
     }
   }
 
@@ -62,6 +115,22 @@ final class GrpcTransport implements DaemonTransport {
   @override
   Stream<InstanceEvent> watchInstances() =>
       _stream(() => _instances.watchInstances(WatchInstancesRequest()));
+
+  @override
+  Future<Instance> getInstance(String instanceId) => _call(
+    () => _instances.getInstance(
+      GetInstanceRequest(instanceId: instanceId),
+      options: _unary,
+    ),
+  );
+
+  @override
+  Future<EnrollResponse> renewCertificate(Uint8List csrDer) => _call(
+    () => _pairing.renewCertificate(
+      RenewCertificateRequest(csrDer: csrDer),
+      options: _unary,
+    ),
+  );
 
   @override
   Future<Instance> createInstance(CreateInstanceRequest request) =>
@@ -145,18 +214,157 @@ final class GrpcTransport implements DaemonTransport {
   Future<void> close() => _channel.shutdown();
 }
 
+/// A TLS context that trusts [caDer] and nothing else (no system roots), and
+/// presents [certificateDer] with [keyPem] when given (mutual TLS).
+SecurityContext pinnedSecurityContext({
+  required List<int> caDer,
+  List<int>? certificateDer,
+  String? keyPem,
+}) {
+  final context = SecurityContext()
+    ..setAlpnProtocols(['grpc-exp', 'h2'], false)
+    ..setTrustedCertificatesBytes(utf8.encode(certificatePem(caDer)));
+  if (certificateDer != null && keyPem != null) {
+    context
+      ..useCertificateChainBytes(utf8.encode(certificatePem(certificateDer)))
+      ..usePrivateKeyBytes(utf8.encode(keyPem));
+  }
+  return context;
+}
+
+/// Records that the TLS stack refused the server's certificate. gRPC reports a
+/// failed handshake only as message text, so this is the structured signal:
+/// the bad-certificate callback runs before that error surfaces.
+final class TlsVerdict {
+  bool rejected = false;
+}
+
+/// Channel credentials over [pinnedSecurityContext], checking the server
+/// against the fixed [authority] (`yagurad-<daemon-id>`). A certificate that
+/// fails the check is always refused and noted on [verdict].
+final class PinnedChannelCredentials extends ChannelCredentials {
+  PinnedChannelCredentials({
+    required String authority,
+    required this.caDer,
+    this.certificateDer,
+    this.keyPem,
+    TlsVerdict? verdict,
+  }) : super.secure(
+         authority: authority,
+         onBadCertificate: (certificate, host) {
+           verdict?.rejected = true;
+           return false;
+         },
+       );
+
+  final Uint8List caDer;
+  final Uint8List? certificateDer;
+  final String? keyPem;
+
+  @override
+  SecurityContext? get securityContext => pinnedSecurityContext(
+    caDer: caDer,
+    certificateDer: certificateDer,
+    keyPem: keyPem,
+  );
+}
+
+/// [PairingChannel] over gRPC: the two calls that need no client certificate.
+final class GrpcPairingChannel implements PairingChannel {
+  /// Without [pinnedCa] the server certificate is not verified (the caller
+  /// checks the CA it returns); with it, only that CA is trusted.
+  GrpcPairingChannel({
+    required String host,
+    required int port,
+    Uint8List? pinnedCa,
+    String? authority,
+  }) : this._(host, port, pinnedCa, authority, TlsVerdict());
+
+  GrpcPairingChannel._(
+    String host,
+    int port,
+    Uint8List? pinnedCa,
+    String? authority,
+    TlsVerdict tls,
+  ) : _tls = tls,
+      _channel = ClientChannel(
+        host,
+        port: port,
+        options: ChannelOptions(
+          credentials: pinnedCa == null
+              ? const ChannelCredentials.secure(
+                  onBadCertificate: allowBadCertificates,
+                )
+              : PinnedChannelCredentials(
+                  authority: authority ?? host,
+                  caDer: pinnedCa,
+                  verdict: tls,
+                ),
+        ),
+      ) {
+    _client = PairingClient(_channel);
+  }
+
+  final ClientChannel _channel;
+  final TlsVerdict _tls;
+  late final PairingClient _client;
+
+  static const _timeout = Duration(seconds: 30);
+
+  @override
+  Future<PairingInfo> info() async {
+    try {
+      return await _client.info(
+        PairingInfoRequest(),
+        options: CallOptions(timeout: _timeout),
+      );
+    } on GrpcError catch (e) {
+      throw toCallException(e, certificateRejected: _tls.rejected);
+    }
+  }
+
+  @override
+  Future<EnrollResponse> enroll(EnrollRequest request) async {
+    try {
+      return await _client.enroll(
+        request,
+        options: CallOptions(timeout: _timeout),
+      );
+    } on GrpcError catch (e) {
+      throw toCallException(e, certificateRejected: _tls.rejected);
+    }
+  }
+
+  @override
+  Future<void> close() => _channel.shutdown();
+}
+
 /// Reduces a [GrpcError] and its packed `yagura.v1.ErrorDetail` (if any) to a
 /// [DaemonCallException].
-DaemonCallException toCallException(GrpcError error) {
+///
+/// [certificateRejected] is the TLS stack's own verdict (see [TlsVerdict]);
+/// the message text `CERTIFICATE_VERIFY_FAILED` is only a fallback for when
+/// that signal is not available.
+DaemonCallException toCallException(
+  GrpcError error, {
+  bool certificateRejected = false,
+}) {
   ErrorDetail? detail;
   for (final GeneratedMessage message in error.details ?? const []) {
     if (message is Any && message.typeUrl.endsWith('yagura.v1.ErrorDetail')) {
       detail = ErrorDetail.fromBuffer(message.value);
     }
   }
+  // The TLS stack reports a server certificate that does not chain to the
+  // pinned CA (or does not carry the fixed name) as a failed handshake.
+  final tlsRefused =
+      detail == null &&
+      error.code == StatusCode.unavailable &&
+      (certificateRejected ||
+          (error.message ?? '').contains('CERTIFICATE_VERIFY_FAILED'));
   return DaemonCallException(
     code: error.code,
-    reason: detail?.reason ?? '',
+    reason: tlsRefused ? 'server_ca_mismatch' : detail?.reason ?? '',
     message: detail != null && detail.message.isNotEmpty
         ? detail.message
         : (error.message ?? ''),

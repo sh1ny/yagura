@@ -1,3 +1,6 @@
+# Test directories: unit and in-process tests, plus OS-level integration tests.
+paths: [test, integration_test]
+
 # Tags used to select tests (`dart test --exclude-tags valheim`).
 tags:
   # Needs Windows: job objects, suspended spawn, Win32 process control.
@@ -9,3 +12,9 @@ tags:
   # default; run it with `dart test --run-skipped -t valheim`.
   valheim:
     skip: "runs the real Valheim server; use --run-skipped -t valheim"
+  # Needs an elevated Windows session: creates local accounts, installs the
+  # service, writes ACLs and firewall rules. Skipped by default and never run
+  # on a developer's desktop: the manual `elevated` workflow
+  # (.github/workflows/elevated.yml) runs it with `--run-skipped -t elevated`.
+  elevated:
+    skip: "needs an elevated Windows session; use --run-skipped -t elevated"

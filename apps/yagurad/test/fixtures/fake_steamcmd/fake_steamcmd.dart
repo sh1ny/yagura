@@ -21,9 +21,14 @@
 // FAKE_STEAMCMD_LOOP         keep repeating progress lines until killed
 // FAKE_STEAMCMD_APP_BYTES    size of the app file written on success
 //                            (default 4096)
+//
+// On Windows every run also writes the window station and desktop it runs on
+// (`Station\Desktop`) to `desktop.txt` next to the executable, if it can.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
+import '../desktop_name.dart';
 
 Future<void> main(List<String> args) async {
   final env = Platform.environment;
@@ -60,6 +65,19 @@ Future<void> main(List<String> args) async {
         }
       case '+quit':
         quit = true;
+    }
+  }
+
+  // Only the compiled fixture records it: a run from source would write into
+  // the source tree.
+  final compiled = Platform.script.path.toLowerCase().endsWith('.exe');
+  if (compiled) {
+    if (currentDesktopName() case final desktop?) {
+      try {
+        File('$here/desktop.txt').writeAsStringSync(desktop);
+      } on Object {
+        // A folder it cannot write to: nothing to record.
+      }
     }
   }
 

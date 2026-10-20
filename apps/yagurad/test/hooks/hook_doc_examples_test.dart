@@ -101,7 +101,7 @@ void main() {
             point: point,
             source: source,
             context: contextFromDoc(),
-            root: InstanceRoot(instance.path),
+            root: InstanceFs(instance.path),
           ),
         );
 

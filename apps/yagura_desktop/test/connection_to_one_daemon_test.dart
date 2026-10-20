@@ -46,6 +46,8 @@ void main() {
     harness.delay.release();
     await settle(tester);
     expect(find.textContaining('Reconnecting'), findsOneWidget);
+    expect(find.textContaining('Offline'), findsNothing);
+    expect(harness.connection.status, isA<Reconnecting>());
     expect(harness.delay.requested.last, const Duration(seconds: 2));
 
     // It comes back with the instance stopped (it changed while we were away).

@@ -14,7 +14,7 @@ class SettingError {
   final String message;
 
   /// Set when the daemon maps the problem to a specific reason, for example
-  /// `secret_store_unavailable`.
+  /// `secret_via_set_secret`.
   final String? code;
 
   @override
@@ -160,19 +160,22 @@ void _checkRange(
   }
 }
 
-/// This version has no secret store: a value is refused, while an omitted key
-/// or the `{"secret": true, "set": false}` placeholder leaves the field unset.
+/// A secret value never enters through settings: an omitted key or a
+/// `{"secret": true, "set": <bool>}` placeholder leaves the stored value
+/// unchanged, and anything else is refused with `secret_via_set_secret`
+/// (the value goes in with `SetSecret`). A secret is never validated as
+/// required here: Start checks that.
 Object? _validateSecret(Object? value, String path, List<SettingError> errors) {
   final isPlaceholder =
       value is Map<String, Object?> &&
       value['secret'] == true &&
-      value['set'] == false;
+      value['set'] is bool;
   if (value != null && !isPlaceholder) {
     errors.add(
       SettingError(
         path,
-        'a secret value cannot be stored: there is no secret store',
-        code: 'secret_store_unavailable',
+        'a secret value is set with SetSecret, not in the settings',
+        code: 'secret_via_set_secret',
       ),
     );
   }

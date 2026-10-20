@@ -26,6 +26,7 @@ const FirewallRule$json = {
     {'1': 'protocol', '3': 5, '4': 1, '5': 9, '10': 'protocol'},
     {'1': 'managed', '3': 6, '4': 1, '5': 8, '10': 'managed'},
     {'1': 'present', '3': 7, '4': 1, '5': 8, '10': 'present'},
+    {'1': 'in_step', '3': 8, '4': 1, '5': 8, '10': 'inStep'},
   ],
 };
 
@@ -34,7 +35,7 @@ final $typed_data.Uint8List firewallRuleDescriptor = $convert.base64Decode(
     'CgxGaXJld2FsbFJ1bGUSEgoEbmFtZRgBIAEoCVIEbmFtZRIfCgtpbnN0YW5jZV9pZBgCIAEoCV'
     'IKaW5zdGFuY2VJZBIbCglwb3J0X25hbWUYAyABKAlSCHBvcnROYW1lEhIKBHBvcnQYBCABKA1S'
     'BHBvcnQSGgoIcHJvdG9jb2wYBSABKAlSCHByb3RvY29sEhgKB21hbmFnZWQYBiABKAhSB21hbm'
-    'FnZWQSGAoHcHJlc2VudBgHIAEoCFIHcHJlc2VudA==');
+    'FnZWQSGAoHcHJlc2VudBgHIAEoCFIHcHJlc2VudBIXCgdpbl9zdGVwGAggASgIUgZpblN0ZXA=');
 
 @$core.Deprecated('Use listRulesRequestDescriptor instead')
 const ListRulesRequest$json = {

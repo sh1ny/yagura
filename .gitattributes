@@ -4,3 +4,6 @@
 # cmd.exe needs CRLF.
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# Bundled third-party executables.
+*.exe binary

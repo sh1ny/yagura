@@ -14,17 +14,28 @@ import '../errors.dart';
 int statusCodeFor(String reason) => switch (reason) {
   'not_implemented' => StatusCode.unimplemented,
   'internal_error' => StatusCode.internal,
+  'unauthenticated' ||
+  'device_revoked' ||
+  'certificate_expired' => StatusCode.unauthenticated,
+  'pairing_code_invalid' => StatusCode.permissionDenied,
   'instance_not_found' ||
+  'device_not_found' ||
   'operation_not_found' ||
   'operation_expired' ||
   'snapshot_not_found' ||
   'plugin_missing' => StatusCode.notFound,
   'settings_invalid' ||
+  'secret_via_set_secret' ||
+  'revision_required' ||
   'invalid_json' ||
   'confirmation_mismatch' ||
-  'directory_not_allowed' => StatusCode.invalidArgument,
+  'directory_not_allowed' ||
+  'csr_invalid' ||
+  'device_name_invalid' => StatusCode.invalidArgument,
   'port_conflict' => StatusCode.alreadyExists,
   'queue_full' ||
+  'pairing_throttled' ||
+  'too_many_devices' ||
   'too_many_subscribers' ||
   'message_too_large' => StatusCode.resourceExhausted,
   _ => StatusCode.failedPrecondition,

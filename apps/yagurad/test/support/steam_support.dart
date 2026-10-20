@@ -90,7 +90,6 @@ class SteamHarness {
        free = freeBytes {
     if (ready) markReady();
     launcher = SpyLauncher();
-    sizes = AppSizeStore(File(p.join(root, 'app_sizes.json')));
     service = SteamCmdService(
       steamcmdRoot: root,
       bootstrap: bootstrap,
@@ -99,7 +98,7 @@ class SteamHarness {
       launcher: launcher,
       strays: strays,
       diskSpace: (path) async => DiskSpace(volume: 'V:\\', freeBytes: free),
-      sizes: sizes,
+      state: state,
       environment: _fakeEnvironment,
       noProgressTimeout: noProgressTimeout,
       totalTimeout: totalTimeout,
@@ -116,7 +115,7 @@ class SteamHarness {
   /// Free bytes the probe reports; change it between runs.
   int free;
   late final SpyLauncher launcher;
-  late final AppSizeStore sizes;
+  final state = MemorySteamState();
   late final SteamCmdService service;
 
   /// What the service logged.
@@ -128,8 +127,7 @@ class SteamHarness {
   /// Pretends the installation was bootstrapped already.
   void markReady() {
     Directory(installation).createSync(recursive: true);
-    File(p.join(installation, SteamCmdService.readyMarker))
-        .writeAsStringSync('');
+    state.markReady(SteamCmdService.anonymousInstallation);
   }
 
   /// Every run the fake SteamCMD recorded, oldest first.

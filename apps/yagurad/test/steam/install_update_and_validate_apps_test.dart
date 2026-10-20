@@ -92,7 +92,7 @@ void main() {
     final env = TestEnv();
     env.installValheim();
     final steam = SteamHarness(env, freeBytes: 1500);
-    steam.sizes.record(valheimAppId, 1000);
+    steam.state.recordSize(valheimAppId, 1000);
     final daemon = await env.start(steamService: steam.service);
     final instance = await createValheim(daemon);
 
@@ -122,7 +122,7 @@ void main() {
 
     expect(done.status, OperationStatus.succeeded, reason: done.resultMessage);
     expect(done.warnings, contains('disk_check_skipped'));
-    expect(steam.sizes.lastKnown(valheimAppId), greaterThan(4000));
+    expect(steam.state.lastKnownSize(valheimAppId), greaterThan(4000));
   });
 
   test('size_hint_is_used_until_a_size_is_known', () async {
@@ -150,7 +150,7 @@ void main() {
     final env = TestEnv();
     env.installValheim();
     final steam = SteamHarness(env, freeBytes: 20000);
-    steam.sizes.record(valheimAppId, 1000);
+    steam.state.recordSize(valheimAppId, 1000);
     final daemon = await env.start(steamService: steam.service);
     final instance = await createValheim(daemon);
 

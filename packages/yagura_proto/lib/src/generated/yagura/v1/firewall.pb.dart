@@ -25,6 +25,7 @@ class FirewallRule extends $pb.GeneratedMessage {
     $core.String? protocol,
     $core.bool? managed,
     $core.bool? present,
+    $core.bool? inStep,
   }) {
     final result = FirewallRule._();
     if (name != null) result.name = name;
@@ -34,6 +35,7 @@ class FirewallRule extends $pb.GeneratedMessage {
     if (protocol != null) result.protocol = protocol;
     if (managed != null) result.managed = managed;
     if (present != null) result.present = present;
+    if (inStep != null) result.inStep = inStep;
     return result;
   }
 
@@ -57,6 +59,7 @@ class FirewallRule extends $pb.GeneratedMessage {
     ..aOS(5, _omitFieldNames ? '' : 'protocol')
     ..aOB(6, _omitFieldNames ? '' : 'managed')
     ..aOB(7, _omitFieldNames ? '' : 'present')
+    ..aOB(8, _omitFieldNames ? '' : 'inStep')
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -143,6 +146,15 @@ class FirewallRule extends $pb.GeneratedMessage {
   $core.bool hasPresent() => $_has(6);
   @$pb.TagNumber(7)
   void clearPresent() => $_clearField(7);
+
+  @$pb.TagNumber(8)
+  $core.bool get inStep => $_getBF(7);
+  @$pb.TagNumber(8)
+  set inStep($core.bool value) => $_setBool(7, value);
+  @$pb.TagNumber(8)
+  $core.bool hasInStep() => $_has(7);
+  @$pb.TagNumber(8)
+  void clearInStep() => $_clearField(8);
 }
 
 class ListRulesRequest extends $pb.GeneratedMessage {

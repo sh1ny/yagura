@@ -29,7 +29,7 @@ class UnsupportedProcessHost implements ProcessHost {
 
   @override
   Future<RunningServer?> reattach(
-    ProcessIdentity identity, {
+    ProcessIdentity? identity, {
     ProcessIdentity? relay,
     String runDirectory = '',
   }) async => null;

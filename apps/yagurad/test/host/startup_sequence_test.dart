@@ -1,12 +1,20 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagura_proto/yagura_proto.dart' as pb;
 import 'package:yagurad/src/host/data_directory.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/host/migrations.dart';
 
+import 'package:yagurad/src/firewall/rule_names.dart';
+
+import '../support/acl_support.dart';
 import '../support/daemon_support.dart';
+import '../support/firewall_support.dart';
+import '../support/secret_support.dart';
+import '../support/secure_support.dart';
 
 /// A database at the current schema, closed again, with one operation row.
 int seedCurrentDatabase(TestEnv env) {
@@ -63,6 +71,32 @@ void main() {
     expect(daemon.instances.list(), isEmpty);
   });
 
+  test('firewall_unavailable_at_startup', () async {
+    final env = TestEnv();
+    final firewall = FakeFirewall()
+      ..unavailable = 'the Windows Firewall service is stopped';
+
+    // The daemon comes up and serves calls; the step is a notice.
+    final daemon = await startFirewalled(env, firewall);
+    final notices = daemon.startupNotices.where((n) => n.step == 'firewall');
+    expect(notices, hasLength(1));
+    expect(notices.single.message, contains('stopped'));
+    expect(firewall.calls, ['reconcile']);
+
+    final harness = await SecureHarness.start(env, daemon: daemon);
+    final device = await harness.pair('Laptop');
+    final health = await device.system.getHealth(pb.GetHealthRequest());
+    expect(health.firewallOk, isFalse);
+    expect(health.notBuilt, isNot(contains('firewall')));
+
+    // Once the firewall is back, the next reconcile clears it.
+    firewall.unavailable = null;
+    await daemon.firewall!.request();
+    final later = await device.system.getHealth(pb.GetHealthRequest());
+    expect(later.firewallOk, isTrue);
+    expect(firewall.rule(apiRuleName), 'tcp/$apiPort');
+  });
+
   test('corrupt_database_is_a_fatal_database_step', () async {
     final env = TestEnv();
     DataDirectory.prepare(env.data);
@@ -111,5 +145,122 @@ void main() {
     // The failed start released the data directory lock.
     final daemon = await env.start();
     expect(daemon.instances.list(), isEmpty);
+  });
+
+  test('data_directory_used_by_a_dev_daemon_first', () async {
+    final env = TestEnv()..installValheim();
+    var daemon = await env.start(secretProtector: FakeSecretProtector(devSid));
+    final a = await createValheim(daemon, name: 'A');
+    daemon.secrets.put(
+      'valheim-password',
+      Uint8List.fromList([1, 2, 3]),
+      instanceId: a.id,
+      setting: 'password',
+    );
+    await env.closeDaemons();
+    final before = YaguraDatabase.open(p.join(env.data, 'yagura.db'));
+    final stored = before.sqlite.select('SELECT id, scope_sid FROM secrets');
+    before.close();
+    expect(
+      stored.single['scope_sid'],
+      devSid,
+      reason: 'the dev daemon stored it',
+    );
+
+    // The data directory protection needs administrator rights; the fake
+    // stands in for it, so this row passes without them.
+    final protector = FakeDataDirProtector();
+    daemon = await env.start(
+      serviceMode: true,
+      secretProtector: FakeSecretProtector(serviceSid),
+      dataDirProtector: protector,
+    );
+    expect(protector.events.first, 'open');
+
+    // Recovery deleted the row, not just hid it.
+    final db = YaguraDatabase.open(p.join(env.data, 'yagura.db'));
+    addTearDown(db.close);
+    // The service daemon has since stored its own identity keys.
+    expect(
+      db.sqlite.select("SELECT id FROM secrets WHERE id NOT LIKE 'daemon:%'"),
+      isEmpty,
+    );
+
+    final kept = daemon.instances.get(a.id);
+    expect(kept.name, 'A');
+    expect(kept.settings['password'], {'secret': true, 'set': false});
+    expect(daemon.secrets.get('valheim-password'), isNull);
+    final reset = daemon.startupNotices.where((n) => n.step == 'secrets_reset');
+    expect(reset, hasLength(1));
+    expect(reset.single.message, allOf(contains(a.id), contains('A')));
+  });
+
+  test('a_dpapi_fault_at_service_start_is_fatal_and_deletes_nothing', () async {
+    final env = TestEnv();
+    final first = await env.start(
+      serviceMode: true,
+      secretProtector: FakeSecretProtector(serviceSid),
+    );
+    first.secrets.put('ca-key', Uint8List.fromList([9]));
+    await env.closeDaemons();
+
+    await expectLater(
+      env.start(
+        serviceMode: true,
+        secretProtector: FlakySecretProtector(serviceSid)..failReads = true,
+      ),
+      failsWith(
+        'secret_store_unavailable',
+        messageHas: ['1312'],
+        details: {'step': 'secret_store'},
+      ),
+    );
+
+    final db = YaguraDatabase.open(p.join(env.data, 'yagura.db'));
+    addTearDown(db.close);
+    expect(
+      db.sqlite.select("SELECT id FROM secrets WHERE id NOT LIKE 'daemon:%'"),
+      hasLength(1),
+    );
+    // Restarted with a working DPAPI, the CA key is still there.
+    final again = await env.start(
+      serviceMode: true,
+      secretProtector: FakeSecretProtector(serviceSid),
+    );
+    expect(again.secrets.get('ca-key'), Uint8List.fromList([9]));
+    expect(
+      again.startupNotices.where((n) => n.step == 'secrets_reset'),
+      isEmpty,
+    );
+  });
+
+  test('dev_daemon_refuses_a_data_directory_of_the_service', () async {
+    final env = TestEnv();
+    final service = await env.start(
+      serviceMode: true,
+      secretProtector: FakeSecretProtector(serviceSid),
+    );
+    service.secrets.put('ca-key', Uint8List.fromList([9]));
+    await env.closeDaemons();
+
+    await expectLater(
+      env.start(secretProtector: FakeSecretProtector(devSid)),
+      failsWith(
+        'secret_store_unavailable',
+        messageHas: [serviceSid, devSid],
+        details: {'step': 'secret_store'},
+      ),
+    );
+
+    // The refusal released the lock and changed nothing.
+    final again = await env.start(
+      serviceMode: true,
+      secretProtector: FakeSecretProtector(serviceSid),
+    );
+    expect(again.secrets.get('ca-key'), Uint8List.fromList([9]));
+    expect(
+      again.startupNotices.where((n) => n.step == 'secrets_reset'),
+      isEmpty,
+    );
   });
 }

@@ -42,11 +42,7 @@ void main() {
       isTrue,
       reason: 'the archive was unpacked into <data>/steamcmd/anonymous',
     );
-    expect(
-      File(p.join(steam.installation, SteamCmdService.readyMarker))
-          .existsSync(),
-      isTrue,
-    );
+    expect(steam.state.isReady('anonymous'), isTrue);
     // The self-update run and its check run (+quit alone) came before the
     // app run.
     final runs = steam.runs();
@@ -57,6 +53,69 @@ void main() {
     }
     expect(runs.last['appId'], valheimAppId);
     expect(daemon.instances.get(instance.id).state, InstanceState.stopped);
+  });
+
+  test('a_lost_installation_is_bootstrapped_again', () async {
+    final env = TestEnv();
+    env.installValheim();
+    final server = await serveArchive(
+      body: tarArchive({'steamcmd.exe': utf8.encode('MZ placeholder')}),
+    );
+    // Ready in the database, but the directory was deleted (a manual fix, or
+    // damage): ADR 0014 says it is bootstrapped again.
+    final steam = SteamHarness(
+      env,
+      bootstrap: SteamCmdBootstrap(
+        source: Uri.parse('http://127.0.0.1:${server.port}/steamcmd.tar'),
+      ),
+    );
+    Directory(steam.installation).deleteSync(recursive: true);
+    expect(steam.state.isReady('anonymous'), isTrue);
+
+    await steam.service.installApp(
+      SteamAppRequest(
+        appId: valheimAppId,
+        installDirectory: p.join(env.root.path, 'server'),
+      ),
+      RecordingReporter(),
+      CancelToken(),
+    );
+
+    expect(
+      File(p.join(steam.installation, 'steamcmd.exe')).existsSync(),
+      isTrue,
+      reason: 'the archive was unpacked again',
+    );
+    expect(steam.state.isReady('anonymous'), isTrue);
+    // The self-update run, its check run and the app run.
+    expect(steam.runs(), hasLength(3));
+  });
+
+  test('an_installation_that_cannot_start_is_not_ready', () async {
+    final env = TestEnv();
+    final steam = SteamHarness(env);
+    final service = SteamCmdService(
+      steamcmdRoot: steam.root,
+      state: steam.state,
+      launcher: _ThrowingLauncher(),
+      diskSpace: (path) async => DiskSpace(volume: r'V:', freeBytes: 1 << 40),
+      log: (_) {},
+    );
+    addTearDown(service.close);
+
+    await expectLater(
+      service.installApp(
+        SteamAppRequest(
+          appId: valheimAppId,
+          installDirectory: p.join(env.root.path, 'server'),
+        ),
+        RecordingReporter(),
+        CancelToken(),
+      ),
+      throwsA(isA<ProcessException>()),
+    );
+
+    expect(steam.state.isReady('anonymous'), isFalse);
   });
 
   test('steamcmd_download_fails', () async {
@@ -81,8 +140,7 @@ void main() {
     expect(done.resultReason, 'steamcmd_unavailable');
     expect(done.resultMessage, contains('503'));
     expect(
-      File(p.join(steam.installation, SteamCmdService.readyMarker))
-          .existsSync(),
+      steam.state.isReady('anonymous'),
       isFalse,
       reason: 'no partial directory is marked ready',
     );
@@ -117,11 +175,7 @@ void main() {
         messageHas: ['could not be downloaded'],
       ),
     );
-    expect(
-      File(p.join(steam.installation, SteamCmdService.readyMarker))
-          .existsSync(),
-      isFalse,
-    );
+    expect(steam.state.isReady('anonymous'), isFalse);
   });
 
   group('a stalled download', () {
@@ -199,11 +253,7 @@ void main() {
         );
         second.cancel();
         await secondOutcome.timeout(const Duration(seconds: 10));
-        expect(
-          File(p.join(steam.installation, SteamCmdService.readyMarker))
-              .existsSync(),
-          isFalse,
-        );
+        expect(steam.state.isReady('anonymous'), isFalse);
         expect(Directory(steam.installation).existsSync(), isFalse);
         expect(steam.launcher.started, isEmpty);
       });
@@ -241,14 +291,14 @@ void main() {
     final env = TestEnv();
     var fetches = 0;
     final launcher = _ScriptedLauncher(exitCode: 8, lines: ['ERROR! boom']);
+    final state = MemorySteamState();
     final service = SteamCmdService(
+      state: state,
       steamcmdRoot: p.join(env.data, 'steamcmd'),
       bootstrap: SteamCmdBootstrap(
         fetch: (uri, destination, cancel) async {
           fetches++;
-          destination.writeAsBytesSync(
-            tarArchive({'steamcmd.exe': utf8.encode('MZ')}),
-          );
+          destination.add(tarArchive({'steamcmd.exe': utf8.encode('MZ')}));
         },
       ),
       launcher: launcher,
@@ -274,10 +324,7 @@ void main() {
       hasLength(2),
       reason: 'the self-update run and the check run; no app_update was run',
     );
-    expect(
-      File(p.join(installation, SteamCmdService.readyMarker)).existsSync(),
-      isFalse,
-    );
+    expect(state.isReady('anonymous'), isFalse);
     expect(Directory(installation).existsSync(), isFalse);
 
     await expectLater(
@@ -293,13 +340,13 @@ void main() {
   test('the_self_update_run_exit_code_is_not_judged', () async {
     final env = TestEnv();
     final launcher = _ScriptedLauncher(exitCodes: [7, 0, 8], lines: []);
+    final state = MemorySteamState();
     final service = SteamCmdService(
+      state: state,
       steamcmdRoot: p.join(env.data, 'steamcmd'),
       bootstrap: SteamCmdBootstrap(
         fetch: (uri, destination, cancel) async {
-          destination.writeAsBytesSync(
-            tarArchive({'steamcmd.exe': utf8.encode('MZ')}),
-          );
+          destination.add(tarArchive({'steamcmd.exe': utf8.encode('MZ')}));
         },
       ),
       launcher: launcher,
@@ -307,7 +354,6 @@ void main() {
       log: (_) {},
     );
     addTearDown(service.close);
-    final installation = p.join(env.data, 'steamcmd', 'anonymous');
 
     // The scripted app_update (third run) fails; the bootstrap must not.
     await expectLater(
@@ -329,10 +375,7 @@ void main() {
     );
     expect(launcher.started[0].last, '+quit');
     expect(launcher.started[1].last, '+quit');
-    expect(
-      File(p.join(installation, SteamCmdService.readyMarker)).existsSync(),
-      isTrue,
-    );
+    expect(state.isReady('anonymous'), isTrue);
   });
 }
 
@@ -385,4 +428,18 @@ class _ScriptedProcess implements SteamProcess {
 
   @override
   void kill() {}
+}
+
+/// A launcher whose SteamCMD cannot be started.
+class _ThrowingLauncher implements SteamProcessLauncher {
+  @override
+  Future<SteamProcess> start(
+    String executable,
+    List<String> arguments, {
+    required String workingDirectory,
+    Map<String, String> environment = const {},
+  }) async => throw ProcessException(executable, arguments, 'no such file');
+
+  @override
+  Future<void> close() async {}
 }

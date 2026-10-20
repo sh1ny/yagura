@@ -5,6 +5,8 @@ import 'package:test/test.dart';
 import 'package:yagurad/src/errors.dart';
 import 'package:yagurad/src/snapshots/snapshots.dart';
 
+import '../support/temp_support.dart';
+
 void main() {
   late Directory temp;
   late String instanceDir;
@@ -21,7 +23,7 @@ void main() {
 
   setUp(() {
     now = DateTime.utc(2030, 1, 1);
-    temp = Directory.systemTemp.createTempSync('yagurad_snap_');
+    temp = createCanonicalTempSync('yagurad_snap_');
     addTearDown(() => temp.deleteSync(recursive: true));
     instanceDir = p.join(temp.path, 'instance');
     Directory(p.join(instanceDir, 'save')).createSync(recursive: true);
@@ -150,7 +152,7 @@ void main() {
           isA<YaguraException>().having(
             (e) => e.reason,
             'reason',
-            'unsupported_in_this_version',
+            'sandbox_violation',
           ),
         ),
       );

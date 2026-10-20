@@ -1,6 +1,6 @@
 # 0013. Game servers run under a dedicated low-privilege account
 
-- Status: accepted
+- Status: superseded by 0015
 - Date: 2026-10-16
 - Supersedes: —
 

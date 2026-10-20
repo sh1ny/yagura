@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagurad/src/instances/instance.dart';
 
+import '../support/admin_support.dart';
 import '../support/daemon_support.dart';
 
 void main() {
@@ -51,10 +52,22 @@ void main() {
   test('directory_outside_the_instance_roots', () async {
     final env = TestEnv();
     env.installValheim();
-    final daemon = await env.start();
+    final acl = FakeAclWriter();
+    final daemon = await env.start(aclWriter: acl);
     final outside = p.join(env.root.path, 'elsewhere');
+    // An administrator configured one root with `yagurad roots add`.
+    final root = Directory(p.join(env.root.path, 'servers'))..createSync();
+    daemon.roots.add(root.path);
+    final writes = acl.calls.length;
 
-    for (final directory in [outside, r'D:\', env.data]) {
+    for (final directory in [
+      outside,
+      r'D:\',
+      env.data,
+      root.path, // the root itself is not an instance directory
+      '${root.path}-sibling',
+      p.join(root.path, '..', 'elsewhere'), // leaves the root by '..'
+    ]) {
       await expectLater(
         createValheim(daemon, directory: directory),
         failsWith('directory_not_allowed'),
@@ -63,7 +76,16 @@ void main() {
     }
 
     expect(Directory(outside).existsSync(), isFalse);
+    expect(Directory('${root.path}-sibling').existsSync(), isFalse);
     expect(daemon.instances.list(), isEmpty);
+    // A refusal changes no ACL.
+    expect(acl.calls, hasLength(writes));
+    // The configured root is the one place besides the default.
+    final inside = await createValheim(
+      daemon,
+      directory: p.join(root.path, 'valheim-main'),
+    );
+    expect(inside.directory, p.join(root.path, 'valheim-main'));
   });
 
   test('port_equal_to_the_daemon_api_port', () async {

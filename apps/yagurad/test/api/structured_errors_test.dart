@@ -1,3 +1,4 @@
+import 'package:fixnum/fixnum.dart';
 import 'package:grpc/grpc.dart';
 import 'package:test/test.dart';
 import 'package:yagura_proto/yagura_proto.dart' as pb;
@@ -15,6 +16,7 @@ void main() {
       api.instances.updateSettings(
         pb.UpdateSettingsRequest(
           instanceId: instance.id,
+          expectedRevision: Int64(1),
           settings: pb.JsonDocument(
             json: '{"serverName":"","worldName":"not valid!"}',
           ),

@@ -10,6 +10,7 @@ import 'package:yagurad/src/steam/steam.dart';
 
 import '../support/daemon_support.dart';
 import '../support/steam_support.dart';
+import '../support/temp_support.dart';
 
 final onWindows = Platform.isWindows ? false : 'needs Windows';
 
@@ -21,7 +22,7 @@ Future<SteamProcess> startFake(
 ) => launcher.start(
   Platform.resolvedExecutable,
   [fakeSteamCmdScript, '+quit'],
-  workingDirectory: Directory.systemTemp.path,
+  workingDirectory: canonicalSystemTemp().path,
   environment: environment,
 );
 
@@ -41,7 +42,7 @@ Future<SteamProcess> startHandoff(
   'parent',
   directory,
   '$childMilliseconds',
-], workingDirectory: Directory.systemTemp.path);
+], workingDirectory: canonicalSystemTemp().path);
 
 void main() {
   test('output_and_exit_code_come_back', () async {
@@ -74,7 +75,7 @@ void main() {
     final process = await launcher.start(
       Platform.resolvedExecutable,
       [fakeSteamCmdScript, '+app_update', '1', '+quit'],
-      workingDirectory: Directory.systemTemp.path,
+      workingDirectory: canonicalSystemTemp().path,
       environment: {'FAKE_STEAMCMD_STALL_AFTER': '3'},
     );
     await process.lines.first;
@@ -90,7 +91,7 @@ void main() {
     final process = await launcher.start(
       Platform.resolvedExecutable,
       [fakeSteamCmdScript, '+app_update', '1', '+quit'],
-      workingDirectory: Directory.systemTemp.path,
+      workingDirectory: canonicalSystemTemp().path,
       environment: {'FAKE_STEAMCMD_STALL_AFTER': '3'},
     );
     await process.lines.first;

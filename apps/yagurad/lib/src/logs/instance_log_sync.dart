@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:path/path.dart' as p;
 import 'package:yagura_plugin/yagura_plugin.dart';
 
+import '../files/files.dart';
 import '../instances/instance.dart';
 import '../instances/instance_manager.dart';
 import '../plugins/plugin_registry.dart';
@@ -122,6 +123,7 @@ class InstanceLogSync {
       await hub.attach(
         instance.id,
         logSourcesFor(instance, plugin.manifest, os),
+        fs: InstanceFs(instance.directory),
       );
     } on Object {
       // A source that cannot be tailed reports it as its own status.

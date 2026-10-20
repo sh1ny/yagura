@@ -4,7 +4,10 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/files/files.dart';
 import 'package:yagurad/src/logs/logs.dart';
+
+import '../support/temp_support.dart';
 
 /// The instance id the hub-level tests use.
 const rigInstance = 'inst';
@@ -15,7 +18,7 @@ class LogRig {
   LogRig({
     DateTime Function()? clock,
     LogHubOptions options = const LogHubOptions.manual(),
-  }) : dir = Directory.systemTemp.createTempSync('yagurad_logs_') {
+  }) : dir = createCanonicalTempSync('yagurad_logs_') {
     hub = LogHub(clock: clock, options: options);
     addTearDown(() async {
       await hub.close();
@@ -61,7 +64,7 @@ class LogRig {
   );
 
   Future<void> attach(List<LogSourceSpec> sources) =>
-      hub.attach(rigInstance, sources);
+      hub.attach(rigInstance, sources, fs: InstanceFs(dir.path));
 
   Future<void> poll() => hub.pollNow(rigInstance);
 }

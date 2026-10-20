@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:path/path.dart' as p;
@@ -8,9 +7,11 @@ import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/host/migrations.dart';
 import 'package:yagurad/src/operations/operations.dart';
 
+import '../support/temp_support.dart';
+
 void main() {
   test('at_most_four_heavy_steps_run_at_once', () async {
-    final dir = Directory.systemTemp.createTempSync('yagurad_runner_');
+    final dir = createCanonicalTempSync('yagurad_runner_');
     final db = YaguraDatabase.open(
       p.join(dir.path, 'yagura.db'),
       migrations: allMigrations,

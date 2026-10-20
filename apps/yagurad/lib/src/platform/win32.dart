@@ -2,6 +2,35 @@ import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
 
+/// How often [callReadingError] repeats a failed call whose error reads 0.
+const errorReadAttempts = 5;
+
+/// Calls [call], a Win32 call that has no effect when it fails, and reads
+/// `GetLastError` right after a failure ([failed] tells one).
+///
+/// `GetLastError` through `dart:ffi` sometimes reads 0 after the first
+/// failure of a call in a process, whatever is done in between (seen under
+/// load); a repeat of the failed call reads the true code. So a failure that
+/// reads 0 is repeated, up to [errorReadAttempts] times. Do not use this for a
+/// call that has an effect when it fails or that may succeed the second time
+/// for another reason. [readError] is for tests.
+({T value, int error}) callReadingError<T>(
+  T Function() call,
+  bool Function(T value) failed, {
+  int Function()? readError,
+}) {
+  final read = readError ?? Win32.instance.getLastError;
+  late T value;
+  var error = 0;
+  for (var attempt = 0; attempt < errorReadAttempts; attempt++) {
+    value = call();
+    if (!failed(value)) return (value: value, error: 0);
+    error = read();
+    if (error != 0) break;
+  }
+  return (value: value, error: error);
+}
+
 /// The few kernel32 calls the daemon needs (job objects, suspended spawn,
 /// process enumeration, disk space), bound by hand with `dart:ffi`: a handful
 /// of functions does not justify a Win32 binding package. All structure
@@ -9,7 +38,19 @@ import 'package:ffi/ffi.dart';
 ///
 /// Only touch [instance] on Windows.
 class Win32 {
-  Win32._() : _kernel = DynamicLibrary.open('kernel32.dll');
+  Win32._() : this._open(DynamicLibrary.open('kernel32.dll'));
+
+  Win32._open(this._kernel)
+    // Bound at once: binding it after a failed call (lazily) would reset the
+    // error it is about to read.
+    : getLastError = _kernel.lookupFunction<Uint32 Function(), int Function()>(
+        'GetLastError',
+        isLeaf: true,
+      ) {
+    // The first call of a binding compiles its stub, which would reset the
+    // error a failed call left: do that now.
+    getLastError();
+  }
 
   final DynamicLibrary _kernel;
 
@@ -304,8 +345,162 @@ class Win32 {
         )
       >('PeekNamedPipe');
 
-  late final int Function() getLastError = _kernel
-      .lookupFunction<Uint32 Function(), int Function()>('GetLastError');
+  /// `GetLastError`.
+  final int Function() getLastError;
+
+  late final int Function(Pointer<Void>) _localFree = _kernel
+      .lookupFunction<
+        IntPtr Function(Pointer<Void>),
+        int Function(Pointer<Void>)
+      >('LocalFree');
+
+  /// Frees memory the system allocated with `LocalAlloc` (SID strings,
+  /// security descriptors, DPAPI output).
+  void localFree(Pointer<Void> memory) => _localFree(memory);
+
+  // advapi32: tokens, SIDs and security descriptors.
+  late final DynamicLibrary _advapi = DynamicLibrary.open('advapi32.dll');
+
+  late final int Function(int, int, Pointer<IntPtr>) openProcessToken = _advapi
+      .lookupFunction<
+        Int32 Function(IntPtr, Uint32, Pointer<IntPtr>),
+        int Function(int, int, Pointer<IntPtr>)
+      >('OpenProcessToken');
+
+  late final int Function(int, int, Pointer<Void>, int, Pointer<Uint32>)
+  getTokenInformation = _advapi
+      .lookupFunction<
+        Int32 Function(IntPtr, Int32, Pointer<Void>, Uint32, Pointer<Uint32>),
+        int Function(int, int, Pointer<Void>, int, Pointer<Uint32>)
+      >('GetTokenInformation');
+
+  late final int Function(Pointer<Void>, Pointer<Pointer<Utf16>>)
+  convertSidToStringSid = _advapi
+      .lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Pointer<Utf16>>),
+        int Function(Pointer<Void>, Pointer<Pointer<Utf16>>)
+      >('ConvertSidToStringSidW');
+
+  late final int Function(Pointer<Utf16>, Pointer<Pointer<Void>>)
+  convertStringSidToSid = _advapi
+      .lookupFunction<
+        Int32 Function(Pointer<Utf16>, Pointer<Pointer<Void>>),
+        int Function(Pointer<Utf16>, Pointer<Pointer<Void>>)
+      >('ConvertStringSidToSidW');
+
+  late final int Function(Pointer<Void>) getLengthSid = _advapi
+      .lookupFunction<
+        Uint32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)
+      >('GetLengthSid');
+
+  late final int Function(
+    Pointer<Utf16>,
+    int,
+    Pointer<Pointer<Void>>,
+    Pointer<Uint32>,
+  )
+  convertStringSecurityDescriptorToSecurityDescriptor = _advapi
+      .lookupFunction<
+        Int32 Function(
+          Pointer<Utf16>,
+          Uint32,
+          Pointer<Pointer<Void>>,
+          Pointer<Uint32>,
+        ),
+        int Function(
+          Pointer<Utf16>,
+          int,
+          Pointer<Pointer<Void>>,
+          Pointer<Uint32>,
+        )
+      >('ConvertStringSecurityDescriptorToSecurityDescriptorW');
+
+  late final int Function(int, int, Pointer<Void>) setKernelObjectSecurity =
+      _advapi.lookupFunction<
+        Int32 Function(IntPtr, Uint32, Pointer<Void>),
+        int Function(int, int, Pointer<Void>)
+      >('SetKernelObjectSecurity');
+
+  late final int Function(int, int, Pointer<Void>, int, Pointer<Uint32>)
+  getKernelObjectSecurity = _advapi
+      .lookupFunction<
+        Int32 Function(IntPtr, Uint32, Pointer<Void>, Uint32, Pointer<Uint32>),
+        int Function(int, int, Pointer<Void>, int, Pointer<Uint32>)
+      >('GetKernelObjectSecurity');
+
+  late final int Function(Pointer<Void>, Pointer<Pointer<Void>>, Pointer<Int32>)
+  getSecurityDescriptorOwner = _advapi
+      .lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Pointer<Void>>, Pointer<Int32>),
+        int Function(Pointer<Void>, Pointer<Pointer<Void>>, Pointer<Int32>)
+      >('GetSecurityDescriptorOwner');
+
+  // crypt32: DPAPI. A `DATA_BLOB` is 16 bytes: `cbData` (Uint32) at 0 and
+  // `pbData` (pointer) at 8.
+  late final DynamicLibrary _crypt = DynamicLibrary.open('crypt32.dll');
+
+  late final int Function(
+    Pointer<Void>,
+    Pointer<Utf16>,
+    Pointer<Void>,
+    Pointer<Void>,
+    Pointer<Void>,
+    int,
+    Pointer<Void>,
+  )
+  cryptProtectData = _crypt
+      .lookupFunction<
+        Int32 Function(
+          Pointer<Void>,
+          Pointer<Utf16>,
+          Pointer<Void>,
+          Pointer<Void>,
+          Pointer<Void>,
+          Uint32,
+          Pointer<Void>,
+        ),
+        int Function(
+          Pointer<Void>,
+          Pointer<Utf16>,
+          Pointer<Void>,
+          Pointer<Void>,
+          Pointer<Void>,
+          int,
+          Pointer<Void>,
+        )
+      >('CryptProtectData');
+
+  late final int Function(
+    Pointer<Void>,
+    Pointer<Pointer<Utf16>>,
+    Pointer<Void>,
+    Pointer<Void>,
+    Pointer<Void>,
+    int,
+    Pointer<Void>,
+  )
+  cryptUnprotectData = _crypt
+      .lookupFunction<
+        Int32 Function(
+          Pointer<Void>,
+          Pointer<Pointer<Utf16>>,
+          Pointer<Void>,
+          Pointer<Void>,
+          Pointer<Void>,
+          Uint32,
+          Pointer<Void>,
+        ),
+        int Function(
+          Pointer<Void>,
+          Pointer<Pointer<Utf16>>,
+          Pointer<Void>,
+          Pointer<Void>,
+          Pointer<Void>,
+          int,
+          Pointer<Void>,
+        )
+      >('CryptUnprotectData');
 
   static const invalidHandle = -1;
   static const waitObject0 = 0;
@@ -322,6 +517,26 @@ class Win32 {
   static const processTerminate = 0x0001;
   static const synchronize = 0x00100000;
   static const processQueryLimitedInformation = 0x1000;
+
+  /// `TOKEN_QUERY` and the `TokenUser` information class.
+  static const tokenQuery = 0x0008;
+  static const tokenUser = 1;
+
+  /// `SDDL_REVISION_1`.
+  static const sddlRevision1 = 1;
+
+  /// `SECURITY_INFORMATION` bits for [setKernelObjectSecurity].
+  static const ownerSecurityInformation = 0x1;
+  static const daclSecurityInformation = 0x4;
+  static const protectedDaclSecurityInformation = 0x80000000;
+  static const unprotectedDaclSecurityInformation = 0x20000000;
+
+  /// `WRITE_DAC` and `GENERIC_WRITE`-free open of a file for a DACL change.
+  static const writeDac = 0x00040000;
+
+  /// `FILE_FLAG_BACKUP_SEMANTICS` and `FILE_FLAG_OPEN_REPARSE_POINT`.
+  static const fileFlagBackupSemantics = 0x02000000;
+  static const fileFlagOpenReparsePoint = 0x00200000;
 
   /// `JOB_OBJECT_LIMIT_BREAKAWAY_OK`.
   static const jobBreakawayOk = 0x800;

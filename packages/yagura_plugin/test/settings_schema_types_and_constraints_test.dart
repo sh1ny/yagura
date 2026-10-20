@@ -115,7 +115,7 @@ void main() {
     test('a value for a secret is refused, the placeholder is not', () {
       final refused = validateSettings(manifest, {'password': 'hunter2'});
       expect(refused.errors.single.path, 'password');
-      expect(refused.errors.single.code, 'secret_store_unavailable');
+      expect(refused.errors.single.code, 'secret_via_set_secret');
 
       final placeholder = validateSettings(manifest, {
         'password': {'secret': true, 'set': false},

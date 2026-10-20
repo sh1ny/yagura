@@ -226,6 +226,7 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
         instanceId: request.instanceId,
         settings: settings,
         ports: request.ports.isEmpty ? null : portOverrides(request.ports),
+        exposure: request.ports.isEmpty ? null : portExposure(request.ports),
         restartPolicy: request.hasRestartPolicy()
             ? request.restartPolicy
             : null,
@@ -234,18 +235,24 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
             : null,
         autostart: request.hasAutostart() ? request.autostart : null,
         schemaVersion: version == 0 ? null : version,
+        expectedRevision: request.expectedRevision.toInt(),
       ),
     );
     return instanceToPb(instance);
   }
 
-  /// This version has no secret store (design D24).
+  /// Stores a secret setting value (design D3); the value is never returned.
   @override
   Future<pb.Instance> setSecret(
     ServiceCall call,
     pb.SetSecretRequest request,
   ) async => instanceToPb(
-    daemon.instances.setSecret(request.instanceId, request.key, request.value),
+    daemon.instances.setSecret(
+      request.instanceId,
+      request.key,
+      request.value,
+      expectedRevision: request.expectedRevision.toInt(),
+    ),
   );
 
   @override
@@ -253,7 +260,11 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
     ServiceCall call,
     pb.DeleteSecretRequest request,
   ) async => instanceToPb(
-    daemon.instances.deleteSecret(request.instanceId, request.key),
+    daemon.instances.deleteSecret(
+      request.instanceId,
+      request.key,
+      expectedRevision: request.expectedRevision.toInt(),
+    ),
   );
 
   @override
@@ -265,6 +276,7 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
       request.instanceId,
       deleteFiles: request.deleteFiles,
       confirmName: request.confirmName,
+      expectedRevision: request.expectedRevision.toInt(),
     ),
   );
 
@@ -361,7 +373,11 @@ class InstancesApi extends pb.InstancesServiceBase with GuardedService {
     ServiceCall call,
     pb.RestoreSnapshotRequest request,
   ) async => operationToPb(
-    daemon.instances.restoreSnapshot(request.instanceId, request.snapshotId),
+    daemon.instances.restoreSnapshot(
+      request.instanceId,
+      request.snapshotId,
+      expectedRevision: request.expectedRevision.toInt(),
+    ),
   );
 
   @override

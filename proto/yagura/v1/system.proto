@@ -41,6 +41,14 @@ message DaemonHealth {
   // Components this daemon version does not have (for example "secret_store",
   // "firewall" in M1); their *_ok fields are false and carry no meaning.
   repeated string not_built = 10;
+  // Service mode only. False when the named pipe of the admin channel is
+  // squatted by another process (notice admin_channel_squatted) or not served.
+  bool admin_channel_ok = 11;
+  // The yagura-srv and yagura-steam accounts exist, are configured and their
+  // ACLs are in place (service mode).
+  bool service_accounts_ok = 12;
+  // End of the server certificate; unset in dev mode, which serves plaintext.
+  google.protobuf.Timestamp server_cert_not_after = 13;
 }
 
 message ListAuditRequest {

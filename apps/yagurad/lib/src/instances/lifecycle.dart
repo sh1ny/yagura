@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:path/path.dart' as p;
 import 'package:yagura_plugin/yagura_plugin.dart';
 
 import '../errors.dart';
-import '../files/instance_root.dart';
+import '../files/files.dart';
 import '../hooks/hooks.dart';
 import '../operations/operations.dart';
 import '../plugins/plugin_registry.dart';
@@ -68,10 +67,11 @@ class Lifecycle {
               manifest.settings,
               record.settings,
               const {'secret': true, 'set': false},
+              setSecrets: _manager.setSecretsOf(record),
             ),
             ports: {for (final port in record.ports) port.name: port.number},
           ),
-          root: InstanceRoot(record.directory),
+          root: InstanceFs(record.directory),
           deadline: Duration(seconds: manifest.hooksTimeoutSeconds),
         ),
         cancel: ctx.cancel.whenCancelled,
@@ -112,12 +112,13 @@ class Lifecycle {
     final account = spec.anonymous || record.steamAccountId.isEmpty
         ? null
         : record.steamAccountId;
-    Directory(_serverDirectory(record)).createSync(recursive: true);
+    InstanceFs(record.directory).createDirectory('server');
     await ctx.heavy(
       () => _manager.steam.installApp(
         SteamAppRequest(
           appId: spec.appId,
           installDirectory: _serverDirectory(record),
+          instanceDirectory: record.directory,
           validate: validate,
           account: account,
           accountRequired: !spec.anonymous,
@@ -148,8 +149,11 @@ class Lifecycle {
       _manager.setState(record, InstanceState.stopped);
     } on Object {
       _manager.setState(record, InstanceState.notInstalled);
+      // Rules made while it installed go with the attempt.
+      _manager.firewallChanged();
       rethrow;
     }
+    await _manager.syncFirewall(ctx);
   }
 
   Future<void> update(
@@ -164,6 +168,8 @@ class Lifecycle {
     final plugin = _manager.requirePlugin(record);
     final manifest = plugin.manifest;
     final wasRunning = record.state == InstanceState.running;
+    // A running server is started again at the end: refuse before stopping it.
+    if (wasRunning) _manager.requireSecrets(record);
     ctx.cancel.throwIfCancelled();
 
     // The space check comes before anything is stopped or changed, so a full
@@ -269,6 +275,8 @@ class Lifecycle {
     _manager.checkAllowed(record, OperationKind.start, execution: true);
     final plugin = _manager.requirePlugin(record);
     final manifest = plugin.manifest;
+    _manager.requireSecrets(record);
+    _manager.requireAclLayout(record);
     _manager.cancelRestart(record.id);
     // Start leaves a crash loop and resets the restart counter.
     if (record.state == InstanceState.error) {
@@ -310,7 +318,8 @@ class Lifecycle {
           for (var i = 0; i < 12; i++) _random.nextInt(16).toRadixString(16),
         ].join();
         final runDirectory = RunFiles.directoryFor(record.directory, runId);
-        Directory(runDirectory).createSync(recursive: true);
+        InstanceFs(record.directory)
+            .createDirectory(p.relative(runDirectory, from: record.directory));
         // The run is recorded `pending` before anything is spawned, so a
         // daemon killed from here on can find what it started.
         _manager.runs.insertPending(
@@ -318,6 +327,9 @@ class Lifecycle {
           instanceId: record.id,
           directory: runDirectory,
           at: _manager.clock(),
+          launchedPorts: {
+            for (final port in record.ports) port.name: port.number,
+          },
         );
         // The arguments below are the settings this run uses; an edit made
         // after this point is what a restart is needed for.
@@ -341,6 +353,8 @@ class Lifecycle {
                     if (source.isStdout) source.encoding,
                 ].firstOrNull ??
                 'utf-8',
+            onRelayStarted: (relay) =>
+                _manager.withRuns((runs) => runs.recordRelay(runId, relay)),
           ),
         );
         _manager.withRuns(
@@ -396,6 +410,7 @@ class Lifecycle {
         ..health = health;
       _manager.setState(record, InstanceState.running);
       _manager.watchExit(record, launched);
+      await _manager.syncFirewall(ctx);
     } on Object catch (e) {
       final cancelled = e is OperationCancelled;
       if (server != null && !serverGone) {
@@ -425,6 +440,7 @@ class Lifecycle {
       record.server = null;
       if (!cancelled) record.lastRequestedRunning = false;
       _manager.setState(record, InstanceState.stopped);
+      _manager.firewallChanged();
       rethrow;
     } finally {
       await logWatch?.close();
@@ -483,6 +499,15 @@ class Lifecycle {
   }) async {
     final record = _manager.recordForOperation(id);
     final plugin = _manager.requirePlugin(record);
+    if (record.state == InstanceState.error &&
+        record.stateReason == runRecordRejectedReason) {
+      // Stop is the retry: verify the run record again; a verified server is
+      // then stopped as usual.
+      if (!await _manager.retryRejectedRun(record)) {
+        _manager.saveChanges(record);
+        return;
+      }
+    }
     final running =
         record.server != null &&
         (record.state == InstanceState.running ||
@@ -495,12 +520,15 @@ class Lifecycle {
       return;
     }
     await _stopRunning(ctx, record, plugin, force: force, clearRequested: true);
+    await _manager.syncFirewall(ctx);
   }
 
   Future<void> restart(OperationContext ctx, String id) async {
     final record = _manager.recordForOperation(id);
     _manager.checkAllowed(record, OperationKind.restart, execution: true);
     final plugin = _manager.requirePlugin(record);
+    // Before the stop, so a refused restart leaves the server running.
+    _manager.requireSecrets(record);
     await _stopRunning(
       ctx,
       record,
@@ -577,7 +605,7 @@ class Lifecycle {
   }) async {
     final record = _manager.recordForOperation(id);
     _manager.checkAllowed(record, OperationKind.delete, execution: true);
-    final marker = File(p.join(record.directory, '.yagura', 'deleting'));
+    final fs = InstanceFs(record.directory);
 
     if (deleteFiles) {
       final plugin = _manager.requirePlugin(record);
@@ -594,8 +622,8 @@ class Lifecycle {
             'were removed',
       );
       await ctx.step('mark_deleting', () async {
-        marker.parent.createSync(recursive: true);
-        marker.writeAsStringSync('');
+        fs.createDirectory(InstanceFs.yaguraDirectory);
+        fs.writeBytes(InstanceFs.deletingMarker, const []);
       });
     }
 
@@ -604,9 +632,14 @@ class Lifecycle {
         _manager.removeRows(record);
       });
     } on OperationCancelled {
-      if (marker.existsSync()) marker.deleteSync();
+      if (fs.exists(InstanceFs.deletingMarker)) {
+        fs.delete(InstanceFs.deletingMarker);
+      }
       rethrow;
     }
+    // The instance's rules go with its rows, before the files (which can take
+    // long and are past the point of no return).
+    await _manager.syncFirewall(ctx);
 
     if (deleteFiles) {
       // Past the point of no return: cancellation is no longer honoured.

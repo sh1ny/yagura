@@ -4,13 +4,16 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../errors.dart';
+import '../files/confined_fs.dart';
 import '../operations/cancel_token.dart';
+import 'steam_process.dart';
 
 /// Downloads [uri] into [destination]; throws on any failure and
 /// [OperationCancelled] once [cancel] fires, after the transfer was aborted.
+/// The caller closes [destination].
 typedef ArchiveFetcher = Future<void> Function(
   Uri uri,
-  File destination,
+  ConfinedWriter destination,
   CancelToken cancel,
 );
 
@@ -45,17 +48,30 @@ class SteamCmdBootstrap {
   /// bytes of it before it fails.
   final Duration idleTimeout;
 
-  /// Downloads the archive and unpacks it into [target]. Throws
-  /// `steamcmd_unavailable` with the HTTP status or the network error; the
-  /// caller removes [target] then, so no half-installed directory stays.
-  /// Throws [OperationCancelled] once [cancel] fires, with the download or the
-  /// unpacking stopped.
-  Future<void> install(Directory target, {CancelToken? cancel}) async {
+  /// Downloads the archive and unpacks it into the directory [installation]
+  /// of [fs] (the `<data>/steamcmd` root). Throws `steamcmd_unavailable` with
+  /// the HTTP status or the network error; the caller removes the directory
+  /// then, so no half-installed directory stays. Throws [OperationCancelled]
+  /// once [cancel] fires, with the download or the unpacking stopped.
+  ///
+  /// With a [launcher] the unpacking runs through it, so a service-mode daemon
+  /// extracts as `yagura-steam` and not as SYSTEM (design D10).
+  Future<void> install(
+    ConfinedFs fs,
+    String installation, {
+    CancelToken? cancel,
+    SteamProcessLauncher? launcher,
+  }) async {
     cancel ??= CancelToken();
-    target.createSync(recursive: true);
-    final archive = File(p.join(target.path, 'steamcmd.download'));
+    fs.createDirectory(installation);
+    final archive = '$installation/steamcmd.download';
     try {
-      await _fetch(source, archive, cancel);
+      final writer = fs.openWrite(archive);
+      try {
+        await _fetch(source, writer, cancel);
+      } finally {
+        writer.close();
+      }
     } on YaguraException {
       rethrow;
     } on OperationCancelled {
@@ -69,33 +85,45 @@ class SteamCmdBootstrap {
     }
     // `tar` reads zip and tar.gz alike (bsdtar ships with Windows 10+). Run in
     // the target so a drive letter in the path cannot be taken for a host.
-    final tar = await Process.start(
-      Platform.isWindows
-          ? p.join(
-              Platform.environment['SystemRoot'] ?? r'C:\Windows',
-              'System32',
-              'tar.exe',
-            )
-          : 'tar',
-      ['-xf', p.basename(archive.path)],
-      workingDirectory: target.path,
-    );
-    unawaited(tar.stdout.drain<void>());
-    final stderrText = tar.stderr
-        .transform(const SystemEncoding().decoder)
-        .join();
-    unawaited(cancel.whenCancelled.then((_) => tar.kill()));
-    final code = await tar.exitCode;
+    final tarPath = Platform.isWindows
+        ? p.join(
+            Platform.environment['SystemRoot'] ?? r'C:\Windows',
+            'System32',
+            'tar.exe',
+          )
+        : 'tar';
+    final int code;
+    final Future<String> stderrText;
+    if (launcher != null) {
+      final tar = await launcher.start(tarPath, [
+        '-xf',
+        'steamcmd.download',
+      ], workingDirectory: fs.absolute(installation));
+      final output = tar.lines.toList().then((lines) => lines.join('\n'));
+      unawaited(cancel.whenCancelled.then((_) => tar.kill()));
+      code = await tar.exitCode;
+      stderrText = output;
+    } else {
+      final tar = await Process.start(tarPath, [
+        '-xf',
+        'steamcmd.download',
+      ], workingDirectory: fs.absolute(installation));
+      unawaited(tar.stdout.drain<void>());
+      stderrText = tar.stderr.transform(const SystemEncoding().decoder).join();
+      unawaited(cancel.whenCancelled.then((_) => tar.kill()));
+      code = await tar.exitCode;
+    }
     cancel.throwIfCancelled();
     if (code != 0) {
       throw YaguraException(
         'steamcmd_unavailable',
-        'the SteamCMD archive from $source could not be unpacked: '
-            '${(await stderrText).trim()}',
+        'the SteamCMD archive from $source could not be unpacked: tar '
+            'exited with code ${exitCodeText(code)}; its output: '
+            '"${(await stderrText).trim()}"',
         details: {'source': '$source'},
       );
     }
-    archive.deleteSync();
+    fs.delete(archive);
   }
 
   /// Fetches with `dart:io`'s client; a non-200 status fails with it. The
@@ -103,7 +131,7 @@ class SteamCmdBootstrap {
   /// [idleTimeout], and is aborted when [cancel] fires.
   static Future<void> downloadWithHttpClient(
     Uri uri,
-    File destination,
+    ConfinedWriter destination,
     CancelToken cancel, {
     Duration idleTimeout = const Duration(seconds: 60),
   }) async {
@@ -125,13 +153,8 @@ class SteamCmdBootstrap {
           details: {'source': '$uri', 'httpStatus': response.statusCode},
         );
       }
-      final sink = destination.openWrite();
-      try {
-        await for (final chunk in response.timeout(idleTimeout)) {
-          sink.add(chunk);
-        }
-      } finally {
-        await sink.close();
+      await for (final chunk in response.timeout(idleTimeout)) {
+        destination.add(chunk);
       }
     } on TimeoutException {
       cancel.throwIfCancelled();

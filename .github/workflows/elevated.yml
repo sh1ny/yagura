@@ -1,0 +1,45 @@
+name: Elevated
+
+# Tests tagged `elevated` create local accounts, profiles, a Windows service
+# and firewall rules, so they never run on a developer's desktop. GitHub's
+# Windows runners run as administrator; this workflow runs those tests there,
+# only when started by hand, since Actions minutes are budgeted and Windows
+# bills double: `gh workflow run elevated.yml --ref <ref>` once this workflow is
+# on the default branch, or by pushing an `elevated/<name>` branch until then.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['elevated/**']
+
+concurrency:
+  group: elevated-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  elevated:
+    name: Elevated tests (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the toolchain pinned in mise.toml
+        uses: jdx/mise-action@v5
+        # mise 2026.10.13 fails to extract Flutter on a fresh Windows install
+        # ("Access is denied", os error 5); 2026.10.12 installs it.
+        with:
+          version: 2026.10.12
+      - name: Cache pub packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ format('{0}\Pub\Cache', env.LOCALAPPDATA) }}
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+      - name: Resolve workspace dependencies
+        run: flutter pub get
+      # One test file at a time: the service rows install a real service whose
+      # admin pipe has a fixed name, so two of them cannot run side by side.
+      # Outside the runner's job, which forbids the breakaway the launcher
+      # needs (as in ci.yml).
+      - name: Test (elevated, outside the runner job)
+        shell: pwsh
+        run: pwsh tool/ci/outside-job.ps1 -Run 'Set-Location apps/yagurad; mise exec -- dart test --concurrency 1 --run-skipped --tags elevated --exclude-tags valheim'

@@ -403,6 +403,273 @@ void main() {
     expect(submitted!.secrets, {'pass': 's3cret'});
   });
 
+  testWidgets('create_an_instance_with_a_secret', (tester) async {
+    final daemon = FakeDaemon();
+    daemon.plugins['testgame'] = PluginDetail(
+      summary: PluginSummary(id: 'testgame', name: 'Test Game'),
+      settingsSchema: JsonDocument(
+        json: jsonEncode({
+          'rconPassword': {'type': 'secret', 'label': 'RCON password'},
+        }),
+        schemaVersion: 7,
+      ),
+    );
+    final harness = Harness(daemon: daemon);
+    await pumpApp(tester, harness, const HomePage(daemonId: kDevDaemonId));
+
+    await tester.tap(find.byKey(const ValueKey('action:create')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('create:plugin')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Test Game').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('create:name')), 'Gamma');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('create:submit')));
+    await tester.pumpAndSettle();
+
+    // The form asks for the password; it is not sent with the create.
+    await tester.enterText(_field('rconPassword'), 'hunter2');
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await tester.pumpAndSettle();
+
+    final create = daemon.creates.single;
+    expect(
+      utf8.decode(create.writeToBuffer(), allowMalformed: true),
+      isNot(contains('hunter2')),
+    );
+    // SetSecret follows CreateInstance, with the revision it returned.
+    expect(daemon.secretCalls.single, (
+      instanceId: 'new',
+      key: 'rconPassword',
+      value: 'hunter2',
+      revision: 1,
+    ));
+    expect(
+      daemon.calls.indexOf('CreateInstance:testgame'),
+      lessThan(daemon.calls.indexOf('SetSecret:new:rconPassword')),
+    );
+    // The instance is listed and its secret shows as set.
+    await tester.tap(find.text('Gamma'));
+    await settle(tester);
+    expect(
+      find.descendant(
+        of: _field('rconPassword'),
+        matching: find.textContaining('A value is set'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('someone_else_saved_first', (tester) async {
+    final harness = _harness();
+    await _pumpEditor(tester, harness);
+
+    // Someone else saved a new revision that this client has not seen yet.
+    harness.daemon.instances = [
+      makeInstance(
+        id: 'i1',
+        name: 'Alpha',
+        ports: [
+          Port(name: 'game', number: 2456, protocol: Protocol.PROTOCOL_UDP),
+        ],
+        settings: const {'serverName': 'Theirs'},
+        revision: 4,
+      ),
+    ];
+    await tester.enterText(_field('serverName'), 'Mine');
+    await tester.enterText(_field('maxPlayers'), '20');
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await settle(tester);
+
+    expect(harness.daemon.updates.single.expectedRevision.toInt(), 3);
+    // The instance was reloaded, and the fields that differ are listed.
+    expect(harness.daemon.calls, contains('GetInstance:i1'));
+    final conflict = find.byKey(const ValueKey('settings:conflict'));
+    expect(conflict, findsOneWidget);
+    expect(
+      find.descendant(
+        of: conflict,
+        matching: find.textContaining('serverName'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: conflict, matching: find.textContaining('Theirs')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: conflict, matching: find.textContaining('Mine')),
+      findsOneWidget,
+    );
+    // The user's edits are still in the form, not replaced.
+    expect(
+      find.descendant(of: _field('serverName'), matching: find.text('Mine')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: _field('maxPlayers'), matching: find.text('20')),
+      findsOneWidget,
+    );
+
+    // Re-applying them saves against the revision just loaded.
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await settle(tester);
+    expect(harness.daemon.updates, hasLength(2));
+    expect(harness.daemon.updates.last.expectedRevision.toInt(), 4);
+    expect(find.byKey(const ValueKey('settings:conflict')), findsNothing);
+  });
+
+  testWidgets('a_conflict_with_no_listed_difference_says_so', (tester) async {
+    final harness = _harness(
+      schema: {
+        ..._schema,
+        'rconPassword': {'type': 'secret', 'label': 'RCON password'},
+      },
+    );
+    await _pumpEditor(tester, harness);
+
+    // Someone else bumped the revision (a secret, say) and changed nothing
+    // this form compares.
+    harness.daemon.instances = [
+      makeInstance(
+        id: 'i1',
+        name: 'Alpha',
+        ports: [
+          Port(name: 'game', number: 2456, protocol: Protocol.PROTOCOL_UDP),
+        ],
+        settings: const {'serverName': 'Yagura'},
+        revision: 4,
+      ),
+    ];
+    await tester.enterText(_field('rconPassword'), 'hunter2');
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await settle(tester);
+
+    expect(harness.daemon.secretCalls, isEmpty);
+    expect(find.byKey(const ValueKey('settings:conflict')), findsNothing);
+    expect(find.textContaining('none of your changes were saved'), findsOne);
+    expect(find.textContaining('Save again'), findsOne);
+
+    // The same form saves against the revision just loaded.
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await settle(tester);
+    expect(harness.daemon.updates.last.expectedRevision.toInt(), 4);
+    expect(harness.daemon.secretCalls.single.key, 'rconPassword');
+    expect(
+      find.textContaining('none of your changes were saved'),
+      findsNothing,
+    );
+  });
+
+  testWidgets('settings_saved_but_the_secret_was_not', (tester) async {
+    final harness = _harness(
+      schema: {
+        ..._schema,
+        'rconPassword': {'type': 'secret', 'label': 'RCON password'},
+      },
+    );
+    harness.daemon.updateBumpsRevision = true;
+    harness.daemon.setSecretFailure = const DaemonCallException(
+      code: 13,
+      reason: 'internal',
+      message: 'the secret store is locked',
+    );
+    await _pumpEditor(tester, harness);
+
+    await tester.enterText(_field('serverName'), 'Renamed server');
+    await tester.enterText(_field('rconPassword'), 'hunter2');
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await settle(tester);
+
+    // It says what was saved and what was not, not "someone else saved".
+    expect(find.textContaining('The settings were saved'), findsOne);
+    expect(find.textContaining('"rconPassword" were not'), findsOne);
+    expect(find.textContaining('the secret store is locked'), findsOne);
+    expect(find.byKey(const ValueKey('settings:conflict')), findsNothing);
+    expect(find.textContaining('Someone else'), findsNothing);
+
+    // The form is on the new revision, so the next save is not a conflict.
+    harness.daemon.setSecretFailure = null;
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await settle(tester);
+    expect(harness.daemon.updates, hasLength(2));
+    expect(harness.daemon.updates.last.expectedRevision.toInt(), 4);
+    expect(harness.daemon.secretCalls.last.key, 'rconPassword');
+    expect(find.byKey(const ValueKey('settings:conflict')), findsNothing);
+    expect(find.textContaining('The settings were saved'), findsNothing);
+  });
+
+  testWidgets('a_secret_conflict_lists_the_differences_and_keeps_the_edits', (
+    tester,
+  ) async {
+    final harness = _harness(
+      schema: {
+        ..._schema,
+        'rconPassword': {'type': 'secret', 'label': 'RCON password'},
+      },
+    );
+    harness.daemon.updateBumpsRevision = true;
+    // Another device saves between our settings and our secret.
+    harness.daemon.beforeSetSecret = () {
+      harness.daemon.beforeSetSecret = null;
+      harness.daemon.instances = [
+        makeInstance(
+          id: 'i1',
+          name: 'Alpha',
+          ports: [
+            Port(name: 'game', number: 2456, protocol: Protocol.PROTOCOL_UDP),
+          ],
+          settings: const {'serverName': 'Theirs', 'maxPlayers': 8},
+          revision: 9,
+        ),
+      ];
+    };
+    await _pumpEditor(tester, harness);
+
+    await tester.enterText(_field('serverName'), 'Mine');
+    await tester.enterText(_field('rconPassword'), 'hunter2');
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await settle(tester);
+
+    // It says what was saved, reloads, and lists what differs.
+    expect(harness.daemon.calls, contains('GetInstance:i1'));
+    final conflict = find.byKey(const ValueKey('settings:conflict'));
+    expect(conflict, findsOneWidget);
+    expect(find.textContaining('The settings were saved'), findsOne);
+    expect(
+      find.descendant(
+        of: conflict,
+        matching: find.textContaining('serverName'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: conflict, matching: find.textContaining('Theirs')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: conflict,
+        matching: find.textContaining('maxPlayers'),
+      ),
+      findsOneWidget,
+    );
+    // The edits are still in the form; nothing advanced silently.
+    expect(
+      find.descendant(of: _field('serverName'), matching: find.text('Mine')),
+      findsOneWidget,
+    );
+    expect(harness.daemon.secretCalls, hasLength(1));
+
+    // Saving again goes against their revision and sets the secret.
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await settle(tester);
+    expect(harness.daemon.updates.last.expectedRevision.toInt(), 9);
+    expect(harness.daemon.secretCalls, hasLength(2));
+    expect(find.byKey(const ValueKey('settings:conflict')), findsNothing);
+  });
+
   testWidgets('a_schema_that_cannot_be_read_falls_back_to_read_only', (
     tester,
   ) async {

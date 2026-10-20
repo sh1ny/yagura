@@ -4,12 +4,14 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/files/files.dart';
 import 'package:yagurad/src/host/database.dart';
 import 'package:yagurad/src/host/migrations.dart';
 import 'package:yagurad/src/logs/log_offset_store.dart';
 import 'package:yagurad/src/logs/logs.dart';
 
 import 'log_test_support.dart';
+import '../support/temp_support.dart';
 
 /// Extra coverage for the log hub beyond the spec rows: truncation, saved
 /// offsets and the current-run mark the `log_match` health check (task 7.3)
@@ -169,7 +171,7 @@ void main() {
     late YaguraDatabase database;
 
     setUp(() {
-      dir = Directory.systemTemp.createTempSync('yagurad_offsets_');
+      dir = createCanonicalTempSync('yagurad_offsets_');
       database = YaguraDatabase.open(
         p.join(dir.path, 'yagura.db'),
         migrations: allMigrations,
@@ -197,7 +199,7 @@ void main() {
         ),
       );
       File(p.join(dir.path, 'server.log')).writeAsStringSync('a\nb\n');
-      await hub.attach('i', [source()]);
+      await hub.attach('i', [source()], fs: InstanceFs(dir.path));
       File(p.join(dir.path, 'server.log'))
           .writeAsStringSync('c\n', mode: FileMode.append);
       await hub.pollNow('i');
@@ -217,7 +219,7 @@ void main() {
         database: database,
         options: const LogHubOptions.manual(),
       );
-      await first.attach('i', [source()]);
+      await first.attach('i', [source()], fs: InstanceFs(dir.path));
       log.writeAsStringSync('three\npar', mode: FileMode.append);
       await first.pollNow('i');
       await first.close();
@@ -229,7 +231,7 @@ void main() {
         options: const LogHubOptions.manual(),
       );
       addTearDown(second.close);
-      await second.attach('i', [source()]);
+      await second.attach('i', [source()], fs: InstanceFs(dir.path));
       final followed = Collector(second.follow('i'));
       await second.pollNow('i');
       await followed.settle();
@@ -250,11 +252,11 @@ void main() {
         database: database,
         options: const LogHubOptions.manual(),
       );
-      await hub.attach('i', [source()]);
+      await hub.attach('i', [source()], fs: InstanceFs(dir.path));
       await hub.detach('i');
       final store = LogOffsetStore(database);
       expect(store.load('i', 'server')?.offset, 2);
-      await hub.attach('i', [source()]);
+      await hub.attach('i', [source()], fs: InstanceFs(dir.path));
       await hub.detach('i', forget: true);
       expect(store.load('i', 'server'), isNull);
       await hub.close();

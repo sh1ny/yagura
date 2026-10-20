@@ -4,7 +4,7 @@ import 'dart:convert';
 
 import '../errors.dart';
 import '../files/file_edit_writer.dart';
-import '../files/instance_root.dart';
+import '../files/instance_fs.dart';
 import 'hook_context.dart';
 import 'hook_limits.dart';
 import 'hook_point.dart';
@@ -36,7 +36,7 @@ class HookInvocation {
   final HookContext context;
 
   /// The instance the hook works in; file reads and edits stay inside it.
-  final InstanceRoot root;
+  final InstanceFs root;
 
   /// How long the script may run once a worker slot is available.
   final Duration deadline;
@@ -121,7 +121,7 @@ class HookHost {
         hookName: invocation.point.exportName,
         source: invocation.source,
         contextJson: contextJson,
-        rootPath: invocation.root.path,
+        rootPath: invocation.root.root,
         deadline: invocation.deadline,
       ),
       cancel,

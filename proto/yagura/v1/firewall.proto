@@ -15,6 +15,7 @@ message FirewallRule {
   string protocol = 5;
   bool managed = 6;                   // false = in the group but not ours (unmanaged)
   bool present = 7;                   // exists in the OS firewall
+  bool in_step = 8;                  // as the daemon wants it (port and protocol); false = missing, drifted, or to be deleted. `port` and `protocol` are the actual ones when the rule exists
 }
 
 message ListRulesRequest {}

@@ -103,6 +103,22 @@ const DaemonHealth$json = {
     {'1': 'hooks_degraded', '3': 8, '4': 1, '5': 8, '10': 'hooksDegraded'},
     {'1': 'plugins_ok', '3': 9, '4': 1, '5': 8, '10': 'pluginsOk'},
     {'1': 'not_built', '3': 10, '4': 3, '5': 9, '10': 'notBuilt'},
+    {'1': 'admin_channel_ok', '3': 11, '4': 1, '5': 8, '10': 'adminChannelOk'},
+    {
+      '1': 'service_accounts_ok',
+      '3': 12,
+      '4': 1,
+      '5': 8,
+      '10': 'serviceAccountsOk'
+    },
+    {
+      '1': 'server_cert_not_after',
+      '3': 13,
+      '4': 1,
+      '5': 11,
+      '6': '.google.protobuf.Timestamp',
+      '10': 'serverCertNotAfter'
+    },
   ],
 };
 
@@ -115,7 +131,10 @@ final $typed_data.Uint8List daemonHealthDescriptor = $convert.base64Decode(
     'cXVldWVkX29wZXJhdGlvbnMYBiABKA1SEHF1ZXVlZE9wZXJhdGlvbnMSLgoTbGVha2VkX2hvb2'
     'tfd29ya2VycxgHIAEoDVIRbGVha2VkSG9va1dvcmtlcnMSJQoOaG9va3NfZGVncmFkZWQYCCAB'
     'KAhSDWhvb2tzRGVncmFkZWQSHQoKcGx1Z2luc19vaxgJIAEoCFIJcGx1Z2luc09rEhsKCW5vdF'
-    '9idWlsdBgKIAMoCVIIbm90QnVpbHQ=');
+    '9idWlsdBgKIAMoCVIIbm90QnVpbHQSKAoQYWRtaW5fY2hhbm5lbF9vaxgLIAEoCFIOYWRtaW5D'
+    'aGFubmVsT2sSLgoTc2VydmljZV9hY2NvdW50c19vaxgMIAEoCFIRc2VydmljZUFjY291bnRzT2'
+    'sSTQoVc2VydmVyX2NlcnRfbm90X2FmdGVyGA0gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVz'
+    'dGFtcFISc2VydmVyQ2VydE5vdEFmdGVy');
 
 @$core.Deprecated('Use listAuditRequestDescriptor instead')
 const ListAuditRequest$json = {

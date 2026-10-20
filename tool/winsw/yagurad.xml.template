@@ -1,0 +1,28 @@
+<!--
+  WinSW configuration of the yagurad service (design D6). `yagurad service
+  install` fills the double-brace placeholders below (values XML-escaped) and writes the
+  result beside the WinSW wrapper as <service name>.xml.
+
+  The service runs as LocalSystem (the account element is left out), starts
+  automatically and is restarted by the service manager when it fails.
+  Game servers are started by the daemon's launcher outside this process
+  tree (ADR 0009), so stopping or replacing the daemon leaves them running.
+-->
+<service>
+  <id>{{service_name}}</id>
+  <name>{{display_name}}</name>
+  <description>Yagura daemon: installs, configures and runs dedicated game servers.</description>
+  <executable>{{executable}}</executable>
+  <arguments>{{arguments}}</arguments>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <stoptimeout>30 sec</stoptimeout>
+  <logpath>{{log_path}}</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+</service>

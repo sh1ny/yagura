@@ -6,22 +6,37 @@ import 'package:yagura_proto/yagura_proto.dart' as pb;
 
 import '../errors.dart';
 import '../host/daemon.dart';
+import '../host/secret_store.dart';
 import '../instances/instance.dart';
 import '../platform/disk_space.dart';
 import '../version.dart';
 import 'convert.dart';
 import 'service_support.dart';
 
-/// Components M1 does not have (design D24); their `*_ok` fields mean
-/// nothing.
-const m1NotBuilt = ['secret_store', 'firewall'];
+/// Components this daemon version does not build yet (design D7, D11). The
+/// secret store joins them on a host without one, and the service accounts
+/// (both of them: `service_accounts` and `steam_account`)
+/// are built only where the daemon manages them (service mode; a development
+/// daemon runs everything as the current user). The firewall is built where
+/// the daemon reconciles rules (service mode on a host with a firewall).
+List<String> notBuiltComponents({
+  required bool secretStore,
+  required bool serviceAccounts,
+  required bool firewall,
+}) => [
+  if (!secretStore) 'secret_store',
+  if (!firewall) 'firewall',
+  if (!serviceAccounts) 'service_accounts',
+  if (!serviceAccounts) 'steam_account',
+];
 
-/// The `System` service: `GetInfo` and `GetHealth`; `ListAudit` arrives with
-/// remote clients (M2).
+/// The `System` service: `GetInfo`, `GetHealth` and `ListAudit`.
 class SystemApi extends pb.SystemServiceBase with GuardedService {
   SystemApi(this.daemon, this.logSink, {required this.devMode});
 
   final Daemon daemon;
+
+  /// Whether callers are unauthenticated (the gate is `AllowAllGate`).
   final bool devMode;
 
   @override
@@ -61,6 +76,18 @@ class SystemApi extends pb.SystemServiceBase with GuardedService {
       // Unknown free space reads as 0.
     }
     final instances = daemon.instances.list();
+    final security = daemon.security;
+    final store = daemon.secrets;
+    final secretStore = store is DatabaseSecretStore && store.available;
+    var secretStoreOk = false;
+    if (secretStore) {
+      try {
+        store.contains('health-probe');
+        secretStoreOk = true;
+      } on Object {
+        // Reads as not ok.
+      }
+    }
     return pb.DaemonHealth(
       databaseOk: databaseOk,
       dataVolumeFreeBytes: Int64(free),
@@ -75,7 +102,18 @@ class SystemApi extends pb.SystemServiceBase with GuardedService {
       leakedHookWorkers: daemon.hooks.leakedWorkers,
       hooksDegraded: daemon.hooks.degraded,
       pluginsOk: daemon.plugins.results.every((r) => r.isLoaded),
-      notBuilt: m1NotBuilt,
+      secretStoreOk: secretStoreOk,
+      notBuilt: notBuiltComponents(
+        secretStore: secretStore,
+        serviceAccounts: daemon.serviceAccountsManaged,
+        firewall: daemon.firewall != null,
+      ),
+      firewallOk: daemon.firewall?.ok ?? false,
+      adminChannelOk: daemon.adminChannelOk,
+      serviceAccountsOk: daemon.serviceAccountsOk,
+      serverCertNotAfter: security == null
+          ? null
+          : timestamp(security.identity.serverCertificate.notAfter),
     );
   }
 
@@ -83,8 +121,33 @@ class SystemApi extends pb.SystemServiceBase with GuardedService {
   Future<pb.ListAuditResponse> listAudit(
     ServiceCall call,
     pb.ListAuditRequest request,
-  ) => throw YaguraException(
-    'not_implemented',
-    'System.ListAudit is not implemented in this version',
-  );
+  ) async {
+    // A dev daemon has no devices and keeps no audit log.
+    final audit = daemon.security?.audit;
+    if (audit == null) {
+      throw YaguraException(
+        'not_implemented',
+        'System.ListAudit is not implemented in dev mode',
+      );
+    }
+    final limit = request.pageSize == 0 ? 100 : request.pageSize.clamp(1, 1000);
+    // The token is the id of the last entry of the previous page.
+    final before = int.tryParse(request.pageToken);
+    final entries = audit.list(limit: limit + 1, before: before);
+    final page = entries.take(limit).toList();
+    return pb.ListAuditResponse(
+      entries: [
+        for (final e in page)
+          pb.AuditEntry(
+            at: timestamp(e.at),
+            deviceId: e.deviceId,
+            remoteAddress: e.address,
+            method: e.method,
+            target: e.target,
+            result: e.result,
+          ),
+      ],
+      nextPageToken: entries.length > limit ? '${page.last.id}' : '',
+    );
+  }
 }

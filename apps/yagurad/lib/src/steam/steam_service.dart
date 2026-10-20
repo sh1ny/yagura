@@ -5,6 +5,7 @@ class SteamAppRequest {
   const SteamAppRequest({
     required this.appId,
     required this.installDirectory,
+    this.instanceDirectory,
     this.validate = false,
     this.account,
     this.accountRequired = false,
@@ -13,6 +14,11 @@ class SteamAppRequest {
 
   final int appId;
   final String installDirectory;
+
+  /// The instance directory [installDirectory] is in, which the files of the
+  /// run are confined to (design D8); null confines them to
+  /// [installDirectory] itself.
+  final String? instanceDirectory;
   final bool validate;
 
   /// Steam account id, or null for the anonymous login.

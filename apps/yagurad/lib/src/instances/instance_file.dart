@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
 import 'package:yagura_plugin/yagura_plugin.dart';
 
+import '../files/instance_fs.dart';
 import 'instance_store.dart';
 
 /// The portable `instance.json` (ADR 0008): written after every committed
@@ -44,52 +44,36 @@ class InstanceFile {
   };
 
   /// Writes the file into the instance directory by atomic replace. Throws
-  /// [FileSystemException] when that fails.
+  /// [FileSystemException] when that fails and a `sandbox_violation`
+  /// `YaguraException` when a link is in the way.
   static void write(InstanceRecord record, PluginManifest? manifest) {
-    final target = p.join(record.directory, fileName);
-    final temporary = File('$target.tmp');
-    try {
-      temporary.writeAsStringSync(
+    InstanceFs(record.directory).writeAtomic(
+      fileName,
+      utf8.encode(
         '${const JsonEncoder.withIndent('  ').convert(content(record, manifest))}\n',
-        flush: true,
-      );
-      temporary.renameSync(target);
-    } on FileSystemException {
-      if (temporary.existsSync()) temporary.deleteSync();
-      rethrow;
-    }
+      ),
+    );
   }
 }
 
 /// Copies [values] with every secret setting of [defs] replaced by
-/// [placeholder], at any depth. Top-level secrets are always present.
+/// [placeholder]. Secrets are top-level settings only (the manifest loader
+/// rejects one inside an `object` or `list`), and are always present. A
+/// placeholder with a `set` entry gets `set: true` for the keys in
+/// [setSecrets].
 Map<String, Object?> withSecretPlaceholders(
   Map<String, SettingDef> defs,
   Map<String, Object?> values,
-  Map<String, Object?> placeholder,
-) {
+  Map<String, Object?> placeholder, {
+  Set<String> setSecrets = const {},
+}) {
   final out = Map<String, Object?>.of(values);
   for (final MapEntry(key: name, value: def) in defs.entries) {
-    switch (def.type) {
-      case SettingType.secret:
-        out[name] = Map<String, Object?>.of(placeholder);
-      case SettingType.object:
-        if (out[name] case final Map<String, Object?> nested) {
-          out[name] = withSecretPlaceholders(def.fields, nested, placeholder);
-        }
-      case SettingType.list:
-        if (out[name] case final List<Object?> rows) {
-          out[name] = [
-            for (final row in rows)
-              if (row is Map<String, Object?>)
-                withSecretPlaceholders(def.fields, row, placeholder)
-              else
-                row,
-          ];
-        }
-      default:
-        break;
-    }
+    if (def.type != SettingType.secret) continue;
+    out[name] = {
+      ...placeholder,
+      if (placeholder.containsKey('set')) 'set': setSecrets.contains(name),
+    };
   }
   return out;
 }

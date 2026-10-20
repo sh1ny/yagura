@@ -78,29 +78,6 @@ Each plugin SHALL declare `steam.login` as `anonymous`, `account` or `account_op
 - **WHEN** a DayZ instance (`login: account`) is installed without a linked Steam account
 - **THEN** the install fails with `FAILED_PRECONDITION` reason `steam_account_required` before SteamCMD runs
 
-### Requirement: Install, update and validate apps
-The daemon SHALL install and update an instance's app with `app_update <app_id>` (with the plugin's `branch` and optional beta password) into the instance directory, report download progress, and support a `validate` option. Before downloading it SHALL check free disk space. While SteamCMD writes into an instance directory, the game-server account SHALL have no access to it.
-
-#### Scenario: Update reports progress
-- **WHEN** an update downloads 1.2 GB
-- **THEN** progress events report bytes and percent at least every 2 s until completion
-
-#### Scenario: Other instance's server blocked during an update
-- **WHEN** instance A is updating and instance B's server process (running as `yagura-srv`) tries to create a junction inside A's directory
-- **THEN** the attempt fails with access denied, and after the update A's directory has the game-server account's access restored
-
-#### Scenario: Two instances of one app installed at once
-- **WHEN** two Valheim instances are installed concurrently
-- **THEN** the installs run one after the other, the second reports step `waiting_for_steamcmd` meanwhile, and each instance directory contains the full app
-
-#### Scenario: Not enough disk space
-- **WHEN** the volume has less free space than twice the app's last known size
-- **THEN** the operation fails with `insufficient_disk` naming the volume, free bytes and required bytes, before SteamCMD downloads anything
-
-#### Scenario: First install without a known size
-- **WHEN** an app is installed for the first time on this host and its manifest has no `steam.size_hint_bytes`
-- **THEN** the install runs without the disk check, and the operation shows warning `disk_check_skipped`
-
 ### Requirement: SteamCMD is installed and managed by the daemon
 The daemon SHALL download and bootstrap SteamCMD on first need into its data directory, keeping one SteamCMD installation per Steam account plus one for anonymous use, and SHALL report SteamCMD bootstrap failures as operation errors.
 

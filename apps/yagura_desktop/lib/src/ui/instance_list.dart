@@ -100,25 +100,26 @@ class InstanceListView extends ConsumerWidget {
       final plugin = await connection.transport.getPlugin(request.pluginId);
       final schema = SettingsSchema.tryParse(plugin.settingsSchema.json);
       var settings = const <String, Object?>{};
-      if (schema != null && _needsInput(schema.fields)) {
+      var secrets = const <String, String>{};
+      if (schema != null &&
+          (_needsInput(schema.fields) ||
+              schema.fields.any((f) => f is SecretField))) {
         if (!context.mounted) return;
-        final entered = await showDialog<Map<String, Object?>>(
+        final entered = await showDialog<SettingsSubmission>(
           context: context,
-          builder: (_) => _SettingsDialog(
-            // Secrets are write-only and set on the instance afterwards.
-            schema: SettingsSchema([
-              for (final f in schema.fields)
-                if (f is! SecretField) f,
-            ]),
-          ),
+          builder: (_) => _SettingsDialog(schema: schema),
         );
         if (entered == null) return;
-        settings = entered;
+        settings = entered.settings;
+        // Secrets are write-only: they go with SetSecret after the instance
+        // exists, never with CreateInstance.
+        secrets = entered.secrets;
       }
       await connection.createInstance(
         request.pluginId,
         request.name,
         settings: settings,
+        secrets: secrets,
       );
     });
   }
@@ -143,6 +144,8 @@ Future<void> _run(BuildContext context, Future<void> Function() call) async {
     messenger?.showSnackBar(
       SnackBar(content: Text(e.message.isEmpty ? e.reason : e.message)),
     );
+  } on SecretNotSet catch (e) {
+    messenger?.showSnackBar(SnackBar(content: Text(e.message)));
   } on StateError catch (e) {
     messenger?.showSnackBar(SnackBar(content: Text(e.message)));
   }
@@ -347,7 +350,7 @@ class _SettingsDialog extends StatelessWidget {
         schema: schema,
         values: const {},
         ports: const [],
-        onSubmit: (submission) => Navigator.pop(context, submission.settings),
+        onSubmit: (submission) => Navigator.pop(context, submission),
       ),
     ),
     actions: [

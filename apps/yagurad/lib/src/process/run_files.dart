@@ -3,6 +3,9 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../errors.dart';
+import '../files/confined_fs.dart';
+import '../files/instance_fs.dart';
 import 'process_host.dart';
 
 /// The files of one run in `<instance>/.yagura/run/<run-id>/` (ADR 0009):
@@ -10,10 +13,30 @@ import 'process_host.dart';
 /// and `exit.json` (written by the relay), and `cancel.json` (written by a
 /// supervisor that gave up waiting for the server). All carry
 /// `format_version: 1`.
+///
+/// The daemon reads and writes every run file through [fs], the instance's
+/// confinement, so a link a server planted in the run path stops the access
+/// (design D8): the daemon runs as SYSTEM and must not follow a link to a file
+/// only SYSTEM can read. [RunFiles.forRun] builds it for the daemon. The relay
+/// is a separate process running as the server's account; it reads and writes
+/// by path (`relay_run_files.dart`), without [fs], because a link in its own
+/// run directory gains it nothing the account does not already have. How far
+/// the daemon trusts what it reads is design D9.
 class RunFiles {
-  const RunFiles(this.directory);
+  const RunFiles(this.directory, {this.fs});
+
+  /// The files of the run in [runDirectory] (`<instance>/.yagura/run/<id>`),
+  /// confined to its instance directory: what the daemon uses.
+  factory RunFiles.forRun(String runDirectory) => RunFiles(
+    runDirectory,
+    fs: InstanceFs(p.dirname(p.dirname(p.dirname(runDirectory)))),
+  );
 
   final String directory;
+
+  /// The instance's files; the daemon's reads and writes go through it. A
+  /// null [fs] reads by path (the relay and tests).
+  final ConfinedFs? fs;
 
   static const formatVersion = 1;
 
@@ -30,21 +53,33 @@ class RunFiles {
   String get exitPath => p.join(directory, 'exit.json');
   String get cancelPath => p.join(directory, 'cancel.json');
 
-  /// Writes [json] to [path] atomically, so a reader sees all or nothing.
-  static void writeJson(String path, Map<String, Object?> json) {
-    // The pid keeps writers in different processes off each other's file.
-    final temp = File('$path.$pid.tmp');
-    temp.writeAsStringSync(
-      jsonEncode({'format_version': formatVersion, ...json}),
-    );
-    temp.renameSync(path);
+  /// The serialised content of a run file.
+  static List<int> encode(Map<String, Object?> json) =>
+      utf8.encode(jsonEncode({'format_version': formatVersion, ...json}));
+
+  /// Writes [json] to [path] (inside the instance) atomically through [fs],
+  /// creating the run directory first.
+  void _writeConfined(String path, Map<String, Object?> json) {
+    final confined = fs;
+    if (confined == null) {
+      throw StateError('the daemon-side run file writes need an InstanceFs');
+    }
+    confined.createDirectory(confined.relative(directory));
+    confined.writeAtomic(confined.relative(path), encode(json));
   }
 
-  /// The decoded file, or null when it is missing, unreadable or not a v1
-  /// object (a reader never trusts a half-written file).
-  static Map<String, Object?>? readJson(String path) {
+  /// The decoded file, or null when it is missing, unreadable, behind a link
+  /// (through [fs]) or not a v1 object (a reader never trusts a half-written
+  /// file).
+  Map<String, Object?>? readJson(String path) {
     try {
-      final decoded = jsonDecode(File(path).readAsStringSync());
+      final confined = fs;
+      final text = confined == null
+          ? File(path).readAsStringSync()
+          : utf8.decode(
+              confined.readBytes(confined.relative(path), maxBytes: _maxBytes),
+            );
+      final decoded = jsonDecode(text);
       if (decoded is Map<String, Object?> &&
           decoded['format_version'] == formatVersion) {
         return decoded;
@@ -53,13 +88,18 @@ class RunFiles {
       return null;
     } on FormatException {
       return null;
+    } on YaguraException {
+      // A link planted in the run path, or a file over the limit: the file
+      // counts as missing.
+      return null;
     }
     return null;
   }
 
+  static const _maxBytes = 1024 * 1024;
+
   void writeLaunch(LaunchRequest request) {
-    Directory(directory).createSync(recursive: true);
-    writeJson(launchPath, {
+    _writeConfined(launchPath, {
       'executable': request.executable,
       'args': request.args,
       'working_directory': request.workingDirectory,
@@ -85,25 +125,6 @@ class RunFiles {
     );
   }
 
-  /// Writes the relay's own identity, before it starts the server.
-  void writeRelay(ProcessIdentity relay) => _writeRelay(relay, null);
-
-  /// Adds the server's identity to `relay.json`.
-  void writeRelayAndServer(ProcessIdentity relay, ProcessIdentity server) =>
-      _writeRelay(relay, server);
-
-  void _writeRelay(ProcessIdentity relay, ProcessIdentity? server) =>
-      writeJson(relayPath, {
-        'relay_pid': relay.pid,
-        'relay_created': relay.created,
-        'relay_executable': relay.executable,
-        if (server != null) ...{
-          'server_pid': server.pid,
-          'server_created': server.created,
-          'server_executable': server.executable,
-        },
-      });
-
   RelayRecord? readRelay() {
     final json = readJson(relayPath);
     if (json == null) return null;
@@ -120,18 +141,9 @@ class RunFiles {
     return RelayRecord(relay, identity('server'));
   }
 
-  /// Records the end of the run. [error] is set when the server could not be
-  /// started at all.
-  void writeExit(int exitCode, DateTime at, {String? error}) =>
-      writeJson(exitPath, {
-        'exit_code': exitCode,
-        'exited_at': at.toUtc().toIso8601String(),
-        'error': ?error,
-      });
-
   /// Tells the relay that nobody waits for its server any more: it must not
   /// start one, and ends one it already started.
-  void writeCancel() => writeJson(cancelPath, {});
+  void writeCancel() => _writeConfined(cancelPath, {});
 
   bool get isCancelled => readJson(cancelPath) != null;
 

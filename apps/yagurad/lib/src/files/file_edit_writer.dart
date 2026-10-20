@@ -1,12 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:path/path.dart' as p;
 import 'package:yagura_formats/yagura_formats.dart';
 
 import '../errors.dart';
-import 'instance_root.dart';
+import 'confined_fs.dart';
 
 /// One file edit returned by a hook: a merge patch for a file of the given
 /// format. Only `json` is supported in this version.
@@ -28,26 +27,31 @@ class FileEdit {
 /// Applies the file edits of one hook result inside an instance (design D22
 /// and D23): all edits or none.
 ///
-/// Every path is resolved with [InstanceRoot.resolve] first and an edit
-/// outside the root fails with `sandbox_violation`. All new contents are
-/// computed in memory before anything is written; each file is then written to
-/// a temporary file in its directory and moved over the target with an atomic
-/// rename. If a rename fails, files already replaced are restored.
+/// Every path goes through the instance's [ConfinedFs], so an edit outside
+/// the root, or through a link or junction, fails with `sandbox_violation`.
+/// All new contents are computed in memory before anything is written; each
+/// file is then written to a temporary file in its directory and moved over
+/// the target with an atomic rename. If a rename fails, files already replaced
+/// are restored.
 class FileEditWriter {
   FileEditWriter(
-    this.root, {
+    this.fs, {
     void Function(String temporary, String target)? rename,
-  }) : _rename = rename ?? _defaultRename;
+  }) : _rename = rename; // ignore: prefer_initializing_formals
 
   /// Largest file an edit reads or produces.
   static const maxFileBytes = 16 * 1024 * 1024;
 
-  final InstanceRoot root;
-  final void Function(String temporary, String target) _rename;
-  final _random = Random.secure();
+  final ConfinedFs fs;
+  final void Function(String temporary, String target)? _rename;
 
-  static void _defaultRename(String temporary, String target) =>
-      File(temporary).renameSync(target);
+  void _move(String temporary, String target) {
+    if (_rename case final rename?) {
+      rename(temporary, target);
+    } else {
+      fs.rename(temporary, target);
+    }
+  }
 
   /// Applies [edits] in order; several edits of one file apply in sequence.
   void apply(List<FileEdit> edits) {
@@ -70,8 +74,8 @@ class FileEditWriter {
     }
     final byTarget = <String, _Planned>{};
     for (final edit in edits) {
-      final target = root.resolve(edit.path);
-      final key = p.canonicalize(target);
+      final target = fs.parse(edit.path).toString();
+      final key = Platform.isWindows ? target.toLowerCase() : target;
       final planned = byTarget.putIfAbsent(key, () => _load(edit, target));
       planned.document.mergePatch(edit.patch);
     }
@@ -97,23 +101,22 @@ class FileEditWriter {
   }
 
   _Planned _load(FileEdit edit, String target) {
-    final type = FileSystemEntity.typeSync(target);
-    if (type == FileSystemEntityType.directory) {
+    final entry = fs.stat(target);
+    if (entry != null && entry.isDirectory) {
       throw YaguraException(
         'config_parse_error',
         'file edit "${edit.path}" names a directory',
         details: {'path': edit.path},
       );
     }
-    if (type == FileSystemEntityType.notFound) {
+    if (entry == null) {
       // A new file: start from an empty indented object so added keys are
       // pretty printed.
       final seed = JsonDocument.parse('{\n  "k": 0\n}')
         ..mergePatch({'k': null});
       return _Planned(edit.path, target, seed, existed: false);
     }
-    final file = File(target);
-    if (file.lengthSync() > maxFileBytes) {
+    if (entry.size > maxFileBytes) {
       throw YaguraException(
         'file_too_large',
         'file edit "${edit.path}" targets a file over the 16 MiB limit',
@@ -122,11 +125,18 @@ class FileEditWriter {
     }
     final String text;
     try {
-      text = utf8.decode(file.readAsBytesSync());
+      text = utf8.decode(fs.readBytes(target, maxBytes: maxFileBytes));
     } on FormatException {
       throw YaguraException(
         'config_parse_error',
         'file "${edit.path}" is not valid UTF-8 JSON',
+        details: {'path': edit.path},
+      );
+    } on YaguraException catch (e) {
+      if (e.reason != 'file_too_large') rethrow;
+      throw YaguraException(
+        'file_too_large',
+        'file edit "${edit.path}" targets a file over the 16 MiB limit',
         details: {'path': edit.path},
       );
     }
@@ -158,13 +168,18 @@ class FileEditWriter {
     final replaced = <_Planned>[];
     try {
       for (final item in planned) {
-        File(item.target).parent.createSync(recursive: true);
-        final temporary = _newTemporary(item.target);
-        File(temporary).writeAsBytesSync(item.content, flush: true);
+        fs.createDirectory(p.posix.dirname(item.target));
+        final temporary = fs.temporaryFor(item.target);
+        final writer = fs.openWrite(temporary, exclusive: true);
         temporaries[item] = temporary;
+        try {
+          writer.add(item.content);
+        } finally {
+          writer.close();
+        }
       }
       for (final item in planned) {
-        _rename(temporaries[item]!, item.target);
+        _move(temporaries[item]!, item.target);
         temporaries.remove(item);
         replaced.add(item);
       }
@@ -181,25 +196,10 @@ class FileEditWriter {
     } finally {
       for (final temporary in temporaries.values) {
         try {
-          File(temporary).deleteSync();
-        } on FileSystemException {
+          fs.delete(temporary);
+        } on Object {
           // Best effort: the temporary file is not the target.
         }
-      }
-    }
-  }
-
-  /// A sibling path of [target] that nothing occupies, links included, so a
-  /// temporary never overwrites or follows an existing path.
-  String _newTemporary(String target) {
-    while (true) {
-      final candidate = p.join(
-        p.dirname(target),
-        '.${p.basename(target)}.yagura-${_random.nextInt(1 << 31).toRadixString(16)}.tmp',
-      );
-      if (FileSystemEntity.typeSync(candidate, followLinks: false) ==
-          FileSystemEntityType.notFound) {
-        return candidate;
       }
     }
   }
@@ -207,22 +207,27 @@ class FileEditWriter {
   void _restore(_Planned item) {
     try {
       if (!item.existed) {
-        File(item.target).deleteSync();
+        fs.delete(item.target);
       } else {
-        final temporary = _newTemporary(item.target);
+        final temporary = fs.temporaryFor(item.target);
         try {
-          File(temporary).writeAsBytesSync(item.original!, flush: true);
-          File(temporary).renameSync(item.target);
-        } on FileSystemException {
+          final writer = fs.openWrite(temporary, exclusive: true);
           try {
-            File(temporary).deleteSync();
-          } on FileSystemException {
+            writer.add(item.original!);
+          } finally {
+            writer.close();
+          }
+          fs.rename(temporary, item.target);
+        } on Object {
+          try {
+            fs.delete(temporary);
+          } on Object {
             // Best effort: the temporary file is not the target.
           }
           rethrow;
         }
       }
-    } on FileSystemException {
+    } on Object {
       // Nothing more can be done; the original error is reported.
     }
   }

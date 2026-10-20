@@ -32,6 +32,11 @@ const updateInterruptedReason = 'update_interrupted';
 const restoreInterruptedReason = 'restore_interrupted';
 const settingsInvalidReason = 'settings_invalid';
 const pluginMissingReason = 'plugin_missing';
+const runRecordRejectedReason = 'run_record_rejected';
+
+/// The notice and warning of an instance whose directory could not be given
+/// its permissions at the first service start (ADR 0015).
+const aclMigrationFailedReason = 'acl_migration_failed';
 
 /// A port of an instance with its resolved number.
 class PortAssignment {
@@ -76,8 +81,10 @@ class Instance {
     required this.createdAt,
     required this.stateChangedAt,
     required this.pid,
+    this.revision = 1,
     this.schemaVersion,
     this.health = InstanceHealth.unspecified,
+    this.firewallStatus = 'disabled',
   });
 
   final String id;
@@ -121,8 +128,15 @@ class Instance {
   /// within `start_timeout`; `unspecified` while it is not running.
   final InstanceHealth health;
 
-  /// M1 keeps every revision at 0 and does not check `expected_revision`.
-  int get revision => 0;
+  /// `ok` when the instance's firewall rules are as wanted, `degraded` after a
+  /// reconcile that failed (until one succeeds), `disabled` where the daemon
+  /// manages no rules (design D11).
+  final String firewallStatus;
+
+  /// The configuration revision (design D12): starts at 1 and increments
+  /// only on configuration changes, never on state, health, pid or queue
+  /// changes.
+  final int revision;
 
   Map<String, int> get portNumbers => {for (final p in ports) p.name: p.number};
 }
@@ -198,13 +212,19 @@ class UpdateSettingsRequest {
     required this.instanceId,
     required this.settings,
     this.ports,
+    this.exposure,
     this.restartPolicy,
     this.steamAccountId,
     this.autostart,
     this.schemaVersion,
+    this.expectedRevision,
   });
 
   final String instanceId;
+
+  /// The revision the caller last read. Null skips the check (in-process
+  /// callers); the API always passes it, and 0 fails `revision_required`.
+  final int? expectedRevision;
 
   /// When set, must equal the plugin's current settings schema version, so a
   /// form opened before a plugin reload cannot write stale fields.
@@ -215,6 +235,11 @@ class UpdateSettingsRequest {
 
   /// Port overrides by name; null leaves ports unchanged.
   final Map<String, int>? ports;
+
+  /// Per-instance firewall exposure by port name (`ports.rcon.exposed`).
+  /// Only a port of purpose `rcon` can be opened or closed this way; every
+  /// other port follows its declaration. Null leaves the choices unchanged.
+  final Map<String, bool>? exposure;
   final String? restartPolicy;
 
   /// Null leaves it unchanged; empty unlinks.

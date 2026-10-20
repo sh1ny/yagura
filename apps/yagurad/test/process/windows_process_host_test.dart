@@ -4,17 +4,23 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagura_plugin/yagura_plugin.dart';
 import 'package:yagurad/src/errors.dart';
+import 'package:yagurad/src/files/instance_fs.dart';
+import 'package:yagurad/src/platform/win32_process.dart';
+import 'package:yagurad/src/process/relay_run_files.dart';
 import 'package:yagurad/src/process/process_host.dart';
 import 'package:yagurad/src/process/run_files.dart';
 import 'package:yagurad/src/process/windows_process_host.dart';
 
 import '../support/daemon_support.dart';
 import '../support/process_support.dart';
+import '../support/temp_support.dart';
 
 /// A launch of the `fake_server` fixture in its own run directory under
 /// [root].
 LaunchRequest fakeLaunch(ProcessRig rig, String root, String name) {
   final dir = p.join(root, name);
+  // The instance directory exists before a launch (the daemon created it).
+  Directory(dir).createSync(recursive: true);
   return LaunchRequest(
     instanceId: name,
     runId: 'run-$name',
@@ -33,7 +39,7 @@ void main() {
     () async {
       // Under `dart run` the helper modes would be handed to dart.exe, which
       // answers "Could not find a command named launch".
-      final dir = Directory.systemTemp.createTempSync('yagura_host_');
+      final dir = createCanonicalTempSync('yagura_host_');
       addTearDown(() => dir.deleteSync(recursive: true));
       final host = WindowsProcessHost(
         helperExecutable: Platform.resolvedExecutable,
@@ -115,6 +121,82 @@ void main() {
   );
 
   test(
+    'an_abandoned_launch_ends_only_what_the_launched_relay_started',
+    () async {
+      // relay.json is written by the game-server account: it can name another
+      // instance's server. Only a verified server of the relay the launcher
+      // reported, or that relay's own child, is ended (design D9).
+      final rig = await ProcessRig.create();
+      final host = WindowsProcessHost(
+        helperExecutable: rig.tools.yagurad,
+        abandonTimeout: const Duration(milliseconds: 300),
+      );
+      final dir = Directory(p.join(rig.env.root.path, 'abandon'))
+        ..createSync(recursive: true);
+      Future<Process> start(String name) async {
+        final process = await Process.start(rig.tools.fakeServer, [
+          '--state-dir',
+          p.join(dir.path, name),
+        ]);
+        addTearDown(process.kill);
+        return process;
+      }
+
+      final bystander = await start('bystander');
+      final launchedRelay = await start('relay');
+      await eventually(
+        () =>
+            identityOfPid(bystander.pid) != null &&
+            identityOfPid(launchedRelay.pid) != null,
+        reason: 'both processes to be visible',
+      );
+      final runDirectory = p.join(dir.path, 'run');
+      Directory(runDirectory).createSync(recursive: true);
+      final files = RunFiles(runDirectory, fs: InstanceFs(dir.path));
+      // The record names the bystander as the server of the launched relay,
+      // which is not its parent.
+      files.writeRelayAndServer(
+        identityOfPid(launchedRelay.pid)!,
+        identityOfPid(bystander.pid)!,
+      );
+
+      await host.abandonLaunch(files, identityOfPid(launchedRelay.pid));
+
+      expect(
+        processAlive(bystander.pid),
+        isTrue,
+        reason: 'a process the relay did not start is not ended',
+      );
+    },
+    tags: ['windows'],
+    skip: Platform.isWindows ? false : 'needs Windows',
+  );
+
+  test(
+    'a_launcher_that_times_out_cancels_the_run',
+    () async {
+      // The launcher may already have started the relay: the cancel file
+      // keeps it from starting (or keeping) a server after Start failed.
+      final rig = await ProcessRig.create();
+      // A helper that never finishes: the fixture ignores its arguments.
+      final host = WindowsProcessHost(
+        helperExecutable: rig.tools.fakeServer,
+        launcherTimeout: const Duration(milliseconds: 300),
+      );
+      final request = fakeLaunch(rig, rig.env.root.path, 'slow');
+
+      await expectLater(
+        host.launch(request),
+        failsWith('launch_failed', messageHas: ['launcher did not finish']),
+      );
+
+      expect(RunFiles(request.runDirectory).isCancelled, isTrue);
+    },
+    tags: ['windows'],
+    skip: Platform.isWindows ? false : 'needs Windows',
+  );
+
+  test(
     'stop_does_not_signal_a_reused_relay_pid',
     () async {
       final rig = await ProcessRig.create();
@@ -123,12 +205,15 @@ void main() {
       final server = await host.launch(fakeLaunch(rig, root, 'a'));
       // Another application's console: a second server behind its own relay.
       final other = await host.launch(fakeLaunch(rig, root, 'b'));
-      final otherRelay = other.relay!;
-      // A persisted relay record whose PID now belongs to that application.
+      // A persisted relay record that no longer matches the process with that
+      // PID (the relay ended and its PID was reused: the start time differs).
+      // The server's parent PID is still the recorded one (design D9), and the
+      // relay was created before it.
+      final realRelay = server.relay!;
       final reused = ProcessIdentity(
-        pid: otherRelay.pid,
-        executable: otherRelay.executable,
-        created: otherRelay.created + 1,
+        pid: realRelay.pid,
+        executable: realRelay.executable,
+        created: realRelay.created + 1,
       );
       final attached = (await host.reattach(server.identity, relay: reused))!;
 

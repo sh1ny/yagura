@@ -81,7 +81,7 @@ The result is validated against the hook's schema; **unknown keys are rejected**
 
 A **file edit** is `{"path": string, "format": "json", "patch": object}`. The path is relative to the instance root. The patch is an [RFC 7386](https://www.rfc-editor.org/rfc/rfc7386) merge patch: objects merge recursively, `null` removes a key, anything else (arrays included) replaces the value. The daemon keeps the file's key order and formatting, appends new keys in the layout of their neighbours, and creates the file (and its directories) when it does not exist.
 
-The daemon applies all edits of one result or none: it resolves every path and computes every new content first, writes each file to a temporary file in its directory and moves it over the target with an atomic rename, and restores the files already replaced if a later step fails. An edit whose path resolves outside the instance root (including through a link or junction) fails with `sandbox_violation`. In this version `json` is the only format; any other fails with `unsupported_in_this_version` naming the path and format, and no file changes.
+The daemon applies all edits of one result or none: it resolves every path and computes every new content first, writes each file to a temporary file in its directory and moves it over the target with an atomic rename, and restores the files already replaced if a later step fails. An edit whose path is not relative to the instance root, or that passes through a symbolic link or junction (even one that points inside the instance), fails with `sandbox_violation`. In this version `json` is the only format; any other fails with `unsupported_in_this_version` naming the path and format, and no file changes.
 
 ## Host API
 
@@ -95,13 +95,13 @@ Hooks reach the system only through the global `yagura` object. There is no netw
 | `yagura.formats.json.parse(text)` | the parsed value; throws `invalid_json` on bad input. At most 16 MiB. |
 | `yagura.formats.json.serialize(value, indent?)` | JSON text; `indent` is 0 to 10 spaces. At most 16 MiB. |
 
-Paths are relative to the instance root. Each path is resolved, following links, to its final location, and a path outside the instance root throws `sandbox_violation` inside the hook; nothing outside is read. Absolute paths are accepted only when they point inside the root.
+Paths must be relative to the instance root. An absolute path, a path with `..`, and a path that passes through a symbolic link or junction (even one that points inside the instance) throw `sandbox_violation` inside the hook; links are never followed and nothing outside is read. `yagura.fs.list` reports a link as an entry of size 0 that is not a directory.
 
 A failing host call throws a JavaScript `Error` whose `code` property is the reason:
 
 | `code` | When |
 |---|---|
-| `sandbox_violation` | the path resolves outside the instance root |
+| `sandbox_violation` | the path is absolute or leaves the instance root, or a symbolic link or junction is on it |
 | `host_limit_exceeded` | a read or parse call over 16 MiB, or a listing over 10,000 entries; the message names the limit |
 | `not_supported` | any other member of `yagura.fs`, such as `writeText`: `yagura.fs` has no write functions, return file edits instead |
 | `unsupported_in_this_version` | `yagura.formats.<format>` for any format but `json` |

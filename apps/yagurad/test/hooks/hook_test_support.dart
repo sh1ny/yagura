@@ -5,9 +5,11 @@ import 'package:test/test.dart';
 import 'package:yagurad/src/files/files.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
 
+import '../support/temp_support.dart';
+
 /// A fresh instance directory removed when the test ends.
 Directory makeInstance() {
-  final dir = Directory.systemTemp.createTempSync('yagura_hook_test_');
+  final dir = createCanonicalTempSync('yagura_hook_test_');
   addTearDown(() {
     if (dir.existsSync()) dir.deleteSync(recursive: true);
   });
@@ -36,7 +38,7 @@ HookInvocation invocationFor(
   point: point,
   source: source,
   context: testContext(),
-  root: InstanceRoot(instance.path),
+  root: InstanceFs(instance.path),
   deadline: deadline,
 );
 

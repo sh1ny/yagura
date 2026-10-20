@@ -27,21 +27,6 @@ When a reload changes a plugin's version or settings schema, the daemon SHALL ru
 
 ## MODIFIED Requirements
 
-### Requirement: Settings schema types and constraints
-The manifest's `settings` SHALL support the types `string`, `integer`, `number`, `boolean`, `enum`, `secret`, `string_list`, `object` (nested fields) and `list` (repeatable rows of an object type), with `label`, `description`, `default`, `required`, `min`, `max`, `pattern`, `group` and `advanced`. The daemon serves this schema to clients and validates values against it.
-
-#### Scenario: Repeatable structure validated
-- **WHEN** an ARK:SA instance sets `itemStackOverrides` (type `list` of objects with `class: string`, `max: integer`) to two rows
-- **THEN** the values are accepted and returned as an ordered array of two objects
-
-#### Scenario: Row with missing required field
-- **WHEN** a row in `itemStackOverrides` omits required `class`
-- **THEN** validation fails with `INVALID_ARGUMENT` naming `itemStackOverrides[1].class`
-
-#### Scenario: Secret values are write-only
-- **WHEN** a client reads the settings of an instance with a `secret` setting that has a value
-- **THEN** the field is returned as `{"secret": true, "set": true}` and the value is not returned
-
 ### Requirement: Launch templates
 The manifest SHALL declare the executable per OS and the launch arguments as templates over `settings`, `ports`, `paths`, `mods` and `os`, supporting conditional entries and list joins. The daemon renders them at start into an argument list without passing through a shell.
 
@@ -75,9 +60,3 @@ The manifest SHALL declare a stop strategy (`rcon`, `signal` or `kill`, with com
 #### Scenario: Unsupported stop strategy
 - **WHEN** a manifest declares `stop: {strategy: telnet}`
 - **THEN** the plugin is `rejected` with an error naming `stop.strategy` and the supported strategies
-
-## REMOVED Requirements
-
-### Requirement: Secret settings stay unset without a secret store
-**Reason**: M2 adds the OS-backed secret store, so secret values are accepted and stored there (daemon-security, Secrets never leave the daemon).
-**Migration**: Secret settings start unset on upgraded daemons, because M1 never stored a value; admins set them after upgrading.

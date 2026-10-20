@@ -25,19 +25,32 @@ Future<Process> startStray(String directory) async {
   Directory(directory).createSync(recursive: true);
   final source = Platform.isWindows
       ? p.join(Platform.environment['SystemRoot']!, 'System32', 'ping.exe')
-      : '/bin/sleep';
+      : '/bin/bash';
   final copy = p.join(
     directory,
     Platform.isWindows ? 'steamcmd.exe' : 'steamcmd',
   );
   File(source).copySync(copy);
+  // On Linux a copy of bash waits on its stdin, which stays open. Not a
+  // copy of sleep: a multicall coreutils (uutils on Ubuntu 26.04) does not
+  // run under another name.
   final process = await Process.start(
     copy,
-    Platform.isWindows ? ['-n', '300', '127.0.0.1'] : ['300'],
+    Platform.isWindows ? ['-n', '300', '127.0.0.1'] : ['-c', 'read -t 300'],
   );
   addTearDown(() {
     process.kill(ProcessSignal.sigkill);
   });
+  if (!Platform.isWindows) {
+    await eventually(() {
+      try {
+        return Link('/proc/${process.pid}/exe').targetSync() ==
+            File(copy).resolveSymbolicLinksSync();
+      } on FileSystemException {
+        return false;
+      }
+    }, reason: 'the stray runs the copy');
+  }
   return process;
 }
 

@@ -1,0 +1,143 @@
+@Tags(['windows'])
+library;
+
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:path/path.dart' as p;
+import 'package:test/test.dart';
+import 'package:yagurad/src/platform/win32_paths.dart';
+import 'package:yagurad/src/platform/win32_security.dart';
+
+import '../support/temp_support.dart';
+
+void main() {
+  test('dpapi_blob_round_trips', () {
+    final plain = Uint8List.fromList(utf8.encode('correct horse battery'));
+    final blob = dpapiProtect(plain);
+
+    expect(blob, isNot(equals(plain)));
+    expect(utf8.decode(blob, allowMalformed: true), isNot(contains('horse')));
+    expect(dpapiUnprotect(blob), plain);
+  });
+
+  test('dpapi_rejects_a_damaged_blob', () {
+    final blob = dpapiProtect(Uint8List.fromList([1, 2, 3]));
+    blob[blob.length - 1] ^= 0xFF;
+    expect(() => dpapiUnprotect(blob), throwsA(isA<Exception>()));
+  });
+
+  test('dpapi_blob_of_an_unknown_master_key_is_a_wrong_key', () {
+    // What a blob protected on another machine looks like: its master key
+    // GUID (bytes 24 to 39) names a key this machine does not have. The code
+    // must be read right after the call: it is NTE_BAD_KEY_STATE.
+    for (var variant = 0; variant < 3; variant++) {
+      final blob = dpapiProtect(Uint8List.fromList([1, 2, 3]));
+      for (var i = 24; i < 40; i++) {
+        blob[i] = (i * 37 + variant * 11) & 0xFF;
+      }
+      expect(
+        () => dpapiUnprotect(blob),
+        throwsA(
+          isA<DpapiError>()
+              .having((e) => e.isWrongKey, 'isWrongKey', isTrue)
+              .having((e) => e.code, 'code', isNot(0)),
+        ),
+        reason: 'variant $variant',
+      );
+    }
+  });
+
+  test('dpapi_blob_that_is_too_short_is_not_a_wrong_key', () {
+    expect(
+      () => dpapiUnprotect(Uint8List(0)),
+      throwsA(
+        isA<DpapiError>()
+            .having((e) => e.code, 'code', 87)
+            .having((e) => e.isWrongKey, 'isWrongKey', isFalse),
+      ),
+    );
+  });
+
+  test('current_user_sid_is_read_from_the_process_token', () {
+    final sid = currentUserSid();
+
+    expect(sid, matches(RegExp(r'^S-1-5-\d+(-\d+)+$')));
+    // `whoami /user` prints the same SID.
+    final whoami = Process.runSync('whoami', ['/user', '/fo', 'csv', '/nh']);
+    expect(whoami.stdout as String, contains(sid));
+  });
+
+  test('sid_converts_both_ways', () {
+    final bytes = stringToSid('S-1-5-18');
+
+    expect(bytes.first, 1, reason: 'revision');
+    expect(sidToString(bytes), 'S-1-5-18');
+    expect(sidToString(stringToSid(currentUserSid())), currentUserSid());
+  });
+
+  test('security_descriptor_calls_work', () {
+    expect(sddlParses('D:P(A;;GA;;;SY)(A;;GA;;;BA)'), isTrue);
+    expect(sddlParses('not sddl'), isFalse);
+
+    final temp = createCanonicalTempSync('yagurad_sddl_');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    // The host's temp folder may hand nothing down, so the file gets its
+    // parent from a folder with a DACL that does: SYSTEM and Administrators.
+    // Whether `icacls` shows the copied entries as inherited (`(I)`) differs
+    // between hosts, so protection is read from the descriptor, in process.
+    final me = currentUserSid();
+    final dir = Directory(p.join(temp.path, 'parent'));
+    createProtectedDirectory(
+      dir.path,
+      'O:$me'
+      'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;$me)',
+    ).close();
+    final file = File(p.join(dir.path, 'f.txt'))..writeAsStringSync('x');
+    String acl() => Process.runSync('icacls', [file.path]).stdout as String;
+    String dacl() => inspectEntrySecurity(file.path).sddl;
+    // A file gets Administrators from its parent.
+    expect(acl(), contains('Administrators'));
+
+    setFileDacl(file.path, 'D:P(A;;GA;;;${currentUserSid()})(A;;GA;;;SY)');
+
+    final after = acl();
+    expect(after, contains(r'NT AUTHORITY\SYSTEM'));
+    expect(after, isNot(contains('Administrators')));
+    expect(
+      dacl(),
+      allOf(contains('D:P'), isNot(contains(';ID;'))),
+      reason: 'protected: no inheritance',
+    );
+    expect(file.readAsStringSync(), 'x');
+  });
+
+  group('local account lookups', () {
+    test('a_plain_name_is_qualified_with_the_machine', () {
+      expect(qualifyLocalAccount('yagura-srv', 'BOX'), r'BOX\yagura-srv');
+      expect(qualifyLocalAccount('yagura-srv', null), r'.\yagura-srv');
+      expect(qualifyLocalAccount('yagura-srv', ''), r'.\yagura-srv');
+    });
+
+    test('an_account_that_does_not_exist_is_null', () {
+      expect(lookupAccountSid('yagura-no-such-account-xyz'), isNull);
+    });
+
+    test('a_local_user_resolves_to_a_machine_sid', () {
+      // The built-in Administrator exists on every machine (unless renamed).
+      final sid = lookupAccountSid('Administrator');
+      if (sid == null) {
+        markTestSkipped('the built-in Administrator account is renamed');
+        return;
+      }
+      expect(sid, matches(RegExp(r'^S-1-5-21-(\d+-){3}500$')));
+    });
+
+    test('a_group_is_not_a_user', () {
+      // `BOX\Administrators` is a local group: only a user is an account the
+      // purge may delete the profile of.
+      expect(lookupAccountSid('Administrators'), isNull);
+    });
+  });
+}

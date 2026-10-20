@@ -25,8 +25,8 @@ The daemon SHALL call these optional hooks when `hooks.js` exports them: `onPost
 Each hook SHALL receive one JSON context (instance id, plugin id and version, OS, paths relative to the instance root, settings with secrets replaced by placeholders, ports, staged mods) and SHALL return a JSON object validated against that hook's result schema; unknown keys are rejected.
 
 #### Scenario: Context contents
-- **WHEN** `onPreStart` runs for an instance with an RCON password set
-- **THEN** the context contains `settings.rconPassword` as `{"secret": true}` and not the password
+- **WHEN** `onPreStart` runs for an instance whose plugin declares a `secret` setting `rconPassword`
+- **THEN** the context contains `settings.rconPassword` as `{"secret": true, "set": false}` and no other value for it
 
 #### Scenario: Invalid result shape
 - **WHEN** `onPreStart` returns `{"args": "-freezecheck"}` (a string instead of an array)

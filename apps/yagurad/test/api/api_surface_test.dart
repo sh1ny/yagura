@@ -6,9 +6,11 @@ import 'package:grpc/grpc.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagura_proto/yagura_proto.dart' as pb;
+import 'package:yagurad/src/host/secret_store.dart';
 
 import '../support/api_support.dart';
 import '../support/daemon_support.dart';
+import '../support/secret_support.dart';
 
 /// Asks the reflection service on [path] (the v1 or v1alpha name) for
 /// [requests].
@@ -46,12 +48,23 @@ void main() {
     });
 
     test('GetHealth reports what this version does not build', () async {
-      final api = await ApiHarness.start(TestEnv());
+      // The protector is a fake: the real one is DPAPI, which only Windows has.
+      final env = TestEnv();
+      final api = await ApiHarness.start(
+        env,
+        daemon: await env.start(secretProtector: FakeSecretProtector(devSid)),
+      );
 
       final health = await api.system.getHealth(pb.GetHealthRequest());
 
       expect(health.databaseOk, isTrue);
-      expect(health.notBuilt, unorderedEquals(['secret_store', 'firewall']));
+      // Dev mode opens the secret store too (design D3); the firewall and the
+      // service accounts are service-mode components of later groups.
+      expect(health.secretStoreOk, isTrue);
+      expect(
+        health.notBuilt,
+        unorderedEquals(['firewall', 'service_accounts', 'steam_account']),
+      );
       expect(health.leakedHookWorkers, 0);
       expect(health.hooksDegraded, isFalse);
     });
@@ -67,15 +80,19 @@ void main() {
   });
 
   group('Instances', () {
-    test('SetSecret fails secret_store_unavailable', () async {
+    test('SetSecret on a host without a secret store fails', () async {
       final env = TestEnv()..installValheim();
-      final api = await ApiHarness.start(env);
+      final api = await ApiHarness.start(
+        env,
+        daemon: await env.start(secretProtector: UnsupportedSecretProtector()),
+      );
       final instance = await api.createValheim();
 
       await expectLater(
         api.instances.setSecret(
           pb.SetSecretRequest(
             instanceId: instance.id,
+            expectedRevision: Int64(1),
             key: 'password',
             value: 'hunter2',
           ),
@@ -85,32 +102,23 @@ void main() {
           'secret_store_unavailable',
         ),
       );
-      await expectLater(
-        api.instances.deleteSecret(
-          pb.DeleteSecretRequest(instanceId: instance.id, key: 'password'),
-        ),
-        failsWithStatus(
-          StatusCode.failedPrecondition,
-          'secret_store_unavailable',
-        ),
-      );
     });
 
-    test('revision is always 0 and expected_revision is not checked', () async {
+    test('revision starts at 1 and an accepted save increments it', () async {
       final env = TestEnv()..installValheim();
       final api = await ApiHarness.start(env);
       final instance = await api.createValheim();
-      expect(instance.revision.toInt(), 0);
+      expect(instance.revision.toInt(), 1);
 
       final updated = await api.instances.updateSettings(
         pb.UpdateSettingsRequest(
           instanceId: instance.id,
-          expectedRevision: Int64(99),
+          expectedRevision: Int64(1),
           settings: pb.JsonDocument(json: '{"serverName":"Other"}'),
         ),
       );
 
-      expect(updated.revision.toInt(), 0);
+      expect(updated.revision.toInt(), 2);
       expect(updated.settings.json, contains('Other'));
     });
 
