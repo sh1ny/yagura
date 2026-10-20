@@ -29,6 +29,7 @@ message Mod {
   google.protobuf.Timestamp remote_updated = 10;
   bool update_available = 11;
   string last_error = 12;
+  repeated string warnings = 15;      // e.g. key_conflict:CF.bikey
 }
 
 message ListModsRequest {

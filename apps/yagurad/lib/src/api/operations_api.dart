@@ -146,6 +146,15 @@ class OperationsApi extends pb.OperationsServiceBase with GuardedService {
     'Operations.RespondToPrompt is not implemented in this version',
   );
 
+  @override
+  Stream<pb.PromptEvent> watchPrompts(
+    ServiceCall call,
+    pb.WatchPromptsRequest request,
+  ) => throw YaguraException(
+    'not_implemented',
+    'Operations.WatchPrompts is not implemented in this version',
+  );
+
   /// The daemon's operation ids are `op` and 12 hex digits: a well-formed id
   /// that is not known was pruned, anything else never existed.
   static bool _wellFormed(String id) =>

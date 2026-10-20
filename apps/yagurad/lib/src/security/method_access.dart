@@ -52,6 +52,7 @@ const methodAccess = <String, MethodAccess>{
   'yagura.v1.Operations/WatchOperation': MethodAccess.read,
   'yagura.v1.Operations/CancelOperation': MethodAccess.mutating,
   'yagura.v1.Operations/RespondToPrompt': MethodAccess.mutating,
+  'yagura.v1.Operations/WatchPrompts': MethodAccess.read,
   'yagura.v1.Logs/ListSources': MethodAccess.read,
   'yagura.v1.Logs/Backlog': MethodAccess.read,
   'yagura.v1.Logs/Follow': MethodAccess.read,

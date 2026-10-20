@@ -1385,6 +1385,420 @@ class RespondToPromptRequest extends $pb.GeneratedMessage {
   void clearValue() => $_clearField(3);
 }
 
+class WatchPromptsRequest extends $pb.GeneratedMessage {
+  factory WatchPromptsRequest() => WatchPromptsRequest._();
+
+  WatchPromptsRequest._();
+
+  factory WatchPromptsRequest.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      WatchPromptsRequest()..mergeFromBuffer(data, registry);
+  factory WatchPromptsRequest.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      WatchPromptsRequest()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'WatchPromptsRequest',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'yagura.v1'),
+      createEmptyInstance: WatchPromptsRequest.$_createMessage)
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  WatchPromptsRequest clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  WatchPromptsRequest copyWith(void Function(WatchPromptsRequest) updates) =>
+      super.copyWith((message) => updates(message as WatchPromptsRequest))
+          as WatchPromptsRequest;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core
+      .Deprecated('Use WatchPromptsRequest() / WatchPromptsRequest.new instead')
+  static WatchPromptsRequest create() => WatchPromptsRequest._();
+  static $pb.GeneratedMessage $_createMessage() => WatchPromptsRequest._();
+  @$core.override
+  WatchPromptsRequest createEmptyInstance() => WatchPromptsRequest._();
+  @$core.pragma('dart2js:noInline')
+  static WatchPromptsRequest getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<WatchPromptsRequest>(
+          WatchPromptsRequest.$_createMessage);
+  static WatchPromptsRequest? _defaultInstance;
+}
+
+enum PromptEvent_Event { snapshot, raised, resolved, resyncRequired, notSet }
+
+class PromptEvent extends $pb.GeneratedMessage {
+  factory PromptEvent({
+    PromptSnapshot? snapshot,
+    PendingPrompt? raised,
+    PromptResolved? resolved,
+    PromptsResyncRequired? resyncRequired,
+  }) {
+    final result = PromptEvent._();
+    if (snapshot != null) result.snapshot = snapshot;
+    if (raised != null) result.raised = raised;
+    if (resolved != null) result.resolved = resolved;
+    if (resyncRequired != null) result.resyncRequired = resyncRequired;
+    return result;
+  }
+
+  PromptEvent._();
+
+  factory PromptEvent.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      PromptEvent()..mergeFromBuffer(data, registry);
+  factory PromptEvent.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      PromptEvent()..mergeFromJson(json, registry);
+
+  static const $core.Map<$core.int, PromptEvent_Event> _PromptEvent_EventByTag =
+      {
+    1: PromptEvent_Event.snapshot,
+    2: PromptEvent_Event.raised,
+    3: PromptEvent_Event.resolved,
+    4: PromptEvent_Event.resyncRequired,
+    0: PromptEvent_Event.notSet
+  };
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'PromptEvent',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'yagura.v1'),
+      createEmptyInstance: PromptEvent.$_createMessage)
+    ..oo(0, [1, 2, 3, 4])
+    ..aOM<PromptSnapshot>(1, _omitFieldNames ? '' : 'snapshot',
+        subBuilder: PromptSnapshot.$_createMessage)
+    ..aOM<PendingPrompt>(2, _omitFieldNames ? '' : 'raised',
+        subBuilder: PendingPrompt.$_createMessage)
+    ..aOM<PromptResolved>(3, _omitFieldNames ? '' : 'resolved',
+        subBuilder: PromptResolved.$_createMessage)
+    ..aOM<PromptsResyncRequired>(4, _omitFieldNames ? '' : 'resyncRequired',
+        subBuilder: PromptsResyncRequired.$_createMessage)
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  PromptEvent clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  PromptEvent copyWith(void Function(PromptEvent) updates) =>
+      super.copyWith((message) => updates(message as PromptEvent))
+          as PromptEvent;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated('Use PromptEvent() / PromptEvent.new instead')
+  static PromptEvent create() => PromptEvent._();
+  static $pb.GeneratedMessage $_createMessage() => PromptEvent._();
+  @$core.override
+  PromptEvent createEmptyInstance() => PromptEvent._();
+  @$core.pragma('dart2js:noInline')
+  static PromptEvent getDefault() =>
+      _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<PromptEvent>(
+          PromptEvent.$_createMessage);
+  static PromptEvent? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  @$pb.TagNumber(2)
+  @$pb.TagNumber(3)
+  @$pb.TagNumber(4)
+  PromptEvent_Event whichEvent() => _PromptEvent_EventByTag[$_whichOneof(0)]!;
+  @$pb.TagNumber(1)
+  @$pb.TagNumber(2)
+  @$pb.TagNumber(3)
+  @$pb.TagNumber(4)
+  void clearEvent() => $_clearField($_whichOneof(0));
+
+  @$pb.TagNumber(1)
+  PromptSnapshot get snapshot => $_getN(0);
+  @$pb.TagNumber(1)
+  set snapshot(PromptSnapshot value) => $_setField(1, value);
+  @$pb.TagNumber(1)
+  $core.bool hasSnapshot() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearSnapshot() => $_clearField(1);
+  @$pb.TagNumber(1)
+  PromptSnapshot ensureSnapshot() => $_ensure(0);
+
+  @$pb.TagNumber(2)
+  PendingPrompt get raised => $_getN(1);
+  @$pb.TagNumber(2)
+  set raised(PendingPrompt value) => $_setField(2, value);
+  @$pb.TagNumber(2)
+  $core.bool hasRaised() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearRaised() => $_clearField(2);
+  @$pb.TagNumber(2)
+  PendingPrompt ensureRaised() => $_ensure(1);
+
+  @$pb.TagNumber(3)
+  PromptResolved get resolved => $_getN(2);
+  @$pb.TagNumber(3)
+  set resolved(PromptResolved value) => $_setField(3, value);
+  @$pb.TagNumber(3)
+  $core.bool hasResolved() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearResolved() => $_clearField(3);
+  @$pb.TagNumber(3)
+  PromptResolved ensureResolved() => $_ensure(2);
+
+  @$pb.TagNumber(4)
+  PromptsResyncRequired get resyncRequired => $_getN(3);
+  @$pb.TagNumber(4)
+  set resyncRequired(PromptsResyncRequired value) => $_setField(4, value);
+  @$pb.TagNumber(4)
+  $core.bool hasResyncRequired() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearResyncRequired() => $_clearField(4);
+  @$pb.TagNumber(4)
+  PromptsResyncRequired ensureResyncRequired() => $_ensure(3);
+}
+
+class PromptSnapshot extends $pb.GeneratedMessage {
+  factory PromptSnapshot({
+    $core.Iterable<PendingPrompt>? prompts,
+  }) {
+    final result = PromptSnapshot._();
+    if (prompts != null) result.prompts.addAll(prompts);
+    return result;
+  }
+
+  PromptSnapshot._();
+
+  factory PromptSnapshot.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      PromptSnapshot()..mergeFromBuffer(data, registry);
+  factory PromptSnapshot.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      PromptSnapshot()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'PromptSnapshot',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'yagura.v1'),
+      createEmptyInstance: PromptSnapshot.$_createMessage)
+    ..pPM<PendingPrompt>(1, _omitFieldNames ? '' : 'prompts',
+        subBuilder: PendingPrompt.$_createMessage)
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  PromptSnapshot clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  PromptSnapshot copyWith(void Function(PromptSnapshot) updates) =>
+      super.copyWith((message) => updates(message as PromptSnapshot))
+          as PromptSnapshot;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated('Use PromptSnapshot() / PromptSnapshot.new instead')
+  static PromptSnapshot create() => PromptSnapshot._();
+  static $pb.GeneratedMessage $_createMessage() => PromptSnapshot._();
+  @$core.override
+  PromptSnapshot createEmptyInstance() => PromptSnapshot._();
+  @$core.pragma('dart2js:noInline')
+  static PromptSnapshot getDefault() =>
+      _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<PromptSnapshot>(
+          PromptSnapshot.$_createMessage);
+  static PromptSnapshot? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $pb.PbList<PendingPrompt> get prompts => $_getList(0);
+}
+
+/// A prompt and the operations waiting on it. A prompt raised by a mod download
+/// run that several operations wait on lists all of them.
+class PendingPrompt extends $pb.GeneratedMessage {
+  factory PendingPrompt({
+    Prompt? prompt,
+    $core.Iterable<PromptSubject>? operations,
+  }) {
+    final result = PendingPrompt._();
+    if (prompt != null) result.prompt = prompt;
+    if (operations != null) result.operations.addAll(operations);
+    return result;
+  }
+
+  PendingPrompt._();
+
+  factory PendingPrompt.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      PendingPrompt()..mergeFromBuffer(data, registry);
+  factory PendingPrompt.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      PendingPrompt()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'PendingPrompt',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'yagura.v1'),
+      createEmptyInstance: PendingPrompt.$_createMessage)
+    ..aOM<Prompt>(1, _omitFieldNames ? '' : 'prompt',
+        subBuilder: Prompt.$_createMessage)
+    ..pPM<PromptSubject>(2, _omitFieldNames ? '' : 'operations',
+        subBuilder: PromptSubject.$_createMessage)
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  PendingPrompt clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  PendingPrompt copyWith(void Function(PendingPrompt) updates) =>
+      super.copyWith((message) => updates(message as PendingPrompt))
+          as PendingPrompt;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated('Use PendingPrompt() / PendingPrompt.new instead')
+  static PendingPrompt create() => PendingPrompt._();
+  static $pb.GeneratedMessage $_createMessage() => PendingPrompt._();
+  @$core.override
+  PendingPrompt createEmptyInstance() => PendingPrompt._();
+  @$core.pragma('dart2js:noInline')
+  static PendingPrompt getDefault() =>
+      _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<PendingPrompt>(
+          PendingPrompt.$_createMessage);
+  static PendingPrompt? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  Prompt get prompt => $_getN(0);
+  @$pb.TagNumber(1)
+  set prompt(Prompt value) => $_setField(1, value);
+  @$pb.TagNumber(1)
+  $core.bool hasPrompt() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearPrompt() => $_clearField(1);
+  @$pb.TagNumber(1)
+  Prompt ensurePrompt() => $_ensure(0);
+
+  @$pb.TagNumber(2)
+  $pb.PbList<PromptSubject> get operations => $_getList(1);
+}
+
+class PromptSubject extends $pb.GeneratedMessage {
+  factory PromptSubject({
+    $core.String? operationId,
+    $core.String? instanceId,
+    $core.String? accountId,
+  }) {
+    final result = PromptSubject._();
+    if (operationId != null) result.operationId = operationId;
+    if (instanceId != null) result.instanceId = instanceId;
+    if (accountId != null) result.accountId = accountId;
+    return result;
+  }
+
+  PromptSubject._();
+
+  factory PromptSubject.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      PromptSubject()..mergeFromBuffer(data, registry);
+  factory PromptSubject.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      PromptSubject()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'PromptSubject',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'yagura.v1'),
+      createEmptyInstance: PromptSubject.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'operationId')
+    ..aOS(2, _omitFieldNames ? '' : 'instanceId')
+    ..aOS(3, _omitFieldNames ? '' : 'accountId')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  PromptSubject clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  PromptSubject copyWith(void Function(PromptSubject) updates) =>
+      super.copyWith((message) => updates(message as PromptSubject))
+          as PromptSubject;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated('Use PromptSubject() / PromptSubject.new instead')
+  static PromptSubject create() => PromptSubject._();
+  static $pb.GeneratedMessage $_createMessage() => PromptSubject._();
+  @$core.override
+  PromptSubject createEmptyInstance() => PromptSubject._();
+  @$core.pragma('dart2js:noInline')
+  static PromptSubject getDefault() =>
+      _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<PromptSubject>(
+          PromptSubject.$_createMessage);
+  static PromptSubject? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get operationId => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set operationId($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasOperationId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearOperationId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get instanceId => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set instanceId($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasInstanceId() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearInstanceId() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $core.String get accountId => $_getSZ(2);
+  @$pb.TagNumber(3)
+  set accountId($core.String value) => $_setString(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasAccountId() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearAccountId() => $_clearField(3);
+}
+
+class PromptsResyncRequired extends $pb.GeneratedMessage {
+  factory PromptsResyncRequired() => PromptsResyncRequired._();
+
+  PromptsResyncRequired._();
+
+  factory PromptsResyncRequired.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      PromptsResyncRequired()..mergeFromBuffer(data, registry);
+  factory PromptsResyncRequired.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      PromptsResyncRequired()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'PromptsResyncRequired',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'yagura.v1'),
+      createEmptyInstance: PromptsResyncRequired.$_createMessage)
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  PromptsResyncRequired clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  PromptsResyncRequired copyWith(
+          void Function(PromptsResyncRequired) updates) =>
+      super.copyWith((message) => updates(message as PromptsResyncRequired))
+          as PromptsResyncRequired;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated(
+      'Use PromptsResyncRequired() / PromptsResyncRequired.new instead')
+  static PromptsResyncRequired create() => PromptsResyncRequired._();
+  static $pb.GeneratedMessage $_createMessage() => PromptsResyncRequired._();
+  @$core.override
+  PromptsResyncRequired createEmptyInstance() => PromptsResyncRequired._();
+  @$core.pragma('dart2js:noInline')
+  static PromptsResyncRequired getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<PromptsResyncRequired>(
+          PromptsResyncRequired.$_createMessage);
+  static PromptsResyncRequired? _defaultInstance;
+}
+
 const $core.bool _omitFieldNames =
     $core.bool.fromEnvironment('protobuf.omit_field_names');
 const $core.bool _omitMessageNames =

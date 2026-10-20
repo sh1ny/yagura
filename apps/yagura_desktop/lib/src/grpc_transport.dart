@@ -73,6 +73,8 @@ final class GrpcTransport implements DaemonTransport {
     _system = SystemClient(_channel);
     _instances = InstancesClient(_channel);
     _operations = OperationsClient(_channel);
+    _steam = SteamClient(_channel);
+    _mods = ModsClient(_channel);
     _logs = LogsClient(_channel);
     _plugins = PluginsClient(_channel);
     _pairing = PairingClient(_channel);
@@ -83,6 +85,8 @@ final class GrpcTransport implements DaemonTransport {
   late final SystemClient _system;
   late final InstancesClient _instances;
   late final OperationsClient _operations;
+  late final SteamClient _steam;
+  late final ModsClient _mods;
   late final LogsClient _logs;
   late final PluginsClient _plugins;
   late final PairingClient _pairing;
@@ -182,6 +186,88 @@ final class GrpcTransport implements DaemonTransport {
         operationId: operationId,
         afterSequence: Int64(afterSequence),
       ),
+    ),
+  );
+
+  @override
+  Future<Operation> cancelOperation(String operationId) => _call(
+    () => _operations.cancelOperation(
+      CancelOperationRequest(operationId: operationId),
+      options: _unary,
+    ),
+  );
+
+  @override
+  Stream<PromptEvent> watchPrompts() =>
+      _stream(() => _operations.watchPrompts(WatchPromptsRequest()));
+
+  @override
+  Future<Operation> respondToPrompt(RespondToPromptRequest request) =>
+      _call(() => _operations.respondToPrompt(request, options: _unary));
+
+  @override
+  Future<List<SteamAccount>> listAccounts() async {
+    final response = await _call(
+      () => _steam.listAccounts(ListAccountsRequest(), options: _unary),
+    );
+    return response.accounts;
+  }
+
+  @override
+  Future<Operation> addAccount(AddAccountRequest request) =>
+      _call(() => _steam.addAccount(request, options: _unary));
+
+  @override
+  Future<Operation> reauthAccount(ReauthAccountRequest request) =>
+      _call(() => _steam.reauthAccount(request, options: _unary));
+
+  @override
+  Future<List<SteamAccount>> removeAccount(String accountId) async {
+    final response = await _call(
+      () => _steam.removeAccount(
+        RemoveAccountRequest(accountId: accountId),
+        options: _unary,
+      ),
+    );
+    return response.accounts;
+  }
+
+  @override
+  Future<ListModsResponse> listMods(String instanceId) => _call(
+    () => _mods.listMods(
+      ListModsRequest(instanceId: instanceId),
+      options: _unary,
+    ),
+  );
+
+  @override
+  Future<ListModsResponse> setMods(SetModsRequest request) =>
+      _call(() => _mods.setMods(request, options: _unary));
+
+  @override
+  Future<Operation> applyMods(String instanceId) => _call(
+    () => _mods.applyMods(
+      ApplyModsRequest(instanceId: instanceId),
+      options: _unary,
+    ),
+  );
+
+  @override
+  Future<Operation> checkModUpdates(String instanceId) => _call(
+    () => _mods.checkModUpdates(
+      CheckModUpdatesRequest(instanceId: instanceId),
+      options: _unary,
+    ),
+  );
+
+  @override
+  Future<Operation> updateMods(
+    String instanceId, {
+    List<String> itemIds = const [],
+  }) => _call(
+    () => _mods.updateMods(
+      UpdateModsRequest(instanceId: instanceId, itemIds: itemIds),
+      options: _unary,
     ),
   );
 

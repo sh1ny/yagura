@@ -275,7 +275,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 ## 9. [M3] Desktop: prompts, accounts, mods and notices
 
-- [ ] 9.1 Extend `DaemonTransport` (`lib/src/transport.dart`) and `test/support/fake_daemon.dart` with the Steam and Mods methods, `WatchPrompts` and `RespondToPrompt`. Write the failing widget tests for this group's rows. Verify: they fail because the views are missing.
+- [x] 9.1 Extend `DaemonTransport` (`lib/src/transport.dart`) and `test/support/fake_daemon.dart` with the Steam and Mods methods, `WatchPrompts` and `RespondToPrompt`. Write the failing widget tests for this group's rows. Verify: they fail because the views are missing.
 - [ ] 9.2 Implement the desktop side:
   - handle `prompt`, `promptResolved` and `eventsDropped` in `connection.dart:564-643` instead of dropping them, and open `WatchPrompts` per connected daemon;
   - the prompt dialog for the code kinds and mobile approval, answered elsewhere, and code rejected;

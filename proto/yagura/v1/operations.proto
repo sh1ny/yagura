@@ -12,6 +12,11 @@ service Operations {
   rpc CancelOperation(CancelOperationRequest) returns (Operation);
   // Answers a prompt raised by the operation (Steam Guard code...).
   rpc RespondToPrompt(RespondToPromptRequest) returns (Operation);
+  // Snapshot of every pending prompt on the daemon (including those of account
+  // operations that belong to no instance), then each prompt raised or
+  // resolved. Sends resync_required and a new snapshot when the subscriber
+  // fell more than 256 events behind.
+  rpc WatchPrompts(WatchPromptsRequest) returns (stream PromptEvent);
 }
 
 enum OperationStatus {
@@ -121,3 +126,33 @@ message RespondToPromptRequest {
   string prompt_id = 2;
   string value = 3;                   // code; empty for mobile approval
 }
+
+message WatchPromptsRequest {}
+
+message PromptEvent {
+  oneof event {
+    PromptSnapshot snapshot = 1;
+    PendingPrompt raised = 2;
+    PromptResolved resolved = 3;
+    PromptsResyncRequired resync_required = 4;  // a new snapshot follows
+  }
+}
+
+message PromptSnapshot {
+  repeated PendingPrompt prompts = 1;
+}
+
+// A prompt and the operations waiting on it. A prompt raised by a mod download
+// run that several operations wait on lists all of them.
+message PendingPrompt {
+  Prompt prompt = 1;
+  repeated PromptSubject operations = 2;
+}
+
+message PromptSubject {
+  string operation_id = 1;
+  string instance_id = 2;             // empty for account operations
+  string account_id = 3;              // empty for instance operations
+}
+
+message PromptsResyncRequired {}
