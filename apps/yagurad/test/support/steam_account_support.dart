@@ -60,6 +60,10 @@ class AccountRig {
     bool ready = true,
     SecretProtector? secretProtector,
     int maxRetainedOperationEvents = 2000,
+    // Edits the installed plugin before the daemon loads it.
+    void Function(TestEnv env)? editPlugin,
+    // Real snapshots in `<data>/snapshots` instead of the fake.
+    bool realSnapshots = false,
   }) async {
     final testEnv = env ?? TestEnv();
     if (login == 'anonymous') {
@@ -67,6 +71,7 @@ class AccountRig {
     } else {
       testEnv.installValheim(from: 'login: anonymous', to: 'login: $login');
     }
+    editPlugin?.call(testEnv);
     final steam = SteamHarness(
       testEnv,
       realOutput: realOutput,
@@ -82,6 +87,7 @@ class AccountRig {
       steamService: steam.service,
       secretProtector: secretProtector ?? FakeSecretProtector(devSid),
       maxRetainedOperationEvents: maxRetainedOperationEvents,
+      realSnapshots: realSnapshots,
     );
     final api = await ApiHarness.start(testEnv, daemon: daemon);
     return AccountRig._(testEnv, steam, daemon, api);
