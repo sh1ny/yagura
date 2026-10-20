@@ -33,7 +33,10 @@ int statusCodeFor(String reason) => switch (reason) {
   'directory_not_allowed' ||
   'csr_invalid' ||
   'prompt_answer_invalid' ||
-  'device_name_invalid' => StatusCode.invalidArgument,
+  'device_name_invalid' ||
+  'too_many_mods' ||
+  'mod_role_invalid' ||
+  'mod_invalid' => StatusCode.invalidArgument,
   'port_conflict' || 'account_exists' => StatusCode.alreadyExists,
   'queue_full' ||
   'pairing_throttled' ||

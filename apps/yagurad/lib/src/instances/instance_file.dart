@@ -41,6 +41,15 @@ class InstanceFile {
     ],
     'restart_policy': record.restartPolicy,
     'autostart': record.autostart,
+    'mods': [
+      for (final mod in record.listedMods)
+        {
+          'source': mod.source,
+          'item_id': mod.itemId,
+          'role': mod.role,
+          'staged_name': mod.stagedName,
+        },
+    ],
   };
 
   /// Writes the file into the instance directory by atomic replace. Throws

@@ -109,7 +109,7 @@ void main() {
 
     // The methods the row says are not implemented.
     final stubs = [
-      for (final name in ['Pairing', 'Mods', 'Rcon', 'Firewall'])
+      for (final name in ['Pairing', 'Rcon', 'Firewall'])
         ...index.methods['yagura.v1.$name']!.map((m) => '$name.$m'),
     ];
     expect(

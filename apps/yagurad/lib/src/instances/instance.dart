@@ -85,6 +85,7 @@ class Instance {
     this.schemaVersion,
     this.health = InstanceHealth.unspecified,
     this.firewallStatus = 'disabled',
+    this.modsUpdateAvailable = 0,
   });
 
   final String id;
@@ -137,6 +138,10 @@ class Instance {
   /// only on configuration changes, never on state, health, pid or queue
   /// changes.
   final int revision;
+
+  /// How many mods of the list have a newer version on the workshop (design
+  /// D14).
+  final int modsUpdateAvailable;
 
   Map<String, int> get portNumbers => {for (final p in ports) p.name: p.number};
 }

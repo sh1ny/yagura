@@ -77,6 +77,7 @@ pb.Instance instanceToPb(Instance instance, {bool includeSettings = true}) {
     autostart: instance.autostart,
     settingsInvalid: instance.settingsInvalid,
     firewallStatus: instance.firewallStatus,
+    modsUpdateAvailable: instance.modsUpdateAvailable,
   );
 }
 

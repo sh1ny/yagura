@@ -14,6 +14,7 @@ import 'firewall_api.dart';
 import 'gated_service.dart';
 import 'instances_api.dart';
 import 'logs_api.dart';
+import 'mods_api.dart';
 import 'operations_api.dart';
 import 'pairing_api.dart';
 import 'plugins_api.dart';
@@ -82,7 +83,7 @@ class ApiServer {
         LogsApi(daemon, log),
         PairingStub(),
         SteamApi(daemon, log),
-        ModsStub(),
+        ModsApi(daemon, log),
         RconStub(),
         FirewallStub(),
       ],
@@ -125,7 +126,7 @@ class ApiServer {
         LogsApi(daemon, log),
         PairingApi(daemon, security, log),
         SteamApi(daemon, log),
-        ModsStub(),
+        ModsApi(daemon, log),
         RconStub(),
         // The stub stays where the daemon manages no rules (a host without a
         // firewall).
