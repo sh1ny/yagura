@@ -147,11 +147,11 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | log-streaming → Secrets masked in log streams | Replaced secret still masked | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | replaced_secret_still_masked | 8 | red |
 | log-streaming → Secrets masked in log streams | Short secret inside a word | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | short_secret_inside_a_word | 8 | red |
 | log-streaming → Secrets masked in log streams | No secrets set | apps/yagurad/test/logs/secrets_masked_in_log_streams_test.dart | no_secrets_set | 8 | red |
-| plugin-hooks → Hook points | Migration hook result applied | apps/yagurad/test/hooks/hook_points_test.dart | migration_hook_result_applied | 8 | red |
-| plugin-manifest → Plugin version changes re-validate instances | Removed setting migrated | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | removed_setting_migrated | 8 | red |
-| plugin-manifest → Plugin version changes re-validate instances | Running instance after an invalidating reload | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | running_instance_after_an_invalidating_reload | 8 | red |
-| plugin-manifest → Plugin version changes re-validate instances | Migration hook fails | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | migration_hook_fails | 8 | red |
-| plugin-manifest → Plugin version changes re-validate instances | Settings no longer valid | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | settings_no_longer_valid | 8 | red |
+| plugin-hooks → Hook points | Migration hook result applied | apps/yagurad/test/hooks/hook_points_test.dart | migration_hook_result_applied | 8 | green |
+| plugin-manifest → Plugin version changes re-validate instances | Removed setting migrated | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | removed_setting_migrated | 8 | green |
+| plugin-manifest → Plugin version changes re-validate instances | Running instance after an invalidating reload | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | running_instance_after_an_invalidating_reload | 8 | green |
+| plugin-manifest → Plugin version changes re-validate instances | Migration hook fails | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | migration_hook_fails | 8 | green |
+| plugin-manifest → Plugin version changes re-validate instances | Settings no longer valid | apps/yagurad/test/plugins/plugin_version_changes_re_validate_instances_test.dart | settings_no_longer_valid | 8 | green |
 | desktop-client → Config and plugin notices | External edit shown | apps/yagura_desktop/test/config_and_plugin_notices_test.dart | external_edit_shown | 9 | red |
 | desktop-client → Config and plugin notices | Settings invalid after a reload | apps/yagura_desktop/test/config_and_plugin_notices_test.dart | settings_invalid_after_a_reload | 9 | red |
 | desktop-client → Mods view | Mods added by id | apps/yagura_desktop/test/mods_view_test.dart | mods_added_by_id | 9 | red |
@@ -270,7 +270,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 ## 8. [M3] Plugin migrations and log masking
 
 - [x] 8.1 Write the failing tests for this group's red rows. Verify: they fail for the missing migration operation and masker.
-- [ ] 8.2 Implement D10: the `migrate_settings` operation at the queue head, outside the 10-operation bound and retargeted by a repeat reload; the `pluginVersion` write moved out of `reconcilePlugins` (`instance_manager.dart:1312-1320`); the `migrateSettings` hook with secret placeholders; the gate (`invalid_state`, with stop and delete exempt); the recovery (a valid save records the loaded version); and startup reconciliation. Verify: the plugin-version rows and `migration_hook_result_applied` pass.
+- [x] 8.2 Implement D10: the `migrate_settings` operation at the queue head, outside the 10-operation bound and retargeted by a repeat reload; the `pluginVersion` write moved out of `reconcilePlugins` (`instance_manager.dart:1312-1320`); the `migrateSettings` hook with secret placeholders; the gate (`invalid_state`, with stop and delete exempt); the recovery (a valid save records the loaded version); and startup reconciliation. Verify: the plugin-version rows and `migration_hook_result_applied` pass.
 - [ ] 8.3 Implement D11: `SecretMasker` at log ingestion, rebuilt on secret changes; `replaced_secrets` pruned hourly after 24 h; substring matching from 6 characters, whole-word matching below that. Verify: the log-streaming rows pass, and this group's rows are flipped green.
 
 ## 9. [M3] Desktop: prompts, accounts, mods and notices

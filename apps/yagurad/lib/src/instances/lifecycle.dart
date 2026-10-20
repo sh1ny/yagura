@@ -47,12 +47,14 @@ class Lifecycle {
 
   /// Runs hook [point] of [plugin] when it has a `hooks.js`; returns its
   /// result (empty when the plugin has no script or does not export it).
+  /// [fromVersion] is the plugin version `migrateSettings` migrates from.
   Future<HookRunResult> _hook(
     OperationContext ctx,
     InstanceRecord record,
     LoadedPlugin plugin,
-    HookPoint point,
-  ) async {
+    HookPoint point, {
+    String? fromVersion,
+  }) async {
     final source = plugin.hooksSource;
     if (source == null) return const HookRunResult.skipped();
     final manifest = plugin.manifest;
@@ -74,6 +76,8 @@ class Lifecycle {
               setSecrets: _manager.setSecretsOf(record),
             ),
             ports: {for (final port in record.ports) port.name: port.number},
+            fromVersion: fromVersion,
+            toVersion: fromVersion == null ? null : manifest.version,
           ),
           root: InstanceFs(record.directory),
           deadline: Duration(seconds: manifest.hooksTimeoutSeconds),
@@ -155,9 +159,9 @@ class Lifecycle {
       gameWrites: binding.gameWrites,
       template: template == null
           ? null
-          : () => ConfinedFs(
-              plugin.directory,
-            ).readBytes(template, maxBytes: ConfigBinder.maxFileBytes),
+          : () =>
+                ConfinedFs(plugin.directory)
+                    .readBytes(template, maxBytes: ConfigBinder.maxFileBytes),
       // A secret is read from the secret store here, when the pass applies it,
       // and nowhere earlier.
       value: () {
@@ -203,6 +207,81 @@ class Lifecycle {
       );
     }
     return utf8.decode(bytes);
+  }
+
+  // ---- settings migration --------------------------------------------------
+
+  /// Moves the settings of [id] to the plugin version a reload loaded (design
+  /// D10): `migrateSettings` when the plugin exports it, then validation
+  /// against the new schema; a valid result is committed with the new version,
+  /// an invalid one or a failing hook leaves the instance `settings_invalid`.
+  Future<void> migrateSettings(OperationContext ctx, String id) async {
+    final record = _manager.recordForOperation(id);
+    final plugin = _manager.takeMigrationTarget(record);
+    final manifest = plugin.manifest;
+    final from = record.pluginVersion;
+    if (from == manifest.version) return;
+    final Map<String, Object?> migrated;
+    try {
+      migrated = await ctx.step('hook:migrateSettings', () async {
+        final hook = await _hook(
+          ctx,
+          record,
+          plugin,
+          HookPoint.migrateSettings,
+          fromVersion: from,
+        );
+        final settings = hook.result.settings ?? record.settings;
+        if (hook.ran) _checkSecretPlaceholders(record, manifest, settings);
+        final validation = validateSettings(manifest, settings);
+        if (!validation.isValid) {
+          throw _manager.settingsInvalidError(validation.errors);
+        }
+        return validation.values;
+      });
+    } on OperationCancelled {
+      _manager.migrationFailed(
+        record,
+        'the settings migration to ${manifest.version} was cancelled',
+      );
+      rethrow;
+    } on YaguraException catch (e) {
+      _manager.migrationFailed(record, e.message);
+      rethrow;
+    }
+    _manager.completeMigration(record, migrated, manifest.version);
+  }
+
+  /// A migration hook gets each secret setting as a placeholder and has to
+  /// hand it back unchanged: a secret value never passes through settings.
+  void _checkSecretPlaceholders(
+    InstanceRecord record,
+    PluginManifest manifest,
+    Map<String, Object?> settings,
+  ) {
+    final given = withSecretPlaceholders(manifest.settings, const {}, const {
+      'secret': true,
+      'set': false,
+    }, setSecrets: _manager.setSecretsOf(record));
+    for (final MapEntry(key: name, value: def) in manifest.settings.entries) {
+      if (def.type != SettingType.secret || !settings.containsKey(name)) {
+        continue;
+      }
+      final returned = settings[name];
+      final expected = given[name]! as Map<String, Object?>;
+      if (returned is Map &&
+          returned.length == 2 &&
+          returned['secret'] == true &&
+          returned['set'] == expected['set']) {
+        continue;
+      }
+      throw YaguraException(
+        'hook_result_invalid',
+        'hook migrateSettings returned an invalid result at settings.$name: a '
+            'secret setting must come back as the placeholder it was given',
+        details: {'hook': 'migrateSettings', 'path': 'settings.$name'},
+      );
+    }
   }
 
   // ---- install and update --------------------------------------------------
@@ -477,7 +556,9 @@ class Lifecycle {
                   ),
             ],
             secrets: {
-              for (final setting in {for (final a in rendered) ?a.secretSetting})
+              for (final setting in {
+                for (final a in rendered) ?a.secretSetting,
+              })
                 setting: _secretValue(record, setting),
             },
             env: env,

@@ -54,6 +54,7 @@ exports.onPreStart = function (ctx) {
 | `onPostUpdate` | after the daemon updated the game files | `files` |
 | `onPreStart` | before the server process starts | `args`, `env`, `files` |
 | `onPostStop` | after the server process stopped | `files` |
+| `migrateSettings` | after a plugin reload changed the plugin's version, once per instance of the plugin | `settings` |
 
 ## Context
 
@@ -66,6 +67,7 @@ Every hook receives the same JSON object:
 | `paths` | named paths, relative to the instance root, without `..` |
 | `settings` | the instance's settings by key; a `secret` setting appears only as `{"secret": true, "set": <bool>}`, never its value |
 | `ports` | port numbers by name |
+| `fromVersion`, `toVersion` | `migrateSettings` only: the plugin version the instance's settings were saved under, and the loaded one (`pluginVersion` is the loaded one too) |
 
 The serialised context is limited to 1 MiB.
 
@@ -78,12 +80,21 @@ The result is validated against the hook's schema; **unknown keys are rejected**
 | `args` | array of strings | `onPreStart` only. Appended after the manifest's launch arguments. |
 | `env` | object of strings | `onPreStart` only. Added to the server's environment. |
 | `files` | array of file edits | Edits the daemon applies, see below. |
+| `settings` | object | `migrateSettings` only, and its only key. The instance's complete settings for the new schema; omitted or empty result keeps them as they are. |
 
 A **file edit** is `{"path": string, "format": "json" | "ini" | "dayz-cfg" | "kv", "patch": object}`. The path is relative to the instance root. The patch is an [RFC 7386](https://www.rfc-editor.org/rfc/rfc7386) merge patch: objects merge recursively, `null` removes a key, anything else (arrays included) replaces the value. The daemon keeps the file's key order and formatting, appends new keys in the layout of their neighbours, and creates the file (and its directories) when it does not exist.
 
 For `ini`, `dayz-cfg` and `kv` the patch is a flat object from key path to new value, and a `null` value removes the key: `{"maxPlayers": 40}`, or `{"Section.key": "x"}` for `ini` and `{"class.key": 1}` for `dayz-cfg`. The daemon changes only those keys: comments, blank lines, key order, unknown keys, line endings and the byte order mark of the file stay as they are.
 
 The config binder applies the edits, in one pass with the plugin's `bindings` (see the manifest reference): the bindings first, then the edits in order. It applies all edits of one result or none: it resolves every path and computes every new content first, writes only the files whose bytes change to a temporary file in its directory and moves it over the target with an atomic rename, and restores the files already replaced if a later step fails. An edit whose path is not relative to the instance root, or that passes through a symbolic link or junction (even one that points inside the instance), fails with `sandbox_violation`. A file held open by a running process is retried every 250 ms for 5 s, then the pass fails with `file_locked` and everything is rolled back. The formats are `json`, `ini`, `dayz-cfg` and `kv`; any other fails with `unsupported_in_this_version` naming the path and format, and no file changes. A file that does not parse in its format fails with `config_parse_error`.
+
+### `migrateSettings`
+
+The daemon calls it from a `migrate_settings` operation that a reload queues at the head of each affected instance's queue, so no queued operation runs on the new manifest with unmigrated settings. The context carries the stored settings (secrets as placeholders), and the result's `settings` replace them if they validate against the new schema. The instance then records the new plugin version in the same transaction, which increments its revision and rewrites `instance.json`. Without the hook the stored settings are validated as they are.
+
+A secret setting must come back as the placeholder it was given: a secret value never passes through a hook, and the daemon keeps the stored value. A result that changes a placeholder fails with `hook_result_invalid`.
+
+When the hook throws or the settings do not validate, the stored settings and the recorded version stay as they were and the other instances are still migrated. A stopped instance becomes `error` with `settings_invalid`; a running one keeps running with the `settings_invalid` flag. The notice names the fields or the hook error. Until a valid settings save records the loaded version, every operation of the instance but Stop and delete fails `invalid_state`.
 
 ## Host API
 
@@ -248,5 +259,26 @@ exports.onPostStop = function (ctx) {
       "patch": { "GeneralData": { "restartPending": null } }
     }
   ]
+}
+```
+
+### `migrateSettings`
+
+Move a renamed setting to its new key (`ctx.fromVersion` and `ctx.toVersion` name the versions; secrets are placeholders and stay as they are).
+
+```js hook=migrateSettings
+exports.migrateSettings = function (ctx) {
+  const settings = Object.assign({}, ctx.settings);
+  settings.maxPlayers = Math.min(settings.maxPlayers, 40);
+  return { settings: settings };
+};
+```
+
+```json result
+{
+  "settings": {
+    "maxPlayers": 40,
+    "rconPassword": { "secret": true, "set": false }
+  }
 }
 ```

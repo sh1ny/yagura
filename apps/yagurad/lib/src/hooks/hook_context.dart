@@ -6,7 +6,8 @@ import '../errors.dart';
 ///
 /// Contains the instance and plugin identity, the OS, paths relative to the
 /// instance root, settings (secrets replaced by `{"secret": true, "set":
-/// bool}`) and ports. The same shape is passed to every hook point.
+/// bool}`) and ports. The same shape is passed to every hook point;
+/// `migrateSettings` adds the versions it migrates between.
 class HookContext {
   HookContext({
     required this.instanceId,
@@ -16,6 +17,8 @@ class HookContext {
     this.paths = const {},
     this.settings = const {},
     this.ports = const {},
+    this.fromVersion,
+    this.toVersion,
   }) {
     if (os != 'windows' && os != 'linux') {
       throw ArgumentError.value(os, 'os', 'expected "windows" or "linux"');
@@ -62,6 +65,11 @@ class HookContext {
   /// Port numbers by name.
   final Map<String, int> ports;
 
+  /// The plugin versions a `migrateSettings` call moves the settings between;
+  /// absent from every other hook's context.
+  final String? fromVersion;
+  final String? toVersion;
+
   /// Largest serialised context a hook receives.
   static const maxBytes = 1024 * 1024;
 
@@ -73,6 +81,8 @@ class HookContext {
     'paths': paths,
     'settings': settings,
     'ports': ports,
+    'fromVersion': ?fromVersion,
+    'toVersion': ?toVersion,
   };
 
   /// Throws `internal_error` when the context exceeds [maxBytes].

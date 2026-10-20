@@ -126,7 +126,8 @@ class OperationRunner {
   /// Queues an operation on [instanceId] and returns its view. A stop first
   /// cancels the queued Start and Restart operations of the instance and the
   /// running Start, and runs next; it does not cancel queued Install or
-  /// Update. Throws `queue_full` at the bound.
+  /// Update. A settings migration goes to the head of the queue, outside the
+  /// bound (design D10). Throws `queue_full` at the bound.
   Operation enqueue({
     required String instanceId,
     required OperationKind kind,
@@ -137,7 +138,7 @@ class OperationRunner {
     }
     if (kind == OperationKind.stop) _cancelForStop(instanceId);
     final queue = _queues.putIfAbsent(instanceId, Queue.new);
-    if (queue.length >= maxQueued) {
+    if (queue.length >= maxQueued && kind != OperationKind.migrateSettings) {
       throw YaguraException(
         'queue_full',
         'instance $instanceId already has $maxQueued queued operations',
@@ -152,7 +153,7 @@ class OperationRunner {
       createdAt: _clock(),
     );
     _ops[op.id] = op;
-    if (kind == OperationKind.stop) {
+    if (kind == OperationKind.stop || kind == OperationKind.migrateSettings) {
       queue.addFirst(op);
     } else {
       queue.addLast(op);

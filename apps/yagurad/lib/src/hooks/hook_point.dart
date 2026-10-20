@@ -13,7 +13,11 @@ enum HookPoint {
   onPreStart(allowsLaunchChanges: true),
 
   /// After the server process stopped.
-  onPostStop(allowsLaunchChanges: false);
+  onPostStop(allowsLaunchChanges: false),
+
+  /// When a reloaded plugin version replaced the one an instance's settings
+  /// were saved under; returns the settings for the new schema (design D10).
+  migrateSettings(allowsLaunchChanges: false);
 
   const HookPoint({required this.allowsLaunchChanges});
 
@@ -24,9 +28,12 @@ enum HookPoint {
   String get exportName => name;
 
   /// Result keys this hook accepts; any other key is rejected.
-  Set<String> get resultKeys => {
-    'files',
-    if (allowsLaunchChanges) ...['args', 'env'],
+  Set<String> get resultKeys => switch (this) {
+    migrateSettings => {'settings'},
+    _ => {
+      'files',
+      if (allowsLaunchChanges) ...['args', 'env'],
+    },
   };
 
   /// Validates [json] (the decoded return value of the hook) against this
@@ -70,6 +77,15 @@ enum HookPoint {
       };
     }
 
+    Map<String, Object?>? settings;
+    if (json['settings'] case final Object? value
+        when json.containsKey('settings')) {
+      if (value is! Map) invalid('settings', 'expected an object');
+      settings = {
+        for (final entry in value.entries) entry.key as String: entry.value,
+      };
+    }
+
     final files = <FileEdit>[];
     if (json['files'] case final Object? value when json.containsKey('files')) {
       if (value is! List) invalid('files', 'expected an array of file edits');
@@ -95,13 +111,13 @@ enum HookPoint {
         files.add(FileEdit(path: path, format: format, patch: patch));
       }
     }
-    return HookResult(args: args, env: env, files: files);
+    return HookResult(args: args, env: env, files: files, settings: settings);
   }
 }
 
 /// A validated hook result.
 class HookResult {
-  const HookResult({this.args, this.env, this.files = const []});
+  const HookResult({this.args, this.env, this.files = const [], this.settings});
 
   /// Extra launch arguments (`onPreStart`), appended after the manifest's.
   final List<String>? args;
@@ -112,10 +128,15 @@ class HookResult {
   /// File edits the daemon applies after validation.
   final List<FileEdit> files;
 
+  /// The instance's settings for the new schema (`migrateSettings`); null
+  /// keeps them as they are.
+  final Map<String, Object?>? settings;
+
   /// The result in its JSON form; absent keys stay absent.
   Map<String, Object?> toJson() => {
     'args': ?args,
     'env': ?env,
+    'settings': ?settings,
     if (files.isNotEmpty)
       'files': [
         for (final edit in files)

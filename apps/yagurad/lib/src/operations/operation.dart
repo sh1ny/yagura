@@ -31,18 +31,24 @@ enum OperationKind {
   stop(heavy: false),
   restart(heavy: false),
   delete(heavy: false),
-  restore(heavy: false);
+  restore(heavy: false),
 
-  const OperationKind({required this.heavy});
+  /// Brings an instance's settings to a reloaded plugin version (design D10).
+  migrateSettings(heavy: false, wire: 'migrate_settings');
+
+  const OperationKind({required this.heavy, this.wire});
+
+  /// The wire name when it differs from the Dart name.
+  final String? wire;
 
   /// Heavy operations take a host heavy slot around their SteamCMD work
   /// (design D3).
   final bool heavy;
 
-  String get wireName => name;
+  String get wireName => wire ?? name;
 
   static OperationKind fromWire(String name) =>
-      values.firstWhere((k) => k.name == name);
+      values.firstWhere((k) => k.wireName == name);
 }
 
 /// An immutable view of an operation.
