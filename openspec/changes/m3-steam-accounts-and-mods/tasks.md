@@ -188,7 +188,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 ## 3. [M3] Config binder and hook edits
 
-- [ ] 3.1 Write the failing tests for this group's red rows. Verify: they fail for the missing binder, not for setup errors.
+- [x] 3.1 Write the failing tests for this group's red rows. Verify: they fail for the missing binder, not for setup errors.
 - [ ] 3.2 Accept the manifest's `bindings` section in `packages/yagura_plugin` (`loader.dart:404-426`, schema `manifest_schema.g.dart`): file path templates over `settings`, `ports`, `paths` and `os` that stay inside the instance root; `format`; `create` and `template`; `game_writes`; at most 64 distinct files; `ue-ini`, `xml` and `vdf` rejected with `unsupported_in_this_version`. Verify: the manifest tests for these refusals pass, and the manifest docs are regenerated.
 - [ ] 3.3 Implement `ConfigBinder` to replace `FileEditWriter` (D9):
   - one pass per operation, applied in its order;

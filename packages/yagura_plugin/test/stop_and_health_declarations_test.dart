@@ -48,7 +48,7 @@ void main() {
       expect(result.reasons.single.path, 'health.type');
     });
 
-    for (final section in ['bindings', 'mods', 'rcon']) {
+    for (final section in ['mods', 'rcon']) {
       test('the $section section is unsupported in this version', () {
         final result = loadPlugin(
           writePlugin('${valheimManifest()}\n$section:\n  anything: 1\n'),

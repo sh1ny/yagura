@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
+import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
 import 'package:yagurad/src/instances/instance.dart';
@@ -12,14 +14,9 @@ import 'hook_test_support.dart';
 
 void main() {
   test('file_edit_returned_and_applied_by_the_daemon', () async {
-    final instance = makeInstance();
-    const original =
-        '{\n  "Before": 1,\n  "GeneralData": {\n    "disableBaseDamage": false,\n'
-        '    "disablePersonalLight": true\n  },\n  "After": [1, 2]\n}\n';
-    final file = writeInstanceFile(instance, 'cfggameplay.json', original);
-
-    final result = await HookHost().run(
-      invocationFor(instance, '''
+    final env = TestEnv();
+    env.installValheim(
+      hooks: '''
 exports.onPreStart = function () {
   return {files: [{
     path: 'cfggameplay.json',
@@ -27,18 +24,56 @@ exports.onPreStart = function () {
     patch: {GeneralData: {disableBaseDamage: true}}
   }]};
 };
-'''),
+''',
     );
+    final daemon = await env.start();
+    final instance = await createInstalled(daemon);
+    const original =
+        '{\n  "Before": 1,\n  "GeneralData": {\n    "disableBaseDamage": false,\n'
+        '    "disablePersonalLight": true\n  },\n  "After": [1, 2]\n}\n';
+    final file = File(p.join(instance.directory, 'cfggameplay.json'))
+      ..writeAsStringSync(original);
 
-    expect(result.ran, isTrue);
+    final first = await runStart(daemon, instance.id);
+
+    expect(first.status, OperationStatus.succeeded, reason: first.resultMessage);
     final content = file.readAsStringSync();
     expect(content, original.replaceFirst('false', 'true'));
     final json = jsonDecode(content) as Map<String, Object?>;
     expect((json['GeneralData']! as Map)['disableBaseDamage'], true);
     expect(json.keys, ['Before', 'GeneralData', 'After']);
-    expect(Directory(instance.path).listSync().map((e) => p.basename(e.path)), [
-      'cfggameplay.json',
-    ], reason: 'no temporary file is left behind');
+    expect(
+      Directory(instance.directory)
+          .listSync()
+          .map((e) => p.basename(e.path))
+          .where((name) => name.endsWith('.tmp')),
+      isEmpty,
+      reason: 'no temporary file is left behind',
+    );
+    // The daemon recorded the hash of what it wrote ...
+    final hash = sha256.convert(file.readAsBytesSync()).toString();
+    final db = sqlite3.open(
+      p.join(env.data, 'yagura.db'),
+      mode: OpenMode.readOnly,
+    );
+    final recorded = [
+      for (final row in db.select(
+        'SELECT path, hash FROM bound_files WHERE instance_id = ?',
+        [instance.id],
+      ))
+        (row['path']! as String, row['hash']! as String),
+    ];
+    db.close();
+    expect(recorded, [('cfggameplay.json', hash)]);
+    // ... so the next start finds nothing changed behind its back.
+    await runStop(daemon, instance.id);
+    final second = await runStart(daemon, instance.id);
+    expect(second.status, OperationStatus.succeeded);
+    expect(
+      second.warnings.where((w) => w.startsWith('external_edit')),
+      isEmpty,
+    );
+    expect(file.readAsStringSync(), content);
   });
 
   test('write_attempted_from_a_hook', () async {
@@ -97,19 +132,19 @@ exports.onPreStart = function () {
     final env = TestEnv();
     env.installValheim(
       hooks:
-          'exports.onPreStart = () => ({files: [{path: "server.ini", '
-          'format: "ini", patch: {General: {a: 1}}}]});',
+          'exports.onPreStart = () => ({files: [{path: "server.xml", '
+          'format: "xml", patch: {General: {a: 1}}}]});',
     );
     final daemon = await env.start();
     final instance = await createInstalled(daemon);
-    final file = File(p.join(instance.directory, 'server.ini'))
+    final file = File(p.join(instance.directory, 'server.xml'))
       ..writeAsStringSync('[General]\na=0\n');
 
     final done = await runStart(daemon, instance.id);
 
     expect(done.status, OperationStatus.failed);
     expect(done.resultReason, 'unsupported_in_this_version');
-    expect(done.resultMessage, allOf(contains('server.ini'), contains('ini')));
+    expect(done.resultMessage, allOf(contains('server.xml'), contains('xml')));
     expect(file.readAsStringSync(), '[General]\na=0\n');
     expect(env.process.launches, isEmpty);
     expect(daemon.instances.get(instance.id).state, InstanceState.stopped);
