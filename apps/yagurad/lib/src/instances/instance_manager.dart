@@ -48,6 +48,7 @@ class InstanceManager {
     required this.os,
     required this.processHost,
     required this.steam,
+    required this.accounts,
     required this.hooks,
     required this.snapshotter,
     required this.runs,
@@ -93,6 +94,9 @@ class InstanceManager {
   final String os;
   final ProcessHost processHost;
   final SteamService steam;
+
+  /// The Steam accounts instances may use.
+  final SteamAccounts accounts;
   final HookHost hooks;
   final Snapshotter snapshotter;
 
@@ -1227,6 +1231,9 @@ class InstanceManager {
             state == InstanceState.error;
         if (!ok) refuse('invalid_state', 'Delete needs it stopped');
       case OperationKind.migrateSettings:
+        break;
+      case OperationKind.addSteamAccount || OperationKind.reauthSteamAccount:
+        // Account operations belong to no instance.
         break;
     }
   }

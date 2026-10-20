@@ -22,6 +22,7 @@ int statusCodeFor(String reason) => switch (reason) {
   'device_not_found' ||
   'operation_not_found' ||
   'operation_expired' ||
+  'account_not_found' ||
   'snapshot_not_found' ||
   'plugin_missing' => StatusCode.notFound,
   'settings_invalid' ||
@@ -31,12 +32,14 @@ int statusCodeFor(String reason) => switch (reason) {
   'confirmation_mismatch' ||
   'directory_not_allowed' ||
   'csr_invalid' ||
+  'prompt_answer_invalid' ||
   'device_name_invalid' => StatusCode.invalidArgument,
-  'port_conflict' => StatusCode.alreadyExists,
+  'port_conflict' || 'account_exists' => StatusCode.alreadyExists,
   'queue_full' ||
   'pairing_throttled' ||
   'too_many_devices' ||
   'too_many_subscribers' ||
+  'too_many_accounts' ||
   'message_too_large' => StatusCode.resourceExhausted,
   _ => StatusCode.failedPrecondition,
 };

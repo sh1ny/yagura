@@ -199,6 +199,7 @@ class Daemon {
     required this.plugins,
     required this.instances,
     required this.operations,
+    required this.steamAccounts,
     required this.logs,
     required this.startupNotices,
     required this.hooks,
@@ -230,6 +231,9 @@ class Daemon {
   final PluginRegistry plugins;
   final InstanceManager instances;
   final OperationRunner operations;
+
+  /// The Steam accounts (design D1).
+  final SteamAccounts steamAccounts;
   final LogHub logs;
   final List<StartupNotice> startupNotices;
 
@@ -390,6 +394,14 @@ class Daemon {
       clock: config.clock,
       maxRetainedEvents: config.maxRetainedOperationEvents,
     );
+    final steamAccounts = SteamAccounts(
+      database: database,
+      secrets: secrets,
+      runner: runner,
+      steam: config.steam,
+      clock: config.clock,
+      log: (message) => stderr.writeln('yagurad: $message'),
+    );
     final registry = PluginRegistry(
       pluginsDirectory: dataDirectory.pluginsPath,
       hooks: hooks,
@@ -418,6 +430,7 @@ class Daemon {
             config.processHost ??
             defaultProcessHost(helperExecutable: config.helperExecutable),
         steam: config.steam,
+        accounts: steamAccounts,
         hooks: hooks,
         snapshotter:
             config.snapshotter ??
@@ -481,6 +494,9 @@ class Daemon {
       return [for (final e in logs.backlog(id, lines: lines).entries) e.text];
     };
     await degraded('recovery', manager.recover);
+    // After the runner marked the unfinished operations interrupted: an
+    // account still being added is gone with its password and installation.
+    await degraded('steam_accounts', steamAccounts.recoverAdding);
     // After the recovery has ended the runs whose relay is gone: what is
     // left names the versions still in use.
     if (config.versionSweeper case final sweeper?) {
@@ -626,6 +642,7 @@ class Daemon {
       plugins: registry,
       instances: manager,
       operations: runner,
+      steamAccounts: steamAccounts,
       logs: logs,
       startupNotices: List.unmodifiable(notices),
       hooks: hooks,

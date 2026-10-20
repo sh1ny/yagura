@@ -1,3 +1,7 @@
+export 'operation_reporter.dart';
+export 'scrubber.dart';
+export 'steam_accounts.dart';
+export 'steam_log_follower.dart';
 export 'steam_patterns.dart';
 export 'steam_process.dart';
 export 'steam_service.dart';

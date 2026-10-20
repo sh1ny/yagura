@@ -8,8 +8,11 @@ import '../errors.dart';
 import '../files/files.dart';
 import '../host/database.dart';
 import '../operations/cancel_token.dart';
+import '../operations/prompt_broker.dart';
 import '../operations/semaphore.dart';
 import '../platform/disk_space.dart';
+import 'scrubber.dart';
+import 'steam_log_follower.dart';
 import 'steam_patterns.dart';
 import 'steam_process.dart';
 import 'steam_service.dart';
@@ -52,6 +55,10 @@ class SteamCmdService implements SteamService {
     this.totalTimeout = const Duration(hours: 12),
     this.sweepRetry = const Duration(seconds: 60),
     this.pollInterval = const Duration(seconds: 1),
+    this.codeWait = const Duration(minutes: 15),
+    this.mobileWait = const Duration(minutes: 2),
+    this.loginSilence = const Duration(seconds: 60),
+    this.loginCap = const Duration(minutes: 10),
     void Function(String message)? log,
   }) : _bootstrap = bootstrap ?? SteamCmdBootstrap(),
        _command = command ?? _platformCommand,
@@ -81,6 +88,19 @@ class SteamCmdService implements SteamService {
 
   /// How often a running step is checked against the two caps.
   final Duration pollInterval;
+
+  /// How long a login waits for an email or authenticator code (design D2).
+  final Duration codeWait;
+
+  /// How long a login waits for a mobile approval (design D2).
+  final Duration mobileWait;
+
+  /// A login run that neither exits, raises a prompt nor writes to
+  /// `console_log.txt` for this long is killed (design D2).
+  final Duration loginSilence;
+
+  /// One login run may take this long in total.
+  final Duration loginCap;
 
   final SteamCmdBootstrap _bootstrap;
   final SteamCmdCommand Function(String installationDirectory) _command;
@@ -141,15 +161,22 @@ class SteamCmdService implements SteamService {
     SteamRunReporter reporter,
     CancelToken cancel,
   ) async {
-    if (request.accountRequired || request.account != null) {
+    final account = request.account;
+    if (account == null && request.accountRequired) {
       throw YaguraException(
         'steam_account_required',
-        'this plugin needs a Steam account, and this version of the daemon '
-            'has no Steam accounts',
+        'this plugin needs a Steam account: link one to the instance',
         details: {'appId': request.appId},
       );
     }
-    const installation = anonymousInstallation;
+    if (account != null && (request.username ?? '').isEmpty) {
+      throw YaguraException(
+        'steam_account_required',
+        'the Steam account $account has no username',
+        details: {'appId': request.appId},
+      );
+    }
+    final installation = account ?? anonymousInstallation;
     _requireAvailable(installation);
 
     final release = await _lockFor(installation).acquire(
@@ -168,6 +195,232 @@ class SteamCmdService implements SteamService {
       release();
     }
   }
+
+  // ---- accounts --------------------------------------------------------------
+
+  @override
+  Future<void> login(
+    SteamLoginRequest request,
+    SteamRunReporter reporter,
+    CancelToken cancel,
+  ) async {
+    final installation = request.account;
+    _requireAvailable(installation);
+    final release = await _lockFor(installation).acquire(
+      cancel: cancel,
+      onPosition: (_) => reporter.step('waiting_for_steamcmd'),
+    );
+    try {
+      _requireAvailable(installation);
+      cancel.throwIfCancelled();
+      await _ensureBootstrapped(installation, reporter, cancel);
+      await _loginStep(
+        installation,
+        request.username,
+        request.password,
+        reporter,
+        cancel,
+      );
+    } finally {
+      release();
+    }
+  }
+
+  @override
+  Future<void> removeInstallation(String account) async {
+    // A run in the installation ends first.
+    final release = await _lockFor(account).acquire();
+    try {
+      _remembered.markNotReady(account);
+      _fs.deleteTree(account);
+    } finally {
+      release();
+    }
+    _locks.remove(account);
+    _unavailable.remove(account);
+  }
+
+  /// The login step (design D2): `+login <user> <password>`, and when Steam
+  /// asks for a code, one more run with it. A mobile approval is followed
+  /// inside the run (see [_loginRun]).
+  Future<void> _loginStep(
+    String installation,
+    String username,
+    String password,
+    SteamRunReporter reporter,
+    CancelToken cancel,
+  ) async {
+    reporter.step('steam_login');
+    final scrubber = Scrubber([password]);
+    final first = await _loginRun(
+      installation,
+      username,
+      password,
+      null,
+      scrubber,
+      reporter,
+      cancel,
+    );
+    if (first.kind == LoginKind.ok) return;
+    final code = await _askForCode(first.kind, username, reporter, cancel);
+    scrubber.add(code);
+    final second = await _loginRun(
+      installation,
+      username,
+      password,
+      code,
+      scrubber,
+      reporter,
+      cancel,
+    );
+    if (second.kind != LoginKind.ok) {
+      throw _guardInvalid();
+    }
+  }
+
+  YaguraException _guardInvalid() => YaguraException(
+    'steam_guard_invalid',
+    'Steam did not accept the Steam Guard code',
+  );
+
+  /// Asks for the code Steam sent by email or the authenticator shows, and
+  /// waits [codeWait] for it.
+  Future<String> _askForCode(
+    LoginKind kind,
+    String username,
+    SteamRunReporter reporter,
+    CancelToken cancel,
+  ) async {
+    final byEmail = kind == LoginKind.guardEmail;
+    final ticket = reporter.prompt(
+      PromptSpec(
+        kind: byEmail ? 'email' : 'authenticator',
+        message: byEmail
+            ? 'Steam sent a Steam Guard code to the email address of $username. '
+                  'Enter it to finish logging in.'
+            : 'Enter the code your Steam Guard authenticator shows for '
+                  '$username.',
+        steamAccount: username,
+        wait: codeWait,
+      ),
+    );
+    final result = await Future.any([
+      ticket.result,
+      cancel.whenCancelled.then(
+        (_) => const PromptResult(PromptOutcome.cancelled),
+      ),
+    ]);
+    switch (result.outcome) {
+      case PromptOutcome.answered:
+        return result.value;
+      case PromptOutcome.expired:
+        throw YaguraException(
+          'steam_guard_timeout',
+          'no Steam Guard code was entered within ${_describe(codeWait)}',
+        );
+      case PromptOutcome.cancelled:
+        ticket.close(PromptOutcome.cancelled);
+        throw const OperationCancelled();
+    }
+  }
+
+  /// One `+login` run and what it came to: `ok`, or Steam asking for a code
+  /// (`guardEmail`, `guardAuthenticator`). Anything else throws the reason
+  /// the output names, or `steam_unknown_error` with the output.
+  Future<LoginOutcome> _loginRun(
+    String installation,
+    String username,
+    String password,
+    String? code,
+    Scrubber scrubber,
+    SteamRunReporter reporter,
+    CancelToken cancel,
+  ) async {
+    PromptTicket? mobile;
+    _Outcome outcome;
+    try {
+      outcome = await _execute(
+        installation: installation,
+        arguments: ['+login', username, password, ?code, '+quit'],
+        anyOutputIsProgress: true,
+        reporter: reporter,
+        cancel: cancel,
+        scrubber: scrubber,
+        silenceLimit: loginSilence,
+        totalLimit: loginCap,
+        onGuardMobile: (cutShort) {
+          // The run is waiting for the phone: the administrator is told, and
+          // the run is ended when nobody confirms in time.
+          final ticket = reporter.prompt(
+            PromptSpec(
+              kind: 'mobile_approval',
+              message:
+                  'Confirm the login of $username in the Steam Mobile app on '
+                  'your phone.',
+              steamAccount: username,
+              wait: mobileWait,
+              acceptsAnswer: false,
+            ),
+          );
+          mobile = ticket;
+          unawaited(
+            ticket.result.then((result) {
+              if (result.outcome == PromptOutcome.expired) {
+                cutShort('guard_timeout');
+              }
+            }),
+          );
+        },
+      );
+    } on Object {
+      mobile?.close(PromptOutcome.cancelled);
+      rethrow;
+    }
+    final lines = outcome.tail.toList();
+    final login = _patterns.classifyLogin(lines);
+    // A login that came through ends the wait for the phone.
+    final succeeded =
+        login?.kind == LoginKind.ok || (login == null && outcome.exitCode == 0);
+    mobile?.close(succeeded ? PromptOutcome.answered : PromptOutcome.cancelled);
+    if (outcome.cutShort == 'guard_timeout') {
+      throw YaguraException(
+        'steam_guard_timeout',
+        'the login was not confirmed in the Steam Mobile app within '
+            '${_describe(mobileWait)}',
+      );
+    }
+    if (succeeded) return const LoginOutcome(LoginKind.ok);
+    switch (login?.kind) {
+      case LoginKind.guardEmail || LoginKind.guardAuthenticator:
+        if (code != null) throw _guardInvalid();
+        return login!;
+      case LoginKind.reauthNeeded ||
+          LoginKind.rateLimited ||
+          LoginKind.guardInvalid ||
+          LoginKind.loginInvalid:
+        throw YaguraException(
+          login!.reason!,
+          login.message!,
+          details: {'pattern': login.kind.wire},
+        );
+      default:
+        // Nothing the table knows, or a mobile approval that ended without
+        // a login: SteamCMD's own words.
+        throw _unknownError(outcome, _lastLines(lines));
+    }
+  }
+
+  List<String> _lastLines(List<String> lines) => lines.length > _failureLines
+      ? lines.sublist(lines.length - _failureLines)
+      : lines;
+
+  YaguraException _unknownError(_Outcome outcome, List<String> lastLines) =>
+      YaguraException(
+        'steam_unknown_error',
+        'SteamCMD exited with code ${exitCodeText(outcome.exitCode)}; its last '
+            '${lastLines.length} output lines:\n${lastLines.join('\n')}',
+        details: {'exitCode': outcome.exitCode, 'lines': lastLines},
+      );
 
   Semaphore _lockFor(String installation) =>
       _locks.putIfAbsent(installation, () => Semaphore(1));
@@ -306,15 +559,17 @@ class SteamCmdService implements SteamService {
       reporter.step(next);
     }
 
-    // A known failure marked `retry: once` runs the same command again.
-    for (var attempt = 1; ; attempt++) {
+    final account = request.account != null;
+    var attempt = 1;
+    var loggedInAgain = false;
+    while (true) {
       final outcome = await _execute(
         installation: installation,
         arguments: [
           '+force_install_dir',
           request.installDirectory,
           '+login',
-          'anonymous',
+          account ? request.username! : 'anonymous',
           '+app_update',
           '${request.appId}',
           if (request.validate) 'validate',
@@ -337,11 +592,46 @@ class SteamCmdService implements SteamService {
       );
 
       final lines = outcome.tail.toList();
-      final lastLines = lines.length > _failureLines
-          ? lines.sublist(lines.length - _failureLines)
-          : lines;
+      final lastLines = _lastLines(lines);
+      if (account) {
+        final login = _patterns.classifyLogin(lines);
+        if (login != null && login.kind != LoginKind.ok) {
+          if (login.kind == LoginKind.reauthNeeded || login.isGuard) {
+            // The cached login is gone. With the password remembered, log in
+            // again (Steam Guard may ask) and run the app once more.
+            final password = request.rememberedPassword?.call();
+            if (password == null || password.isEmpty || loggedInAgain) {
+              throw YaguraException(
+                'steam_reauth_required',
+                'the Steam login of this account has expired; log in again '
+                    'with its password',
+                details: {'account': request.account},
+              );
+            }
+            loggedInAgain = true;
+            await _loginStep(
+              installation,
+              request.username!,
+              password,
+              reporter,
+              cancel,
+            );
+            enter('steam_login');
+            continue;
+          }
+          if (login.reason != null) {
+            throw YaguraException(
+              login.reason!,
+              login.message!,
+              details: {'appId': request.appId, 'pattern': login.kind.wire},
+            );
+          }
+        }
+      }
       final failure = _patterns.classify(lines, appId: request.appId);
+      // A known failure marked `retry: once` runs the same command again.
       if (failure != null && failure.retryOnce && attempt == 1) {
+        attempt++;
         enter('steam_login');
         continue;
       }
@@ -381,21 +671,100 @@ class SteamCmdService implements SteamService {
     }
   }
 
-  /// Runs SteamCMD with [arguments] and waits for it, enforcing the two time
-  /// caps and cancellation. A step that was cut short throws; anything else
+  /// Runs SteamCMD with [arguments] and waits for it, enforcing the time caps
+  /// and cancellation. A step that was cut short throws; anything else
   /// returns the exit code and the end of the output for the caller to judge.
+  ///
+  /// SteamCMD's stdout reaches the daemon only when it exits, but its
+  /// `logs/console_log.txt` is written as it goes (design D15): the run
+  /// follows that file, and its progress lines drive the reporter and the
+  /// stall timer. Stdout is the fallback where no log is written. Every line
+  /// goes through [scrubber] first.
+  ///
+  /// With [silenceLimit] the run is also cut short, as `silent`, when it
+  /// neither exits nor writes a line for that long, unless the login waits for
+  /// a mobile approval. [onGuardMobile] is called, once, when the connection
+  /// log says it does; it gets the function that cuts the run short. A reason
+  /// it passes comes back as [_Outcome.cutShort].
   Future<_Outcome> _execute({
     required String installation,
     required List<String> arguments,
     required bool anyOutputIsProgress,
     required SteamRunReporter reporter,
     required CancelToken cancel,
+    Scrubber? scrubber,
+    Duration? silenceLimit,
+    Duration? totalLimit,
+    void Function(void Function(String why) cutShort)? onGuardMobile,
     void Function(String line)? onLine,
     void Function(SteamProgress progress)? onProgress,
   }) async {
     cancel.throwIfCancelled();
     final directory = p.join(steamcmdRoot, installation);
     final command = _command(directory);
+    final scrub = scrubber ?? Scrubber.none;
+    final tail = Queue<String>();
+    final started = DateTime.now();
+    var lastProgressAt = started;
+    var lastSignalAt = started;
+    SteamProgress? last;
+    String? cutShortBy;
+    var followed = false;
+    var guardSeen = false;
+
+    void report(SteamProgress progress) {
+      final moved =
+          last == null ||
+          last!.step != progress.step ||
+          last!.bytesDone != progress.bytesDone ||
+          last!.bytesTotal != progress.bytesTotal ||
+          last!.percent != progress.percent;
+      if (moved) lastProgressAt = DateTime.now();
+      last = progress;
+      onProgress?.call(progress);
+    }
+
+    SteamProcess? running;
+    void cutShort(String why) {
+      if (cutShortBy != null) return;
+      cutShortBy = why;
+      running?.kill();
+    }
+
+    final installationFs = ConfinedFs(directory);
+    final console = SteamLogFollower(
+      fs: installationFs,
+      path: _consoleLog,
+      scrubber: scrub,
+      stripTimestamp: true,
+      onLine: (line) {
+        followed = true;
+        lastSignalAt = DateTime.now();
+        if (anyOutputIsProgress) lastProgressAt = lastSignalAt;
+        if (_patterns.progressFor(line) case final progress?) {
+          report(progress);
+        } else {
+          onLine?.call(line);
+        }
+      },
+    );
+    final connection = onGuardMobile == null
+        ? null
+        : SteamLogFollower(
+            fs: installationFs,
+            path: _patterns.connectionLog,
+            scrubber: scrub,
+            stripTimestamp: true,
+            onLine: (line) {
+              if (guardSeen || !_patterns.isLiveGuardMobile(line)) return;
+              guardSeen = true;
+              onGuardMobile(cutShort);
+            },
+          );
+    // Where the logs stand now, before SteamCMD can write to them.
+    console.start();
+    connection?.start();
+
     final SteamProcess process;
     try {
       process = await _launcher.start(
@@ -405,6 +774,8 @@ class SteamCmdService implements SteamService {
         environment: environment,
       );
     } on Object catch (e) {
+      console.stop();
+      connection?.stop();
       // SteamCMD cannot be started: the installation is broken, so the next
       // run builds it again (ADR 0014). An account that cannot be logged on
       // says nothing about the installation.
@@ -413,52 +784,42 @@ class SteamCmdService implements SteamService {
       }
       rethrow;
     }
-
-    final tail = Queue<String>();
-    final started = DateTime.now();
-    var lastProgressAt = started;
-    SteamProgress? last;
-    String? cutShortBy;
+    running = process;
     final linesDone = Completer<void>();
 
     final subscription = process.lines.listen(
-      (line) {
+      (raw) {
+        // The log may already hold what stdout now repeats.
+        if (!followed) console.poll();
+        final line = scrub.scrub(raw);
         tail.add(line);
         if (tail.length > 200) tail.removeFirst();
-        if (anyOutputIsProgress) lastProgressAt = DateTime.now();
+        lastSignalAt = DateTime.now();
+        if (anyOutputIsProgress) lastProgressAt = lastSignalAt;
         final progress = _patterns.progressFor(line);
         if (progress == null) {
           reporter.log(line);
-          onLine?.call(line);
+          if (!followed) onLine?.call(line);
           return;
         }
-        final moved =
-            last == null ||
-            last!.step != progress.step ||
-            last!.bytesDone != progress.bytesDone ||
-            last!.bytesTotal != progress.bytesTotal ||
-            last!.percent != progress.percent;
-        if (moved) lastProgressAt = DateTime.now();
-        last = progress;
-        onProgress?.call(progress);
+        if (!followed) report(progress);
       },
       onDone: () {
         if (!linesDone.isCompleted) linesDone.complete();
       },
     );
 
-    void cutShort(String why) {
-      if (cutShortBy != null) return;
-      cutShortBy = why;
-      process.kill();
-    }
-
+    final cap = totalLimit ?? totalTimeout;
     final watchdog = Timer.periodic(pollInterval, (_) {
       final now = DateTime.now();
-      if (now.difference(started) >= totalTimeout) {
+      if (now.difference(started) >= cap) {
         cutShort('total');
       } else if (now.difference(lastProgressAt) >= noProgressTimeout) {
         cutShort('stalled');
+      } else if (silenceLimit != null &&
+          !guardSeen &&
+          now.difference(lastSignalAt) >= silenceLimit) {
+        cutShort('silent');
       }
     });
     unawaited(cancel.whenCancelled.then((_) => cutShort('cancelled')));
@@ -472,6 +833,8 @@ class SteamCmdService implements SteamService {
       );
     } finally {
       watchdog.cancel();
+      console.stop();
+      connection?.stop();
       await subscription.cancel();
     }
 
@@ -498,13 +861,25 @@ class SteamCmdService implements SteamService {
       case 'total':
         throw YaguraException(
           'steam_stalled',
-          'SteamCMD ran for ${_describe(totalTimeout)} in total, which is the '
+          'SteamCMD ran for ${_describe(cap)} in total, which is the '
               'limit',
-          details: {'limit': 'total', 'seconds': totalTimeout.inSeconds},
+          details: {'limit': 'total', 'seconds': cap.inSeconds},
+        );
+      case 'silent':
+        final shown = console.lastLines;
+        throw YaguraException(
+          'steam_login_unresponsive',
+          'SteamCMD did not answer for ${_describe(silenceLimit!)} while '
+              'logging in; the last lines of its console log:\n'
+              '${shown.isEmpty ? '(it wrote none)' : shown.join('\n')}',
+          details: {'seconds': silenceLimit.inSeconds, 'lines': shown},
         );
     }
-    return _Outcome(exitCode, tail);
+    return _Outcome(exitCode, tail, cutShort: cutShortBy);
   }
+
+  /// SteamCMD's console log below its installation.
+  static const _consoleLog = 'logs/console_log.txt';
 
   static String _describe(Duration d) => d.inHours >= 1 && d.inMinutes % 60 == 0
       ? '${d.inHours} h'
@@ -588,8 +963,11 @@ class SteamCmdService implements SteamService {
 }
 
 class _Outcome {
-  _Outcome(this.exitCode, this.tail);
+  _Outcome(this.exitCode, this.tail, {this.cutShort});
 
   final int exitCode;
   final Queue<String> tail;
+
+  /// Why the run was ended by a callback, when it was.
+  final String? cutShort;
 }

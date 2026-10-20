@@ -9,6 +9,8 @@ import '../errors.dart';
 import '../instances/instance.dart';
 import '../logs/log_models.dart';
 import '../operations/operation.dart';
+import '../operations/prompt_broker.dart';
+import '../steam/steam_accounts.dart';
 import '../snapshots/snapshots.dart';
 
 Timestamp timestamp(DateTime at) => Timestamp.fromDateTime(at.toUtc());
@@ -169,6 +171,50 @@ pb.Operation operationToPb(Operation operation) => pb.Operation(
   resultMessage: operation.resultMessage,
   warnings: operation.warnings,
   lastSequence: Int64(operation.lastSequence),
+  pendingPrompt: operation.pendingPrompt == null
+      ? null
+      : promptToPb(operation.pendingPrompt!),
+);
+
+pb.Prompt promptToPb(Prompt prompt) => pb.Prompt(
+  id: prompt.id,
+  kind: prompt.kind,
+  message: prompt.message,
+  steamAccount: prompt.steamAccount,
+  expiresAt: timestamp(prompt.expiresAt),
+);
+
+pb.PendingPrompt pendingPromptToPb(PendingPrompt pending) => pb.PendingPrompt(
+  prompt: promptToPb(pending.prompt),
+  operations: [
+    for (final subject in pending.subjects)
+      pb.PromptSubject(
+        operationId: subject.operationId,
+        instanceId: subject.instanceId,
+        accountId: subject.accountId,
+      ),
+  ],
+);
+
+pb.PromptResolved promptResolvedToPb(
+  String promptId,
+  String byDeviceId,
+  PromptOutcome outcome,
+) => pb.PromptResolved(
+  promptId: promptId,
+  byDeviceId: byDeviceId,
+  outcome: outcome.name,
+);
+
+pb.SteamAccount steamAccountToPb(SteamAccountInfo account) => pb.SteamAccount(
+  id: account.id,
+  username: account.username,
+  status: account.status,
+  passwordRemembered: account.passwordRemembered,
+  lastLoginAt: account.lastLoginAt == null
+      ? null
+      : timestamp(account.lastLoginAt!),
+  usedByInstanceIds: account.usedByInstanceIds,
 );
 
 pb.OperationEvent operationEventToPb(OperationEvent event) {
@@ -220,6 +266,17 @@ pb.OperationEvent operationEventToPb(OperationEvent event) {
       at: at,
       snapshot: operationToPb(operation),
     ),
+    PromptRaisedEvent(:final prompt) => pb.OperationEvent(
+      sequence: sequence,
+      at: at,
+      prompt: promptToPb(prompt),
+    ),
+    PromptResolvedEvent(:final promptId, :final byDeviceId, :final outcome) =>
+      pb.OperationEvent(
+        sequence: sequence,
+        at: at,
+        promptResolved: promptResolvedToPb(promptId, byDeviceId, outcome),
+      ),
   };
 }
 
