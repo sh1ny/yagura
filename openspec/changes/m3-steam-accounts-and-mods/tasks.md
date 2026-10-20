@@ -14,8 +14,8 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 | Requirement | Scenario | Test file | Test name | Group | State |
 |---|---|---|---|---|---|
-| host-service → Data directory layout | Default layout created | apps/yagurad/test/host/data_directory_layout_test.dart | default_layout_created | 1 | red |
-| host-service → Data directory layout | Content store protected | apps/yagurad/integration_test/service/content_store_acl_test.dart | content_store_protected (elevated) | 1 | red |
+| host-service → Data directory layout | Default layout created | apps/yagurad/test/host/data_directory_layout_test.dart | default_layout_created | 1 | green |
+| host-service → Data directory layout | Content store protected | apps/yagurad/integration_test/service/content_store_acl_test.dart | content_store_protected (elevated) | 1 | green |
 | host-service → Data directory layout | Data directory not writable | apps/yagurad/test/host/data_directory_layout_test.dart | data_directory_not_writable | 1 | green |
 | host-service → Data directory layout | Instance root added locally | apps/yagurad/integration_test/admin/instance_roots_test.dart | instance_root_added_locally (elevated) | 1 | green |
 | host-service → Data directory layout | Instance on another drive | apps/yagurad/integration_test/admin/instance_roots_test.dart | instance_on_another_drive (elevated) | 1 | green |
@@ -178,7 +178,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
   Add a fake Steam Web API server (`test/fixtures/fake_workshop_api.dart`) for `GetPublishedFileDetails`, with per-item results, `time_updated`, private or missing items, delays and failures. Verify: each fixture has a self-test under `test/fixtures/` that passes.
 - [x] 1.3 Write the failing tests for this group's red rows (`default_layout_created`, `content_store_protected`), and `test/host/migration_7_test.dart`, which follows `migration_4_test.dart`. Verify: they fail because `content/` and the migration 7 tables are missing.
-- [ ] 1.4 Add migration 7: `steam_accounts`, `operations.account_id`, `instance_mods` (with `stage_kind`), `content_versions`, `placed_keys`, `bound_files` and `replaced_secrets` (design D1, D6-D9, D11). Make `DataDirectory.prepare` create `content/` and `content/.staging/` (D6). Verify: `migration_7_test.dart` and `default_layout_created` pass, and those rows are flipped green. Re-run the green rows of this group (`data_directory_not_writable`; the `instance_roots_test.dart` rows run in the elevated workflow). Run `content_store_protected` in the elevated workflow and record the run in `docs/milestones/m3.md`, then flip it.
+- [x] 1.4 Add migration 7: `steam_accounts`, `operations.account_id`, `instance_mods` (with `stage_kind`), `content_versions`, `placed_keys`, `bound_files` and `replaced_secrets` (design D1, D6-D9, D11). Make `DataDirectory.prepare` create `content/` and `content/.staging/` (D6). Verify: `migration_7_test.dart` and `default_layout_created` pass, and those rows are flipped green. Re-run the green rows of this group (`data_directory_not_writable`; the `instance_roots_test.dart` rows run in the elevated workflow). Run `content_store_protected` in the elevated workflow and record the run in `docs/milestones/m3.md`, then flip it.
 
 ## 2. [M3] Lossless config parsers
 
