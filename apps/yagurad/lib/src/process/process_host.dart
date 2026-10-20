@@ -14,6 +14,8 @@ class LaunchRequest {
     this.runDirectory = '',
     this.stdoutEncoding = 'utf-8',
     this.onRelayStarted,
+    this.secretArguments = const [],
+    this.secrets = const {},
   });
 
   final String instanceId;
@@ -22,8 +24,27 @@ class LaunchRequest {
   /// Absolute path of the server executable.
   final String executable;
 
-  /// Rendered manifest arguments followed by the `onPreStart` hook's.
+  /// Rendered manifest arguments followed by the `onPreStart` hook's. A secret
+  /// argument holds its redacted form (`prefix***suffix`) at its index.
   final List<String> args;
+
+  /// The arguments of [args] that carry a secret setting's value (design D4).
+  final List<SecretArgument> secretArguments;
+
+  /// The values behind [secretArguments], by setting name. They reach the
+  /// launcher and the relay over standard input and are written nowhere.
+  final Map<String, String> secrets;
+
+  /// [args] with every secret argument in full, for the process that is
+  /// started with them. [values] defaults to [secrets].
+  List<String> resolvedArgs([Map<String, String>? values]) {
+    final resolved = [...args];
+    for (final s in secretArguments) {
+      resolved[s.index] = s.resolve((values ?? secrets)[s.setting] ?? '');
+    }
+    return resolved;
+  }
+
   final Map<String, String> env;
 
   /// The server's install directory (spike 1.3: Valheim finds its Steam app
@@ -45,6 +66,27 @@ class LaunchRequest {
   /// before the server is known, so the daemon holds its own record of the
   /// relay (design D9).
   final void Function(ProcessIdentity relay)? onRelayStarted;
+}
+
+/// One argument that carries a secret setting's value: `prefix + value +
+/// suffix` (design D4).
+class SecretArgument {
+  const SecretArgument({
+    required this.index,
+    required this.setting,
+    required this.prefix,
+    required this.suffix,
+  });
+
+  /// Position in [LaunchRequest.args].
+  final int index;
+  final String setting;
+  final String prefix;
+  final String suffix;
+
+  String get redacted => '$prefix$redactedSecret$suffix';
+
+  String resolve(String value) => '$prefix$value$suffix';
 }
 
 /// The identity a process is re-attached by: PID, executable path and start

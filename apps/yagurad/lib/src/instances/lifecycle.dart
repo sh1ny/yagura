@@ -42,6 +42,7 @@ class Lifecycle {
     ports: {for (final port in record.ports) port.name: port.number},
     paths: {'instance': record.directory, 'server': _serverDirectory(record)},
     os: _manager.os,
+    secretsSet: _manager.setSecretsOf(record),
   );
 
   /// Runs hook [point] of [plugin] when it has a `hooks.js`; returns its
@@ -188,6 +189,20 @@ class Lifecycle {
     for (final event in result.externalEdits) {
       ctx.warn(event);
     }
+  }
+
+  /// The value of [setting]'s secret, read from the secret store when a
+  /// launch needs it (the rendering only knew that it was set).
+  String _secretValue(InstanceRecord record, String setting) {
+    final bytes = _manager.secrets.get(secretIdFor(record.id, setting));
+    if (bytes == null) {
+      throw YaguraException(
+        'secret_required',
+        'the secret $setting is not set; set it with SetSecret before starting',
+        details: {'instanceId': record.id, 'settings': setting},
+      );
+    }
+    return utf8.decode(bytes);
   }
 
   // ---- install and update --------------------------------------------------
@@ -441,15 +456,30 @@ class Lifecycle {
         // The arguments below are the settings this run uses; an edit made
         // after this point is what a restart is needed for.
         record.restartRequired = false;
+        final rendered = renderLaunchArguments(
+          manifest,
+          _launchContext(record, manifest),
+        );
         final launched = await _manager.processHost.launch(
           LaunchRequest(
             instanceId: record.id,
             runId: runId,
             executable: p.join(_serverDirectory(record), executable),
-            args: [
-              ...renderLaunchArgs(manifest, _launchContext(record, manifest)),
-              ...extraArgs,
+            args: [...rendered.map((a) => a.redacted), ...extraArgs],
+            secretArguments: [
+              for (final (index, a) in rendered.indexed)
+                if (a.secretSetting case final setting?)
+                  SecretArgument(
+                    index: index,
+                    setting: setting,
+                    prefix: a.prefix,
+                    suffix: a.suffix,
+                  ),
             ],
+            secrets: {
+              for (final setting in {for (final a in rendered) ?a.secretSetting})
+                setting: _secretValue(record, setting),
+            },
             env: env,
             workingDirectory: _serverDirectory(record),
             instanceDirectory: record.directory,
