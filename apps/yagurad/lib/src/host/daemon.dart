@@ -9,6 +9,7 @@ import '../firewall/firewall_reconciler.dart';
 import '../admin/admin_server.dart';
 import '../admin/admin_service.dart';
 import '../admin/admin_transport.dart';
+import '../config/bound_file_store.dart';
 import '../hooks/hooks.dart';
 import '../instances/health_check.dart';
 import '../instances/instance.dart' show aclMigrationFailedReason;
@@ -423,6 +424,7 @@ class Daemon {
               clock: config.clock,
             ),
         runs: runStore,
+        boundFiles: BoundFileStore(database),
         acls: config.serviceMode ? config.instanceAcls : null,
         healthEvaluator: HealthEvaluator(
           pollInterval: config.healthPollInterval,

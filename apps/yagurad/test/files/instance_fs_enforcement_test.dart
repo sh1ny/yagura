@@ -180,6 +180,6 @@ void main() {
     expect(source('instances/instance_file.dart'), contains('InstanceFs'));
     expect(source('instances/lifecycle.dart'), contains('InstanceFs'));
     expect(source('hooks/host_api.dart'), contains('ConfinedFs'));
-    expect(source('files/file_edit_writer.dart'), contains('ConfinedFs'));
+    expect(source('config/config_binder.dart'), contains('ConfinedFs'));
   });
 }

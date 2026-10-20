@@ -3,7 +3,7 @@ import 'dart:collection';
 import 'dart:convert';
 
 import '../errors.dart';
-import '../files/file_edit_writer.dart';
+import '../config/config_binder.dart';
 import '../files/instance_fs.dart';
 import 'hook_context.dart';
 import 'hook_limits.dart';
@@ -42,8 +42,8 @@ class HookInvocation {
   final Duration deadline;
 }
 
-/// The outcome of a hook call whose result passed validation and whose file
-/// edits were applied.
+/// The outcome of a hook call whose result passed validation; its file edits
+/// ([files]) are for the config binder to apply.
 class HookRunResult {
   const HookRunResult.skipped()
     : ran = false,
@@ -59,6 +59,9 @@ class HookRunResult {
 
   /// Entries the hook wrote with `yagura.log`: `{level, message}` maps.
   final List<Map<String, Object?>> logs;
+
+  /// The file edits the hook returned.
+  List<FileEdit> get files => result.files;
 
   /// Extra launch arguments (`onPreStart`), if the hook returned any.
   List<String>? get args => result.args;
@@ -107,7 +110,7 @@ class HookHost {
 
   /// Runs [invocation]: waits for a slot (bounded by [cancel], which fails the
   /// call with `interrupted`), runs the hook in a worker, validates its result
-  /// against the hook's schema, applies its file edits and returns.
+  /// against the hook's schema and returns it with its file edits.
   Future<HookRunResult> run(
     HookInvocation invocation, {
     Future<void>? cancel,
@@ -243,8 +246,10 @@ class HookHost {
       );
     }
     final result = invocation.point.parseResult(decoded);
-    if (result.files.isNotEmpty) {
-      FileEditWriter(invocation.root).apply(result.files);
+    // The edits are applied by the config binder, in one pass with the
+    // bindings; a format it cannot edit fails here, before anything runs on.
+    for (final edit in result.files) {
+      checkFormat(edit.path, edit.format);
     }
     return HookRunResult(result: result, logs: logs);
   }

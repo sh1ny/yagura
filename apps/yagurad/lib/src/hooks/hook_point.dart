@@ -1,5 +1,5 @@
 import '../errors.dart';
-import '../files/file_edit_writer.dart';
+import '../config/config_binder.dart';
 
 /// The lifecycle points at which a plugin's `hooks.js` may export a function.
 enum HookPoint {

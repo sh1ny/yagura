@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/config/config_binder.dart';
 import 'package:yagurad/src/errors.dart';
 import 'package:yagurad/src/files/files.dart';
 import 'package:yagurad/src/hooks/hooks.dart';
@@ -125,12 +126,16 @@ void main() {
 
       // Starting the instance: the pre-start hook edits `yagura/mod.json`.
       await expectLater(
-        HookHost().run(
-          invocationFor(instance, '''
+        Future.sync(() async {
+          final hook = await HookHost().run(
+            invocationFor(instance, '''
 exports.onPreStart = () => ({files: [
   {path: 'yagura/mod.json', format: 'json', patch: {planted: true}}]});
 '''),
-        ),
+          );
+          await ConfigBinder(InstanceFs(instance.path))
+              .apply(edits: hook.files);
+        }),
         sandboxViolation('yagura/'),
       );
       // A hook reading through the link is refused the same way.
@@ -183,9 +188,11 @@ exports.onPreStart = () => {
       }
       await expectLater(
         Future.sync(
-          () => FileEditWriter(fs).apply([
-            FileEdit(path: 'a.txt', format: 'json', patch: {'a': 1}),
-          ]),
+          () => ConfigBinder(fs).apply(
+            edits: [
+              FileEdit(path: 'a.txt', format: 'json', patch: {'a': 1}),
+            ],
+          ),
         ),
         sandboxViolation(directory),
       );
@@ -233,6 +240,7 @@ exports.onPreStart = () => ({
 '''),
     );
     expect(started.result.args, ['ok', '2']);
+    await ConfigBinder(fs).apply(edits: started.files);
     expect(
       File(p.join(instance.path, 'yagura', 'mod.json')).readAsStringSync(),
       contains('"enabled": true'),

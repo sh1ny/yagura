@@ -25,19 +25,19 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | config-bindings → Round-trip preservation | Comments and unknown keys survive | packages/yagura_formats/test/round_trip_preservation_test.dart | comments_and_unknown_keys_survive | 2 | green |
 | config-bindings → Round-trip preservation | Unparseable file | packages/yagura_formats/test/round_trip_preservation_test.dart | unparseable_file | 2 | green |
 | config-bindings → Supported formats | Array value in dayz-cfg | packages/yagura_formats/test/supported_formats_test.dart | array_value_in_dayz_cfg | 2 | green |
-| config-bindings → Bindings map settings to file keys | Scalar binding applied | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | scalar_binding_applied | 3 | red |
-| config-bindings → Bindings map settings to file keys | Bound file missing | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | bound_file_missing | 3 | red |
-| config-bindings → Bindings map settings to file keys | Missing file created from the plugin template | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | missing_file_created_from_the_plugin_template | 3 | red |
-| config-bindings → Bindings map settings to file keys | Secret setting bound | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | secret_setting_bound | 3 | red |
-| config-bindings → Bindings map settings to file keys | Binding names an unknown setting | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | binding_names_an_unknown_setting | 3 | red |
-| config-bindings → Manual edits are detected, not overwritten blindly | Admin edit to an unbound key kept | apps/yagurad/test/config/manual_edits_are_detected_not_overwritten_blindl_test.dart | admin_edit_to_an_unbound_key_kept | 3 | red |
-| config-bindings → Manual edits are detected, not overwritten blindly | Admin edit to a bound key reported | apps/yagurad/test/config/manual_edits_are_detected_not_overwritten_blindl_test.dart | admin_edit_to_a_bound_key_reported | 3 | red |
-| config-bindings → Manual edits are detected, not overwritten blindly | Secret values masked in the event | apps/yagurad/test/config/manual_edits_are_detected_not_overwritten_blindl_test.dart | secret_values_masked_in_the_event | 3 | red |
-| config-bindings → Manual edits are detected, not overwritten blindly | Game rewrites its own config | apps/yagurad/test/config/manual_edits_are_detected_not_overwritten_blindl_test.dart | game_rewrites_its_own_config | 3 | red |
-| config-bindings → Writes are atomic | Interrupted apply | apps/yagurad/test/config/writes_are_atomic_test.dart | interrupted_apply | 3 | red |
-| config-bindings → Writes are atomic | File locked by a running process | apps/yagurad/test/config/writes_are_atomic_test.dart | file_locked_by_a_running_process | 3 | red |
-| plugin-hooks → Sandboxed host API | File edit returned and applied by the daemon | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | file_edit_returned_and_applied_by_the_daemon | 3 | red |
-| plugin-hooks → Sandboxed host API | Edit in an unsupported format | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | edit_in_an_unsupported_format | 3 | red |
+| config-bindings → Bindings map settings to file keys | Scalar binding applied | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | scalar_binding_applied | 3 | green |
+| config-bindings → Bindings map settings to file keys | Bound file missing | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | bound_file_missing | 3 | green |
+| config-bindings → Bindings map settings to file keys | Missing file created from the plugin template | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | missing_file_created_from_the_plugin_template | 3 | green |
+| config-bindings → Bindings map settings to file keys | Secret setting bound | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | secret_setting_bound | 3 | green |
+| config-bindings → Bindings map settings to file keys | Binding names an unknown setting | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | binding_names_an_unknown_setting | 3 | green |
+| config-bindings → Manual edits are detected, not overwritten blindly | Admin edit to an unbound key kept | apps/yagurad/test/config/manual_edits_are_detected_not_overwritten_blindl_test.dart | admin_edit_to_an_unbound_key_kept | 3 | green |
+| config-bindings → Manual edits are detected, not overwritten blindly | Admin edit to a bound key reported | apps/yagurad/test/config/manual_edits_are_detected_not_overwritten_blindl_test.dart | admin_edit_to_a_bound_key_reported | 3 | green |
+| config-bindings → Manual edits are detected, not overwritten blindly | Secret values masked in the event | apps/yagurad/test/config/manual_edits_are_detected_not_overwritten_blindl_test.dart | secret_values_masked_in_the_event | 3 | green |
+| config-bindings → Manual edits are detected, not overwritten blindly | Game rewrites its own config | apps/yagurad/test/config/manual_edits_are_detected_not_overwritten_blindl_test.dart | game_rewrites_its_own_config | 3 | green |
+| config-bindings → Writes are atomic | Interrupted apply | apps/yagurad/test/config/writes_are_atomic_test.dart | interrupted_apply | 3 | green |
+| config-bindings → Writes are atomic | File locked by a running process | apps/yagurad/test/config/writes_are_atomic_test.dart | file_locked_by_a_running_process | 3 | green |
+| plugin-hooks → Sandboxed host API | File edit returned and applied by the daemon | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | file_edit_returned_and_applied_by_the_daemon | 3 | green |
+| plugin-hooks → Sandboxed host API | Edit in an unsupported format | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | edit_in_an_unsupported_format | 3 | green |
 | plugin-hooks → Sandboxed host API | Write attempted from a hook | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | write_attempted_from_a_hook | 3 | green |
 | plugin-hooks → Sandboxed host API | Path escape refused | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | path_escape_refused | 3 | green |
 | plugin-hooks → Sandboxed host API | Edit through a link refused | apps/yagurad/test/hooks/sandboxed_host_api_test.dart | edit_through_a_link_refused | 3 | green |
@@ -190,7 +190,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 - [x] 3.1 Write the failing tests for this group's red rows. Verify: they fail for the missing binder, not for setup errors.
 - [x] 3.2 Accept the manifest's `bindings` section in `packages/yagura_plugin` (`loader.dart:404-426`, schema `manifest_schema.g.dart`): file path templates over `settings`, `ports`, `paths` and `os` that stay inside the instance root; `format`; `create` and `template`; `game_writes`; at most 64 distinct files; `ue-ini`, `xml` and `vdf` rejected with `unsupported_in_this_version`. Verify: the manifest tests for these refusals pass, and the manifest docs are regenerated.
-- [ ] 3.3 Implement `ConfigBinder` to replace `FileEditWriter` (D9):
+- [x] 3.3 Implement `ConfigBinder` to replace `FileEditWriter` (D9):
   - one pass per operation, applied in its order;
   - `bound_files` hashes and `external_edit` events, with secret values masked as `***`;
   - `game_writes`;

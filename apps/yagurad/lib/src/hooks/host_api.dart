@@ -27,16 +27,23 @@ const hookPrelude = r'''
       return onMissing(property);
     },
   });
+  const keyed = (name) => Object.freeze(yagura.formats[name]);
   const json = Object.freeze(yagura.formats.json);
   yagura.fs = guard(yagura.fs, (name) => function () {
     throw fail('not_supported',
       'yagura.fs.' + name + ' is not supported: hooks cannot write files, ' +
       'return file edits instead');
   });
-  yagura.formats = guard({ json }, (format) => {
+  yagura.formats = guard({
+    json,
+    ini: keyed('ini'),
+    'dayz-cfg': keyed('dayz-cfg'),
+    kv: keyed('kv'),
+  }, (format) => {
     const unsupported = function () {
       throw fail('unsupported_in_this_version',
-        'yagura.formats.' + format + ' is not supported in this version; only json is');
+        'yagura.formats.' + format + ' is not supported in this version; only ' +
+        'json, ini, dayz-cfg and kv are');
     };
     return { parse: unsupported, serialize: unsupported };
   });
@@ -61,8 +68,9 @@ const hookPrelude = r'''
 ''';
 
 /// Registers the pure `yagura.*` host API on [js]: `log`, read-only `fs`
-/// (`readText`, `list`) confined to [root], and `formats.json`
-/// (`parse`, `serialize`). Log entries are appended to [logs].
+/// (`readText`, `list`) confined to [root], `formats.json` (`parse`,
+/// `serialize`) and `formats.ini`, `formats['dayz-cfg']` and `formats.kv`
+/// (`get`, `edit`). Log entries are appended to [logs].
 void registerHostApi(
   QuickJsRuntime js,
   ConfinedFs fs,
@@ -133,6 +141,10 @@ void registerHostApi(
     return entries;
   });
 
+  for (final format in const ['ini', 'dayz-cfg', 'kv']) {
+    _registerKeyedFormat(js, format);
+  }
+
   js.registerHostFunction('yagura.formats.json.parse', (args) {
     if (args case [final String text]) {
       _checkSize('yagura.formats.json.parse', utf8.encode(text).length);
@@ -164,6 +176,59 @@ void registerHostApi(
         : JsonEncoder.withIndent(' ' * indent).convert(value);
     _checkSize('yagura.formats.json.serialize', utf8.encode(text).length);
     return text;
+  });
+}
+
+/// Registers `yagura.formats.<format>.get(text, path)` and `.edit(text,
+/// patch)` for a key/value [format]: `get` returns the value at a key path (a
+/// string, or `null` when the key is missing), `edit` returns [text] with the
+/// patch (key path to value, `null` removes the key) applied, keeping
+/// everything else of the text. A text that does not parse fails
+/// `config_parse_error`.
+void _registerKeyedFormat(QuickJsRuntime js, String format) {
+  final prefix = 'yagura.formats.$format';
+  ConfigDocument parse(String function, String text) {
+    _checkSize('$prefix.$function', utf8.encode(text).length);
+    try {
+      return switch (format) {
+        'ini' => IniDocument.parse(text),
+        'kv' => KvDocument.parse(text),
+        _ => DayzCfgDocument.parse(text),
+      };
+    } on ConfigParseException catch (e) {
+      throw HostException(
+        'config_parse_error',
+        '$prefix.$function: ${e.message} (line ${e.line}, column ${e.column})',
+      );
+    }
+  }
+
+  js.registerHostFunction('$prefix.get', (args) {
+    if (args case [final String text, final String path]) {
+      final value = parse('get', text).get(path);
+      return value == null ? null : '$value';
+    }
+    throw HostException('hook_error', '$prefix.get expects (text, path)');
+  });
+
+  js.registerHostFunction('$prefix.edit', (args) {
+    if (args case [final String text, final Map<Object?, Object?> patch]) {
+      final document = parse('edit', text);
+      try {
+        document.applyPatch({
+          for (final MapEntry(:key, :value) in patch.entries)
+            '$key': value is List && format != 'dayz-cfg'
+                ? value.join(',')
+                : value,
+        });
+      } on ArgumentError catch (e) {
+        throw HostException('hook_error', '$prefix.edit: ${e.message}');
+      }
+      final out = document.toSource();
+      _checkSize('$prefix.edit', utf8.encode(out).length);
+      return out;
+    }
+    throw HostException('hook_error', '$prefix.edit expects (text, patch)');
   });
 }
 

@@ -12,6 +12,7 @@ import '../files/files.dart';
 import '../firewall/firewall_backend.dart';
 import '../firewall/firewall_reconciler.dart';
 import '../firewall/rule_names.dart';
+import '../config/bound_file_store.dart';
 import '../hooks/hooks.dart';
 import '../host/acl_layout.dart';
 import '../host/data_directory.dart';
@@ -49,6 +50,7 @@ class InstanceManager {
     required this.hooks,
     required this.snapshotter,
     required this.runs,
+    required this.boundFiles,
     this.acls,
     HealthEvaluator? healthEvaluator,
     this.restartDelay = const Duration(seconds: 5),
@@ -89,6 +91,9 @@ class InstanceManager {
   /// Run records and crash timestamps; the supervisor in this class and in
   /// [Lifecycle] is their only writer.
   final RunStore runs;
+
+  /// The hashes of the configuration files the binder wrote.
+  final BoundFileStore boundFiles;
 
   /// Writes the instance DACL at create and for older instances; null in
   /// development mode, which manages no ACLs.

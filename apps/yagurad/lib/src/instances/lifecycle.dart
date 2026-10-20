@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:path/path.dart' as p;
 import 'package:yagura_plugin/yagura_plugin.dart';
 
+import '../config/config_binder.dart';
 import '../errors.dart';
 import '../files/files.dart';
+import '../host/secret_store.dart';
 import '../hooks/hooks.dart';
 import '../operations/operations.dart';
 import '../plugins/plugin_registry.dart';
@@ -94,6 +97,99 @@ class Lifecycle {
     }
   }
 
+  // ---- configuration -------------------------------------------------------
+
+  /// The manifest's bindings for [record], with the file paths resolved inside
+  /// the instance directory and the values read when the pass applies them.
+  List<BoundKey> _bindings(InstanceRecord record, LoadedPlugin plugin) {
+    final manifest = plugin.manifest;
+    final context = _launchContext(record, manifest);
+    return [
+      for (var i = 0; i < manifest.bindings.length; i++)
+        _boundKey(
+          record,
+          plugin,
+          context,
+          'bindings[$i]',
+          manifest.bindings[i],
+        ),
+    ];
+  }
+
+  BoundKey _boundKey(
+    InstanceRecord record,
+    LoadedPlugin plugin,
+    LaunchContext context,
+    String id,
+    FileBinding binding,
+  ) {
+    final String rendered;
+    try {
+      rendered = renderTemplate(binding.file, context);
+    } on TemplateException catch (e) {
+      throw YaguraException(
+        'invalid_manifest',
+        '$id file "${binding.file}": $e',
+        details: {'path': binding.file},
+      );
+    }
+    final resolved = resolveInstancePath(rendered, record.directory);
+    if (resolved == null) {
+      throw confinedViolation(
+        rendered,
+        '$id file "${binding.file}" resolves outside the instance directory',
+      );
+    }
+    final isSecret =
+        plugin.manifest.settings[binding.setting]?.type == SettingType.secret;
+    final template = binding.template;
+    return BoundKey(
+      id: id,
+      file: p.relative(resolved, from: record.directory),
+      format: binding.format,
+      key: binding.key,
+      setting: binding.setting,
+      secret: isSecret,
+      create: binding.create,
+      gameWrites: binding.gameWrites,
+      template: template == null
+          ? null
+          : () => ConfinedFs(
+              plugin.directory,
+            ).readBytes(template, maxBytes: ConfigBinder.maxFileBytes),
+      // A secret is read from the secret store here, when the pass applies it,
+      // and nowhere earlier.
+      value: () {
+        if (!isSecret) return record.settings[binding.setting];
+        final bytes = _manager.secrets.get(
+          secretIdFor(record.id, binding.setting),
+        );
+        return bytes == null ? null : utf8.decode(bytes);
+      },
+    );
+  }
+
+  /// One config pass for [record]: the bindings when [bind], then [edits]
+  /// returned by a hook. Hand edits it overwrote are warnings of [ctx].
+  Future<void> _applyConfig(
+    OperationContext ctx,
+    InstanceRecord record,
+    LoadedPlugin plugin,
+    List<FileEdit> edits, {
+    required bool bind,
+  }) async {
+    final bindings = bind ? _bindings(record, plugin) : const <BoundKey>[];
+    if (bindings.isEmpty && edits.isEmpty) return;
+    final result = await ConfigBinder(
+      InstanceFs(record.directory),
+      store: _manager.boundFiles,
+      instanceId: record.id,
+    ).apply(bindings: bindings, edits: edits);
+    for (final event in result.externalEdits) {
+      ctx.warn(event);
+    }
+  }
+
   // ---- install and update --------------------------------------------------
 
   Future<void> _steamRun(
@@ -144,7 +240,8 @@ class Lifecycle {
     try {
       await _steamRun(ctx, record, plugin.manifest, validate: validate);
       await ctx.step('post_install', () async {
-        await _hook(ctx, record, plugin, HookPoint.onPostInstall);
+        final hook = await _hook(ctx, record, plugin, HookPoint.onPostInstall);
+        await _applyConfig(ctx, record, plugin, hook.files, bind: false);
       });
       _manager.setState(record, InstanceState.stopped);
     } on Object {
@@ -210,7 +307,8 @@ class Lifecycle {
       updating = true;
       await _steamRun(ctx, record, manifest, validate: validate);
       await ctx.step('apply_config', () async {
-        await _hook(ctx, record, plugin, HookPoint.onPostUpdate);
+        final hook = await _hook(ctx, record, plugin, HookPoint.onPostUpdate);
+        await _applyConfig(ctx, record, plugin, hook.files, bind: true);
       });
       _manager.setState(record, InstanceState.stopped);
     } on OperationCancelled {
@@ -290,11 +388,20 @@ class Lifecycle {
     try {
       var extraArgs = const <String>[];
       var env = const <String, String>{};
+      var edits = const <FileEdit>[];
       await ctx.step('hook:onPreStart', () async {
         final hook = await _hook(ctx, record, plugin, HookPoint.onPreStart);
         extraArgs = hook.args ?? const [];
         env = hook.env ?? const {};
+        edits = hook.files;
       });
+      // One pass writes the bindings and the hook's edits, so a file is read
+      // and written once and the whole pass is undone if one file fails.
+      if (manifest.bindings.isNotEmpty || edits.isNotEmpty) {
+        await ctx.step('apply_config', () async {
+          await _applyConfig(ctx, record, plugin, edits, bind: true);
+        });
+      }
 
       // The log is marked before the launch, so a line left from the
       // previous run cannot pass the check.
@@ -580,7 +687,8 @@ class Lifecycle {
         // stop.
         await ctx.step('hook:onPostStop', () async {
           try {
-            await _hook(ctx, record, plugin, HookPoint.onPostStop);
+            final hook = await _hook(ctx, record, plugin, HookPoint.onPostStop);
+            await _applyConfig(ctx, record, plugin, hook.files, bind: false);
           } on YaguraException catch (e) {
             ctx.warn('onPostStop failed: ${e.message}');
           }
