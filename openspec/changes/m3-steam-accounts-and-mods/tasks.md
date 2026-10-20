@@ -171,7 +171,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | desktop-client → Steam accounts view | Account needs re-login | apps/yagura_desktop/test/steam_accounts_view_test.dart | account_needs_re_login | 9 | green |
 | desktop-client → Steam accounts view | Removal refused | apps/yagura_desktop/test/steam_accounts_view_test.dart | removal_refused | 9 | green |
 | daemon-protocol → Methods a daemon version does not implement | Method not built yet | apps/yagurad/test/api/methods_a_daemon_version_does_not_implement_test.dart | method_not_built_yet | 11 | green |
-| daemon-protocol → Methods a daemon version does not implement | Service not built yet | apps/yagurad/test/api/methods_a_daemon_version_does_not_implement_test.dart | service_not_built_yet | 11 | red |
+| daemon-protocol → Methods a daemon version does not implement | Service not built yet | apps/yagurad/test/api/methods_a_daemon_version_does_not_implement_test.dart | service_not_built_yet | 11 | green |
 
 ## 1. [M3] Steam Guard spike, migration 7, data layout and fixtures
 
@@ -325,7 +325,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 ## 11. [M3] Integration, write-back and M3 exit
 
 - [x] 11.1 Extend `apps/yagurad/integration_test/secrets_data_directory_scan_test.dart` with a run that adds an account through the fake SteamCMD with a known password, remembered and not remembered, and sets a GSLT and a secret bound into a config file. Scan the data directory, the account installations, snapshots, run files, operation history and daemon logs. Verify: no secret value is found outside the accepted locations: the secrets table, SteamCMD's `config.vdf` cached token, and a bound secret's own file.
-- [ ] 11.2 Update `docs/protocol.md`: this version implements `Steam`, `Mods`, `Operations.WatchPrompts` and `RespondToPrompt`, and still not `Rcon` or `Instances.ApplyConfig` (M4). Verify: `service_not_built_yet` and `method_not_built_yet` pass and are flipped green, and the document lists the methods.
+- [x] 11.2 Update `docs/protocol.md`: this version implements `Steam`, `Mods`, `Operations.WatchPrompts` and `RespondToPrompt`, and still not `Rcon` or `Instances.ApplyConfig` (M4). Verify: `service_not_built_yet` and `method_not_built_yet` pass and are flipped green, and the document lists the methods.
 - [ ] 11.3 Write back into `openspec/architecture.md`:
   - the content-store publisher is the mod pipeline, not the Steam service (line 155);
   - the components this change adds (account service, prompt broker, workshop client, config binder, secret masker);
