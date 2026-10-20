@@ -176,7 +176,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 ## 1. [M3] Steam Guard spike, migration 7, data layout and fixtures
 
 - [x] 1.1 Spike (design A1). The agent writes a throwaway script under `tool/spikes/m3_steam_guard/`. The user runs it on their own machine with a Steam test account they control, one run per Guard kind (email code, authenticator code, mobile approval). The script never stores the password. For each run it records SteamCMD's output and exit behaviour with stdin on NUL; whether `+login <user> <pass> <code>` completes; whether a mobile approval completes in the same run; and what `+login <user>` alone does with an expired or removed cached login (exit, password request, or loop). After each login it scans every file under the installation (`logs/`, `config/`, everything else) for the password. Record the results in `docs/spikes/m3-steam-guard.md`, including whether D3's file scrub is needed. Then add the `login` pattern group to `steam/patterns.yaml` (version 3) and regenerate it with `dart run tool/embed_steam_patterns.dart`. Verify: the spike document records each behaviour and the scan result; the embedded-patterns check in the existing Steam tests passes; the timeouts in D2 are confirmed or corrected in the spike document.
-- [ ] 1.2 Extend `test/fixtures/fake_steamcmd/fake_steamcmd.dart`:
+- [x] 1.2 Extend `test/fixtures/fake_steamcmd/fake_steamcmd.dart`:
   - `+workshop_download_item <app> <item>` writing into `steamapps/workshop/content/<app>/<item>/`;
   - login transcripts from the spike (each Guard kind, wrong password, rate limit, expired cache, a mobile approval that arrives after a delay or never);
   - an echo of the command line;
