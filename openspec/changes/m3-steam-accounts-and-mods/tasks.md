@@ -269,7 +269,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 ## 8. [M3] Plugin migrations and log masking
 
-- [ ] 8.1 Write the failing tests for this group's red rows. Verify: they fail for the missing migration operation and masker.
+- [x] 8.1 Write the failing tests for this group's red rows. Verify: they fail for the missing migration operation and masker.
 - [ ] 8.2 Implement D10: the `migrate_settings` operation at the queue head, outside the 10-operation bound and retargeted by a repeat reload; the `pluginVersion` write moved out of `reconcilePlugins` (`instance_manager.dart:1312-1320`); the `migrateSettings` hook with secret placeholders; the gate (`invalid_state`, with stop and delete exempt); the recovery (a valid save records the loaded version); and startup reconciliation. Verify: the plugin-version rows and `migration_hook_result_applied` pass.
 - [ ] 8.3 Implement D11: `SecretMasker` at log ingestion, rebuilt on secret changes; `replaced_secrets` pruned hourly after 24 h; substring matching from 6 characters, whole-word matching below that. Verify: the log-streaming rows pass, and this group's rows are flipped green.
 

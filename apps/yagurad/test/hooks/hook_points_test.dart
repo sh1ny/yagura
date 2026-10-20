@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -45,6 +46,40 @@ void main() {
     expect(launch.args.last, '-freezecheck');
     expect(launch.args, containsAllInOrder(['-name', 'Friends', '-public']));
     expect(launch.env, containsPair('SteamAppId', '221100'));
+  });
+
+  test('migration_hook_result_applied', () async {
+    final env = TestEnv();
+    // The hook reports the versions it was called with in the server name and
+    // hands the secret placeholder back as it received it.
+    env.installValheim(
+      hooks:
+          'exports.migrateSettings = function (ctx) {'
+          ' const settings = Object.assign({}, ctx.settings);'
+          ' settings.serverName = ctx.fromVersion + ">" + ctx.toVersion;'
+          ' return {settings: settings}; };',
+    );
+    final daemon = await env.start();
+    final instance = await createInstalled(daemon);
+
+    env.editValheim('version: 0.1.0', 'version: 0.2.0');
+    await daemon.instances.reloadPlugins();
+    final migration = daemon.operations
+        .listForInstance(instance.id)
+        .singleWhere((op) => op.kind.wireName == 'migrate_settings');
+    final done = await daemon.operations.whenDone(migration.id);
+
+    expect(done.status, OperationStatus.succeeded);
+    final after = daemon.instances.get(instance.id);
+    expect(after.settings, containsPair('serverName', '0.1.0>0.2.0'));
+    expect(after.pluginVersion, '0.2.0');
+    expect(after.revision, instance.revision + 1);
+    expect(after.state, InstanceState.stopped);
+    final file = jsonDecode(
+      File(p.join(instance.directory, 'instance.json')).readAsStringSync(),
+    ) as Map<String, Object?>;
+    expect(file['plugin'], containsPair('version', '0.2.0'));
+    expect(file['settings'], containsPair('serverName', '0.1.0>0.2.0'));
   });
 
   test('post_stop_hook_runs_after_the_server_stopped', () async {
