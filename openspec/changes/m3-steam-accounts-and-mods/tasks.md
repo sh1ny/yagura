@@ -355,7 +355,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
   - the State & Ownership and Resource Bounds rows this design adds (accounts 32, mods per instance 256, prompts, `WatchPrompts` 32, bound files 64, key rules 1,024, update check).
 
   Verify: each is present in `openspec/architecture.md`.
-- [ ] 11.4 Run every package's tests on Windows CI and `openspec validate --all --strict`, and run the elevated workflow once for this change's `elevated` rows. Verify: everything passes, every test-map row is green, and the agent-verified exit criteria 1, 4, 5 and 6 are recorded in `docs/milestones/m3.md` with run links.
+- [x] 11.4 Run every package's tests on Windows CI and `openspec validate --all --strict`, and run the elevated workflow once for this change's `elevated` rows. Verify: everything passes, every test-map row is green, and the agent-verified exit criteria 1, 4, 5 and 6 are recorded in `docs/milestones/m3.md` with run links.
 
 ## Workflow follow-up
 
