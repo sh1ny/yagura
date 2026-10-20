@@ -9,16 +9,17 @@ import 'package:yagurad/src/api/reflection.dart';
 import '../support/api_support.dart';
 import '../support/daemon_support.dart';
 
-/// The cells of the M1 row of "Methods by daemon version" in
+/// The cells of the newest row of "Methods by daemon version" in
 /// `docs/protocol.md`: the services served and the methods not implemented.
-({String served, String missing}) m1Row() {
+({String served, String missing}) latestRow() {
   final text = File('../../docs/protocol.md').readAsStringSync();
   final start = text.indexOf('## Methods by daemon version');
   expect(start, isNonNegative, reason: 'the section exists');
   final row = text
       .substring(start)
       .split('\n')
-      .firstWhere((line) => line.startsWith('| M1 '));
+      .where((line) => RegExp(r'^\| M\d+ ').hasMatch(line))
+      .last;
   final cells = row.split('|').map((c) => c.trim()).toList();
   // ['', version, served, missing, '']
   return (served: cells[2], missing: cells[3]);
@@ -65,7 +66,7 @@ Future<bool> isNotImplemented(ApiHarness api, String method) async {
 }
 
 void main() {
-  test('m1_row_matches_the_server', () async {
+  test('latest_row_matches_the_server', () async {
     final env = TestEnv()..installValheim();
     final api = await ApiHarness.start(env);
     final index = DescriptorIndex(pb.yaguraDescriptorSet);
@@ -76,7 +77,7 @@ void main() {
 
     // The services the row says are served (the first words of each
     // backticked name, with the stubs in parentheses).
-    final row = m1Row();
+    final row = latestRow();
     final served = backticked(row.served);
     final reflected = await api.channel
         .createCall(
@@ -108,7 +109,7 @@ void main() {
 
     // The methods the row says are not implemented.
     final stubs = [
-      for (final name in ['Pairing', 'Steam', 'Mods', 'Rcon', 'Firewall'])
+      for (final name in ['Pairing', 'Mods', 'Rcon', 'Firewall'])
         ...index.methods['yagura.v1.$name']!.map((m) => '$name.$m'),
     ];
     expect(
@@ -151,7 +152,7 @@ void main() {
       unimplemented,
       documented,
       reason:
-          'the methods answering not_implemented are exactly those the M1 row '
+          'the methods answering not_implemented are exactly those the newest row '
           'lists',
     );
   });

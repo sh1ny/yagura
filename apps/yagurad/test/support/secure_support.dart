@@ -126,6 +126,7 @@ class PairedDevice {
   late final pb.PairingClient pairing = pb.PairingClient(channel);
   late final pb.InstancesClient instances = pb.InstancesClient(channel);
   late final pb.OperationsClient operations = pb.OperationsClient(channel);
+  late final pb.SteamClient steam = pb.SteamClient(channel);
   late final pb.LogsClient logs = pb.LogsClient(channel);
 
   String get sha256 => Certificate.parse(certificate).sha256;

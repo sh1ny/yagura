@@ -204,6 +204,29 @@ class FakeSteamService implements SteamService {
     reporter.progress(percent: 100, bytesDone: 5000, bytesTotal: 5000);
   }
 
+  /// The logins run, by account id.
+  final logins = <SteamLoginRequest>[];
+
+  /// When set, a login fails with this.
+  YaguraException? loginFailure;
+
+  /// The installations removed.
+  final removed = <String>[];
+
+  @override
+  Future<void> login(
+    SteamLoginRequest request,
+    SteamRunReporter reporter,
+    CancelToken cancel,
+  ) async {
+    logins.add(request);
+    reporter.step('steam_login');
+    if (loginFailure case final error?) throw error;
+  }
+
+  @override
+  Future<void> removeInstallation(String account) async => removed.add(account);
+
   @override
   Future<void> sweepStrays() async {
     sweeps++;
@@ -355,6 +378,7 @@ class TestEnv {
     VersionSweeper? versionSweeper,
     FirewallBackend? firewall,
     Duration firewallTimeout = const Duration(seconds: 30),
+    int maxRetainedOperationEvents = 2000,
     // Nothing polls by itself unless a test says so: tests call `pollNow`.
     LogHubOptions logOptions = const LogHubOptions.manual(),
   }) async {
@@ -389,6 +413,7 @@ class TestEnv {
         versionSweeper: versionSweeper,
         firewall: firewall,
         firewallTimeout: firewallTimeout,
+        maxRetainedOperationEvents: maxRetainedOperationEvents,
         logOptions: logOptions,
         hookHost: hookHost,
         os: os,

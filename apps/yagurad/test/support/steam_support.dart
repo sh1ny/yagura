@@ -5,6 +5,9 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/files/files.dart';
+import 'package:yagurad/src/operations/cancel_token.dart';
+import 'package:yagurad/src/operations/prompt_broker.dart';
 import 'package:yagurad/src/platform/disk_space.dart';
 import 'package:yagurad/src/steam/steam.dart';
 
@@ -83,11 +86,25 @@ class SteamHarness {
     StrayProcessControl? strays,
     int freeBytes = 1 << 40,
     bool ready = true,
+    // The fake writes its logs and holds its output back until it exits, like
+    // SteamCMD (design D15).
+    bool realOutput = false,
+    Duration? codeWait,
+    Duration? mobileWait,
+    Duration? loginSilence,
+    Duration? loginCap,
   }) : _fakeEnvironment = {
          'FAKE_STEAMCMD_RECORD': p.join(env.root.path, 'fake_steamcmd.jsonl'),
+         'FAKE_STEAMCMD_LOGIN_SCRIPT': p.join(
+           env.root.path,
+           'login_script.json',
+         ),
+         if (realOutput) 'FAKE_STEAMCMD_REAL_OUTPUT': '1',
          ...fakeEnvironment,
        },
        free = freeBytes {
+    script = LoginScript(_fakeEnvironment['FAKE_STEAMCMD_LOGIN_SCRIPT']!)
+      ..rules([]);
     if (ready) markReady();
     launcher = SpyLauncher();
     service = SteamCmdService(
@@ -104,6 +121,10 @@ class SteamHarness {
       totalTimeout: totalTimeout,
       sweepRetry: sweepRetry,
       pollInterval: pollInterval,
+      codeWait: codeWait ?? const Duration(minutes: 15),
+      mobileWait: mobileWait ?? const Duration(minutes: 2),
+      loginSilence: loginSilence ?? const Duration(seconds: 60),
+      loginCap: loginCap ?? const Duration(minutes: 10),
       log: log.add,
     );
     addTearDown(service.close);
@@ -111,6 +132,9 @@ class SteamHarness {
 
   final TestEnv env;
   final Map<String, String> _fakeEnvironment;
+
+  /// What the fake answers to `+login` (see its header).
+  late final LoginScript script;
 
   /// Free bytes the probe reports; change it between runs.
   int free;
@@ -147,6 +171,32 @@ class SteamHarness {
   ];
 }
 
+/// The login script of the fake SteamCMD: a JSON file read at every run, so a
+/// test can change the answers between runs.
+class LoginScript {
+  LoginScript(this.path);
+
+  final String path;
+
+  /// Replaces the rules (see the fake's header).
+  void rules(List<Map<String, Object?>> rules) =>
+      File(path).writeAsStringSync(jsonEncode({'rules': rules}));
+}
+
+/// A bootstrap that only creates the installation directory, so tests of
+/// accounts do not unpack an archive for each one.
+class DirectoryBootstrap extends SteamCmdBootstrap {
+  DirectoryBootstrap();
+
+  @override
+  Future<void> install(
+    ConfinedFs fs,
+    String installation, {
+    CancelToken? cancel,
+    SteamProcessLauncher? launcher,
+  }) async => fs.createDirectory(installation);
+}
+
 /// A reporter that records everything a Steam run reports.
 class RecordingReporter implements SteamRunReporter {
   final steps = <String>[];
@@ -180,6 +230,13 @@ class RecordingReporter implements SteamRunReporter {
 
   @override
   void warn(String warning) => warnings.add(warning);
+
+  /// The prompts the run raised; nobody answers them.
+  final prompts = PromptBroker();
+
+  @override
+  PromptTicket prompt(PromptSpec spec) =>
+      prompts.raise(spec, const PromptSubject(operationId: 'recording'));
 }
 
 /// A minimal tar archive (ustar) of [files], so a test can serve something

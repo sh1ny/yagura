@@ -144,10 +144,6 @@ void main() {
         api.instances.applyConfig(pb.LifecycleRequest(instanceId: instance.id)),
         failsWithStatus(StatusCode.unimplemented, 'not_implemented'),
       );
-      await expectLater(
-        api.operations.respondToPrompt(pb.RespondToPromptRequest()),
-        failsWithStatus(StatusCode.unimplemented, 'not_implemented'),
-      );
     });
   });
 
@@ -158,10 +154,6 @@ void main() {
 
       await expectLater(
         pb.PairingClient(channel).listDevices(pb.ListDevicesRequest()),
-        failsWithStatus(StatusCode.unimplemented, 'not_implemented'),
-      );
-      await expectLater(
-        pb.SteamClient(channel).listAccounts(pb.ListAccountsRequest()),
         failsWithStatus(StatusCode.unimplemented, 'not_implemented'),
       );
       await expectLater(

@@ -48,6 +48,9 @@
 // `+login`) and `user` (both optional) match prints its `lines`, then hangs
 // (`stall`), exits with `exit`, or carries on if it has neither. A rule with
 // `"scenario": "<name>"` plays that bundled transcript instead (see below).
+// A rule with `"unless": "<file>"` is skipped while that file exists, and one
+// with `"creates": "<file>"` creates it when it is chosen, which lets a script
+// change its answer after a login (a cached login that works from then on).
 //
 // Login transcripts: FAKE_STEAMCMD_LOGIN=<name> replaces SteamCMD's reply to
 // `+login <user> ...`. The lines are the spike's
@@ -454,6 +457,8 @@ Map<String, Object?>? _loginRule(File script, String user, int argc) {
     final r = rule as Map<String, Object?>;
     if (r['argc'] case final int n when n != argc) continue;
     if (r['user'] case final String u when u != user) continue;
+    if (r['unless'] case final String f when File(f).existsSync()) continue;
+    if (r['creates'] case final String f) File(f).writeAsStringSync('');
     return r;
   }
   return json['default'] as Map<String, Object?>?;

@@ -220,7 +220,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 ## 5. [M3] Steam accounts, Steam Guard and prompts
 
-- [ ] 5.1 Write the failing tests for this group's red rows against the fake SteamCMD transcripts from task 1.2. Verify: they fail because the Steam service is still a stub.
+- [x] 5.1 Write the failing tests for this group's red rows against the fake SteamCMD transcripts from task 1.2. Verify: they fail because the Steam service is still a stub.
 - [ ] 5.2 Implement the `Steam` service in place of its stub in `api/stub_apis.dart` (D1):
   - `ListAccounts`, `AddAccount`, `ReauthAccount` and `RemoveAccount` (`account_in_use`, `account_exists`, `too_many_accounts`);
   - one SteamCMD installation per account under `<data>/steamcmd/<id>/`;

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagura_proto/yagura_proto.dart' as pb;
 import 'package:yagurad/src/errors.dart';
 import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/operations/operations.dart';
@@ -11,6 +12,7 @@ import 'package:yagurad/src/platform/disk_space.dart';
 import 'package:yagurad/src/steam/steam.dart';
 
 import '../support/daemon_support.dart';
+import '../support/steam_account_support.dart';
 import '../support/steam_support.dart';
 
 void main() {
@@ -116,6 +118,46 @@ void main() {
     );
 
     expect(steam.state.isReady('anonymous'), isFalse);
+  });
+
+  test('account_installation_bootstrapped', () async {
+    final env = TestEnv();
+    final server = await serveArchive(
+      body: tarArchive({
+        'steamcmd.exe': utf8.encode('MZ placeholder'),
+        'steamcmd.sh': utf8.encode('#!/bin/sh'),
+      }),
+    );
+    final rig = await AccountRig.start(
+      env: env,
+      realOutput: false,
+      bootstrap: SteamCmdBootstrap(
+        source: Uri.parse('http://127.0.0.1:${server.port}/steamcmd.tar'),
+      ),
+    );
+    rig.steam.script.rules([loginRule(2, 'code_accepted')]);
+
+    final op = await rig.finish((await rig.add('srvadmin')).id);
+
+    expect(op.status, pb.OperationStatus.OPERATION_STATUS_SUCCEEDED);
+    final account = await rig.accountNamed('srvadmin');
+    final dir = rig.installationOf(account.id);
+    expect(account.id, matches(RegExp(r'^acct_[0-9a-f]{12}$')));
+    expect(
+      File(p.join(dir, 'steamcmd.exe')).existsSync(),
+      isTrue,
+      reason: 'a separate installation under <data>/steamcmd was unpacked',
+    );
+    expect(rig.steam.state.isReady(account.id), isTrue);
+    // The self-update run, its check run and the login run all ran in it.
+    final runs = rig.steam.runs();
+    expect(runs, hasLength(3));
+    for (final run in runs) {
+      expect(p.equals(run['cwd']! as String, dir), isTrue);
+    }
+    // The anonymous installation is not touched.
+    expect(Directory(rig.steam.installation).listSync(), isEmpty);
+    expect(rig.accountInstallations(), [account.id]);
   });
 
   test('steamcmd_download_fails', () async {
