@@ -328,6 +328,7 @@ class Win32Files {
   static const fileFullDirectoryInformation = 2;
   static const fileBasicInformation = 4;
   static const fileStandardInformation = 5;
+  static const fileInternalInformation = 6;
   static const fileRenameInformation = 10;
   static const fileDispositionInformation = 13;
   static const fileEndOfFileInformation = 20;

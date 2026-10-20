@@ -18,6 +18,7 @@ class ConfinedEntry {
     required this.modified,
     required this.created,
     this.links = 1,
+    this.fileId = '',
   });
 
   /// The entry's own name (no directory part).
@@ -39,6 +40,11 @@ class ConfinedEntry {
 
   /// How many names the file has (hard links); 1 where the host does not say.
   final int links;
+
+  /// What identifies the file on its volume (the NTFS file index), or empty
+  /// where the host does not say; a log that was replaced by a new file has
+  /// another one.
+  final String fileId;
 
   @override
   String toString() => 'ConfinedEntry($name)';

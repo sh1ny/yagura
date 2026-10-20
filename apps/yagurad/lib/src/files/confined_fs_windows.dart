@@ -777,40 +777,50 @@ class WindowsConfinedBackend implements ConfinedBackend {
     return (info.cast<Uint32>().value, (info + 4).cast<Uint32>().value);
   });
 
-  ConfinedEntry _entryOf(int handle, String name, ConfinedPath path) =>
-      using((arena) {
-        final (attributes, tag) = _attributeTag(handle, path);
-        final block = arena<Uint8>(16);
-        final basic = arena<Uint8>(40);
-        var status = _nt.ntQueryInformationFile(
-          handle,
-          block.cast(),
-          basic.cast(),
-          40,
-          Win32Files.fileBasicInformation,
-        );
-        if (status < 0) throw _fail(status, path, 'query times');
-        final standard = arena<Uint8>(24);
-        status = _nt.ntQueryInformationFile(
-          handle,
-          block.cast(),
-          standard.cast(),
-          24,
-          Win32Files.fileStandardInformation,
-        );
-        if (status < 0) throw _fail(status, path, 'query size');
-        final isDirectory = attributes & Win32Files.attributeDirectory != 0;
-        return ConfinedEntry(
-          name: name,
-          isDirectory: isDirectory,
-          isLink: _linkLike(attributes, tag),
-          size: isDirectory ? 0 : (standard + 8).cast<Int64>().value,
-          modified: _time((basic + 16).cast<Int64>().value),
-          created: _time(basic.cast<Int64>().value),
-          // FILE_STANDARD_INFORMATION.NumberOfLinks
-          links: (standard + 16).cast<Uint32>().value,
-        );
-      });
+  ConfinedEntry _entryOf(int handle, String name, ConfinedPath path) => using((
+    arena,
+  ) {
+    final (attributes, tag) = _attributeTag(handle, path);
+    final block = arena<Uint8>(16);
+    final basic = arena<Uint8>(40);
+    var status = _nt.ntQueryInformationFile(
+      handle,
+      block.cast(),
+      basic.cast(),
+      40,
+      Win32Files.fileBasicInformation,
+    );
+    if (status < 0) throw _fail(status, path, 'query times');
+    final standard = arena<Uint8>(24);
+    status = _nt.ntQueryInformationFile(
+      handle,
+      block.cast(),
+      standard.cast(),
+      24,
+      Win32Files.fileStandardInformation,
+    );
+    if (status < 0) throw _fail(status, path, 'query size');
+    final internal = arena<Uint8>(8);
+    status = _nt.ntQueryInformationFile(
+      handle,
+      block.cast(),
+      internal.cast(),
+      8,
+      Win32Files.fileInternalInformation,
+    );
+    final isDirectory = attributes & Win32Files.attributeDirectory != 0;
+    return ConfinedEntry(
+      name: name,
+      isDirectory: isDirectory,
+      isLink: _linkLike(attributes, tag),
+      size: isDirectory ? 0 : (standard + 8).cast<Int64>().value,
+      modified: _time((basic + 16).cast<Int64>().value),
+      created: _time(basic.cast<Int64>().value),
+      // FILE_STANDARD_INFORMATION.NumberOfLinks
+      links: (standard + 16).cast<Uint32>().value,
+      fileId: status < 0 ? '' : internal.cast<Int64>().value.toRadixString(16),
+    );
+  });
 
   static DateTime _time(int fileTime) => DateTime.fromMicrosecondsSinceEpoch(
     (fileTime - 116444736000000000) ~/ 10,
