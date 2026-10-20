@@ -19,6 +19,25 @@ class PortableConfinedBackend implements ConfinedBackend {
   /// The confined directory (absolute, normalised).
   final String root;
 
+  /// A symbolic link stands in for a junction (the Linux host is M5).
+  @override
+  void createJunction(ConfinedPath path, String target) {
+    if (path.isRoot) throw FileSystemException('not a file', root);
+    Link(p.join(_parent(path), path.name)).createSync(target);
+  }
+
+  @override
+  String? junctionTarget(ConfinedPath path) {
+    if (path.isRoot) return null;
+    final parent = _checked(path.parent);
+    if (parent == null) return null;
+    final entry = p.join(parent, path.name);
+    return FileSystemEntity.typeSync(entry, followLinks: false) ==
+            FileSystemEntityType.link
+        ? Link(entry).targetSync()
+        : null;
+  }
+
   @override
   void setSecurity(
     ConfinedPath path,

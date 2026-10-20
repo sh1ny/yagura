@@ -7,9 +7,14 @@ import 'confined_fs.dart';
 /// Opening the root is part of every operation, so an instance directory
 /// replaced by a link or junction fails the next operation on it with
 /// `sandbox_violation`.
+///
+/// [recorded] is the instance's `{staged path -> expected target}` map of mod
+/// junctions (design D7, ADR 0015), built by the mods service from the
+/// instance_mods rows; empty, as for every caller that does not stage mods,
+/// every link is refused.
 class InstanceFs extends ConfinedFs {
   /// Confines to the instance directory [directory].
-  InstanceFs(super.directory);
+  InstanceFs(super.directory, {super.recorded});
 
   /// The marker file `.yagura/deleting` is there while a delete with files is in
   /// progress (design D25).

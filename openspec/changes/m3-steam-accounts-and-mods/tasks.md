@@ -249,7 +249,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
   - snapshot walks skip recorded paths.
 
   Verify: these tests fail because the junction FFI and the InstanceFs exception are missing.
-- [ ] 7.2 Implement the junction FFI (`FSCTL_SET_REPARSE_POINT` and `FSCTL_GET_REPARSE_POINT`, relative to the instance root handle) and the recorded-junction exception in `InstanceFs` and `ConfinedFs` (D7, ADR 0015). Verify: the extended `windows` tests pass on Windows CI.
+- [x] 7.2 Implement the junction FFI (`FSCTL_SET_REPARSE_POINT` and `FSCTL_GET_REPARSE_POINT`, relative to the instance root handle) and the recorded-junction exception in `InstanceFs` and `ConfinedFs` (D7, ADR 0015). Verify: the extended `windows` tests pass on Windows CI.
 - [ ] 7.3 Implement the `Mods` service in place of its stub:
   - `SetMods`, with `expected_revision`, `too_many_mods` (256), roles, and background metadata that fixes each name once (`@<item id>` fallback);
   - `ListMods`, `ApplyMods` (`instance_running`), `CheckModUpdates` (subject `host` for all instances) and `UpdateMods`;

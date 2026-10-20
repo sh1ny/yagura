@@ -311,4 +311,233 @@ exports.onPreStart = () => ({
     }
     if (skippedSymlink) markTestSkipped(_noSymlinks);
   });
+
+  group('recorded mod junctions (design D7, ADR 0015)', () {
+    late Directory store;
+    late Directory instance;
+    const staged = 'server/@mod';
+
+    setUp(() {
+      // The content store's version directory, and an instance whose staged
+      // entry `server/@mod` is recorded as a junction to it.
+      store = makeDirectory(p.join('content', 'workshop', '221100', '7', '1'), {
+        'mod.pbo': 'addon',
+        'keys/a.bikey': 'key',
+      });
+      instance = makeDirectory('instance', {
+        'server/start.cfg': 'ok',
+        'save/world.db': 'world',
+      });
+    });
+
+    InstanceFs recordedFs() =>
+        InstanceFs(instance.path, recorded: {staged: store.path});
+
+    /// Stages the junction through the daemon's own call.
+    InstanceFs stage() {
+      final fs = recordedFs();
+      fs.createJunction(staged, store.path);
+      _planted.add(p.join(instance.path, staged));
+      return fs;
+    }
+
+    test('junction_created_and_read_back_relative_to_the_instance_root', () {
+      final fs = stage();
+      final link = p.join(instance.path, staged);
+
+      // A real junction: the OS sees a link, with the right target.
+      expect(
+        FileSystemEntity.typeSync(link, followLinks: false),
+        FileSystemEntityType.link,
+      );
+      expect(Link(link).targetSync().toLowerCase(), store.path.toLowerCase());
+      expect(
+        fs.junctionTarget(staged)?.toLowerCase(),
+        store.path.toLowerCase(),
+      );
+      expect(fs.junctionTarget('server/start.cfg'), isNull);
+      expect(fs.junctionTarget('server/nothing'), isNull);
+
+      // A name that is taken is not replaced, and nothing is created below a
+      // link.
+      expect(() => fs.createJunction(staged, store.path), throwsA(anything));
+      expect(
+        () => fs.createJunction('$staged/x', store.path),
+        sandboxViolation(staged),
+      );
+      expect(contentsOf(store.path), {
+        'mod.pbo': 'addon',
+        'keys': '<directory>',
+        'keys\\a.bikey': 'key',
+      });
+    });
+
+    test('read_continues_into_the_content_store', () async {
+      final fs = stage();
+
+      expect(fs.readBytes('$staged/mod.pbo'), 'addon'.codeUnits);
+      expect(fs.readBytes('$staged/keys/a.bikey'), 'key'.codeUnits);
+      expect(
+        fs.list(staged).map((e) => e.name),
+        unorderedEquals(['mod.pbo', 'keys']),
+      );
+      expect(fs.stat('$staged/mod.pbo')?.size, 'addon'.length);
+      expect(fs.exists('$staged/missing.txt'), isFalse);
+      expect(fs.stat(staged)?.isDirectory, isTrue);
+      expect(fs.treeSize('$staged/keys'), 'key'.length);
+
+      // The parent lists the junction as the link it is; an unrecorded
+      // sibling junction is still refused.
+      expect(
+        fs.list('server').singleWhere((e) => e.name == '@mod').isLink,
+        isTrue,
+      );
+      final other = makeDirectory('other', {'x.txt': 'x'});
+      fs.createJunction('server/@other', other.path);
+      _planted.add(p.join(instance.path, 'server', '@other'));
+      expect(
+        () => fs.readBytes('server/@other/x.txt'),
+        sandboxViolation('server/@other'),
+      );
+
+      // The store's own links stay refused: the walk inside is a plain
+      // confined one.
+      final outside = makeDirectory('outside', {'secret.txt': 's'});
+      expect(
+        await plant('junction', p.join(store.path, 'jump'), outside.path),
+        isTrue,
+      );
+      expect(
+        () => fs.readBytes('$staged/jump/secret.txt'),
+        sandboxViolation('jump'),
+      );
+      // Without the recorded map the same junction is refused.
+      expect(
+        () => InstanceFs(instance.path).readBytes('$staged/mod.pbo'),
+        sandboxViolation(staged),
+      );
+    });
+
+    test('write_below_a_recorded_junction_is_refused', () async {
+      final fs = stage();
+      final before = contentsOf(store.path);
+
+      final operations = <String, void Function()>{
+        'write': () => fs.writeBytes('$staged/new.txt', [1]),
+        'overwrite': () => fs.writeBytes('$staged/mod.pbo', [1]),
+        'open write': () => fs.openWrite('$staged/mod.pbo'),
+        'atomic write': () => fs.writeAtomic('$staged/mod.pbo', [1]),
+        'create directory': () => fs.createDirectory('$staged/sub'),
+        'delete': () => fs.delete('$staged/mod.pbo'),
+        'delete tree': () => fs.deleteTree('$staged/keys'),
+        'rename out': () => fs.rename('$staged/mod.pbo', 'server/x'),
+        'rename in': () => fs.rename('server/start.cfg', '$staged/x'),
+        'set security': () => fs.setSecurity('$staged/mod.pbo', 'D:'),
+        'copy in': () => fs.copyIn(instance.path, '$staged/copy'),
+      };
+      for (final MapEntry(:key, :value) in operations.entries) {
+        expect(value, sandboxViolation(staged), reason: key);
+      }
+      // The binder is an edit like any other.
+      await expectLater(
+        Future.sync(
+          () => ConfigBinder(fs).apply(
+            edits: [
+              FileEdit(path: '$staged/a.json', format: 'json', patch: {'a': 1}),
+            ],
+          ),
+        ),
+        sandboxViolation(staged),
+      );
+
+      expect(contentsOf(store.path), before);
+    });
+
+    test('recorded_path_with_another_target_is_sandbox_violation', () async {
+      var skippedSymlink = false;
+      for (final kind in _linkKinds) {
+        final elsewhere = makeDirectory('elsewhere-$kind', {
+          'mod.pbo': 'not the store',
+        });
+        final before = contentsOf(elsewhere.path);
+        final link = p.join(instance.path, 'server', '@$kind');
+        if (!await plant(kind, link, elsewhere.path)) {
+          skippedSymlink = true;
+          continue;
+        }
+        final fs = InstanceFs(
+          instance.path,
+          recorded: {'server/@$kind': store.path},
+        );
+
+        final operations = <String, void Function()>{
+          'read': () => fs.readBytes('server/@$kind/mod.pbo'),
+          'stat': () => fs.stat('server/@$kind/mod.pbo'),
+          'stat link': () => fs.stat('server/@$kind'),
+          'list': () => fs.list('server/@$kind'),
+          'tree size': () => fs.treeSize('server/@$kind/keys'),
+          'write': () => fs.writeBytes('server/@$kind/new', [1]),
+        };
+        for (final MapEntry(:key, :value) in operations.entries) {
+          expect(
+            value,
+            sandboxViolation('server/@$kind'),
+            reason: '$kind: $key',
+          );
+        }
+        expect(contentsOf(elsewhere.path), before, reason: kind);
+      }
+      if (skippedSymlink) markTestSkipped(_noSymlinks);
+    });
+
+    test('recorded_path_replaced_by_a_directory_is_an_ordinary_one', () {
+      // The server removed the junction and made a real folder: nothing
+      // redirects, so the walk is the plain one.
+      makeDirectory(p.join('instance', 'server', '@mod'), {'own.txt': 'mine'});
+      final fs = recordedFs();
+
+      expect(fs.readBytes('$staged/own.txt'), 'mine'.codeUnits);
+      expect(() => fs.writeBytes('$staged/x', [1]), sandboxViolation(staged));
+    });
+
+    test('snapshot_walks_skip_recorded_paths', () {
+      final fs = stage();
+      final destination = p.join(temp.path, 'copy');
+      final before = contentsOf(store.path);
+
+      // The walk would otherwise fail on the link.
+      expect(
+        () => InstanceFs(instance.path).treeSize('server'),
+        sandboxViolation(staged),
+      );
+      expect(fs.treeSize('server'), 'ok'.length);
+      expect(fs.copyOut('server', destination), 'ok'.length);
+      expect(contentsOf(destination), {'start.cfg': 'ok'});
+      expect(contentsOf(store.path), before);
+    });
+
+    test('delete_removes_the_recorded_link_only', () {
+      final fs = stage();
+      final before = contentsOf(store.path);
+
+      fs.delete(staged);
+
+      expect(
+        FileSystemEntity.typeSync(
+          p.join(instance.path, staged),
+          followLinks: false,
+        ),
+        FileSystemEntityType.notFound,
+      );
+      expect(contentsOf(store.path), before);
+      _planted.clear();
+
+      // Deleting the instance with the link in place leaves the store alone.
+      final again = stage();
+      again.deleteTree('');
+      expect(instance.existsSync(), isFalse);
+      expect(contentsOf(store.path), before);
+      _planted.clear();
+    });
+  });
 }

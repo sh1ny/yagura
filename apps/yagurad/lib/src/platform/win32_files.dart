@@ -238,6 +238,47 @@ class Win32Files {
         int Function(Pointer<Utf16>, Pointer<Utf16>, int)
       >('GetLongPathNameW');
 
+  /// `DeviceIoControl(handle, code, in, inSize, out, outSize, &returned,
+  /// null)` on a synchronous handle: nonzero on success.
+  late final int Function(
+    int,
+    int,
+    Pointer<Void>,
+    int,
+    Pointer<Void>,
+    int,
+    Pointer<Uint32>,
+    Pointer<Void>,
+  )
+  deviceIoControl = _kernel
+      .lookupFunction<
+        Int32 Function(
+          IntPtr,
+          Uint32,
+          Pointer<Void>,
+          Uint32,
+          Pointer<Void>,
+          Uint32,
+          Pointer<Uint32>,
+          Pointer<Void>,
+        ),
+        int Function(
+          int,
+          int,
+          Pointer<Void>,
+          int,
+          Pointer<Void>,
+          int,
+          Pointer<Uint32>,
+          Pointer<Void>,
+        )
+      >('DeviceIoControl');
+
+  // ---- control codes ---------------------------------------------------------
+
+  static const fsctlSetReparsePoint = 0x900A4;
+  static const fsctlGetReparsePoint = 0x900A8;
+
   // ---- NTSTATUS values (as unsigned 32-bit) ----------------------------------
 
   static const statusNoSuchFile = 0xC000000F;
@@ -261,6 +302,7 @@ class Win32Files {
   static const fileAddSubdirectory = 0x4;
   static const fileTraverse = 0x20;
   static const fileReadAttributes = 0x80;
+  static const fileWriteEa = 0x10;
   static const fileWriteAttributes = 0x100;
   static const delete = 0x10000;
   static const synchronize = 0x100000;

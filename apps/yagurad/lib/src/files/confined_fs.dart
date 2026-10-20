@@ -123,6 +123,16 @@ abstract interface class ConfinedBackend {
   /// Renames [from] to [to] within the root, replacing a file at [to].
   void rename(ConfinedPath from, ConfinedPath to);
 
+  /// Creates a directory at [path] (which must not exist) and makes it a
+  /// junction to the absolute directory [target], through a handle opened
+  /// relative to its parent.
+  void createJunction(ConfinedPath path, String target);
+
+  /// Where the junction at [path] points, without the `\??\` prefix. Null
+  /// when nothing is there or the entry is no link at all; any other kind of
+  /// link fails `sandbox_violation`.
+  String? junctionTarget(ConfinedPath path);
+
   /// Sets the DACL of the entry [path] from [sddl], and its owner when
   /// [ownerSid] is given, through a handle opened without following links:
   /// only that object changes, nothing propagates (ADR 0015). The DACL is
@@ -155,25 +165,43 @@ abstract interface class ConfinedBackend {
 /// is absolute, contains `..` or names an alternate data stream is a
 /// `sandbox_violation`. [relative] turns an absolute path inside the root into
 /// a relative one.
+///
+/// The one exception to "no link" is a recorded junction (design D7, ADR
+/// 0015): [recorded] maps relative paths to the absolute directory each must
+/// be a junction to. A read that meets a junction there with that target
+/// continues, read-only, in a [ConfinedFs] rooted at the target; a junction of
+/// another target, or any other kind of link, stays a `sandbox_violation`.
+/// Everything below a recorded path refuses writes, edits and deletes, and
+/// [treeSize] and [copyOut] skip the recorded entries.
 class ConfinedFs {
   /// Confines to the directory [root].
-  ConfinedFs(String root)
+  ConfinedFs(String root, {Map<String, String> recorded = const {}})
     : this._(
         p.normalize(p.absolute(root)),
         Platform.isWindows
             ? WindowsConfinedBackend(p.normalize(p.absolute(root)))
             : PortableConfinedBackend(p.normalize(p.absolute(root))),
+        recorded,
       );
 
   /// Confines to [root] with a backend of the caller's choosing.
-  ConfinedFs.withBackend(String root, ConfinedBackend backend)
-    : this._(p.normalize(p.absolute(root)), backend);
+  ConfinedFs.withBackend(
+    String root,
+    ConfinedBackend backend, {
+    Map<String, String> recorded = const {},
+  }) : this._(p.normalize(p.absolute(root)), backend, recorded);
 
-  ConfinedFs._(this.root, this._backend);
+  ConfinedFs._(this.root, this._backend, this._recordedPaths);
 
   /// The confined directory (absolute, normalised).
   final String root;
   final ConfinedBackend _backend;
+  final Map<String, String> _recordedPaths;
+
+  late final List<_Recorded> _recorded = [
+    for (final MapEntry(:key, :value) in _recordedPaths.entries)
+      _Recorded(parse(key), value),
+  ];
 
   static final _random = Random.secure();
 
@@ -240,14 +268,37 @@ class ConfinedFs {
   // ---- reading ---------------------------------------------------------------
 
   /// The entry at [path], or null when it does not exist.
-  ConfinedEntry? stat(String path) => _backend.stat(parse(path));
+  ConfinedEntry? stat(String path) {
+    final parsed = parse(path);
+    final via = _through(parsed);
+    if (via == null) return _backend.stat(parsed);
+    final entry = via.fs.stat(via.rest);
+    if (entry == null || via.rest.isNotEmpty) return entry;
+    // The recorded directory itself, named as the caller named it.
+    return ConfinedEntry(
+      name: parsed.name,
+      isDirectory: entry.isDirectory,
+      isLink: false,
+      size: entry.size,
+      modified: entry.modified,
+      created: entry.created,
+    );
+  }
 
   bool exists(String path) => stat(path) != null;
 
   /// The entries of the directory [path]; links are listed, not followed.
-  List<ConfinedEntry> list(String path) => _backend.list(parse(path));
+  List<ConfinedEntry> list(String path) {
+    final parsed = parse(path);
+    final via = _through(parsed);
+    return via == null ? _backend.list(parsed) : via.fs.list(via.rest);
+  }
 
-  ConfinedReader openRead(String path) => _backend.openRead(parse(path));
+  ConfinedReader openRead(String path) {
+    final parsed = parse(path);
+    final via = _through(parsed);
+    return via == null ? _backend.openRead(parsed) : via.fs.openRead(via.rest);
+  }
 
   /// The whole file. A file over [maxBytes] fails with `file_too_large`.
   Uint8List readBytes(String path, {int? maxBytes}) {
@@ -282,7 +333,7 @@ class ConfinedFs {
   // ---- writing ---------------------------------------------------------------
 
   ConfinedWriter openWrite(String path, {bool exclusive = false}) =>
-      _backend.openWrite(parse(path), exclusive: exclusive);
+      _backend.openWrite(_forWriting(path), exclusive: exclusive);
 
   /// Creates or replaces the file [path] with [bytes].
   void writeBytes(String path, List<int> bytes) {
@@ -301,7 +352,7 @@ class ConfinedFs {
     List<int> bytes, {
     void Function(String temporary, String target)? rename,
   }) {
-    final target = parse(path);
+    final target = _forWriting(path);
     if (target.isRoot) throw _violation(path, 'the root is not a file');
     final temporary = _temporaryFor(target);
     final writer = _backend.openWrite(temporary, exclusive: true);
@@ -340,20 +391,33 @@ class ConfinedFs {
   }
 
   /// Creates the directory [path] and any missing directory above it.
-  void createDirectory(String path) => _backend.createDirectory(parse(path));
+  void createDirectory(String path) =>
+      _backend.createDirectory(_forWriting(path));
+
+  /// Creates the directory [path], which must not exist, as a junction to the
+  /// absolute directory [target]. Needs no privilege.
+  void createJunction(String path, String target) {
+    if (!p.isAbsolute(target)) {
+      throw ArgumentError.value(target, 'target', 'is not an absolute path');
+    }
+    _backend.createJunction(_forWriting(path), p.normalize(target));
+  }
+
+  /// Where the junction at [path] points, or null when there is none.
+  String? junctionTarget(String path) => _backend.junctionTarget(parse(path));
 
   // ---- removing and moving ---------------------------------------------------
 
   /// Deletes one file, link or empty directory.
-  void delete(String path) => _backend.delete(parse(path));
+  void delete(String path) => _backend.delete(_forWriting(path));
 
   /// Deletes [path] and all below it. A link met on the way is removed itself
   /// and never entered. `''` deletes the root too.
-  void deleteTree(String path) => _backend.deleteTree(parse(path));
+  void deleteTree(String path) => _backend.deleteTree(_forWriting(path));
 
   /// Renames [from] to [to], replacing a file there.
   void rename(String from, String to) =>
-      _backend.rename(parse(from), parse(to));
+      _backend.rename(_forWriting(from), _forWriting(to));
 
   // ---- security --------------------------------------------------------------
 
@@ -365,7 +429,7 @@ class ConfinedFs {
     String? ownerSid,
     bool inherit = false,
   }) => _backend.setSecurity(
-    parse(path),
+    _forWriting(path),
     sddl,
     ownerSid: ownerSid,
     inherit: inherit,
@@ -380,11 +444,15 @@ class ConfinedFs {
   int treeSize(String path) => _treeSize(parse(path));
 
   int _treeSize(ConfinedPath path) {
+    if (_recordedAt(path) != null) return 0;
+    final via = _through(path);
+    if (via != null) return via.fs.treeSize(via.rest);
     final entry = _backend.stat(path);
     if (entry == null) return 0;
     if (!entry.isDirectory) return entry.size;
     var total = 0;
     for (final child in _backend.list(path)) {
+      if (_recordedAt(path.child(child.name)) != null) continue;
       if (child.isLink) throw _linkMet(path.child(child.name));
       total += child.isDirectory
           ? _treeSize(path.child(child.name))
@@ -399,6 +467,9 @@ class ConfinedFs {
       _copyOut(parse(path), destination);
 
   int _copyOut(ConfinedPath path, String destination) {
+    if (_recordedAt(path) != null) return 0;
+    final via = _through(path);
+    if (via != null) return via.fs.copyOut(via.rest, destination);
     final entry = _backend.stat(path);
     if (entry == null) {
       throw FileSystemException('no such file or directory', path.toString());
@@ -425,6 +496,7 @@ class ConfinedFs {
     var bytes = 0;
     for (final child in _backend.list(path)) {
       final childPath = path.child(child.name);
+      if (_recordedAt(childPath) != null) continue;
       if (child.isLink) throw _linkMet(childPath);
       bytes += _copyOut(childPath, p.join(destination, child.name));
     }
@@ -433,7 +505,7 @@ class ConfinedFs {
 
   /// Copies the file or directory [source], outside the root, to [path] and
   /// returns the bytes copied. Links in [source] are skipped.
-  int copyIn(String source, String path) => _copyIn(source, parse(path));
+  int copyIn(String source, String path) => _copyIn(source, _forWriting(path));
 
   int _copyIn(String source, ConfinedPath path) {
     final type = FileSystemEntity.typeSync(source, followLinks: false);
@@ -464,6 +536,74 @@ class ConfinedFs {
     return bytes;
   }
 
+  // ---- recorded junctions ----------------------------------------------------
+
+  static String _fold(String name) =>
+      Platform.isWindows ? name.toLowerCase() : name;
+
+  /// The recorded entry [path] is at or below ([strict]: only below).
+  _Recorded? _recordedPrefix(ConfinedPath path, {required bool strict}) {
+    for (final recorded in _recorded) {
+      final count = recorded.path.parts.length;
+      if (count > path.parts.length || (strict && count == path.parts.length)) {
+        continue;
+      }
+      var same = true;
+      for (var i = 0; same && i < count; i++) {
+        same = _fold(recorded.path.parts[i]) == _fold(path.parts[i]);
+      }
+      if (same) return recorded;
+    }
+    return null;
+  }
+
+  /// The recorded entry that is exactly [path].
+  _Recorded? _recordedAt(ConfinedPath path) {
+    final recorded = _recordedPrefix(path, strict: false);
+    return recorded != null && recorded.path.parts.length == path.parts.length
+        ? recorded
+        : null;
+  }
+
+  /// Validates [path] for a change: nothing below a recorded path may be
+  /// written, edited or deleted. The recorded entry itself is a link in its
+  /// parent, which the backend replaces or removes without following it.
+  ConfinedPath _forWriting(String path) {
+    final parsed = parse(path);
+    final recorded = _recordedPrefix(parsed, strict: true);
+    if (recorded != null) {
+      throw _violation(
+        path,
+        '"${recorded.path}" is a recorded mod directory and is read-only',
+      );
+    }
+    return parsed;
+  }
+
+  /// Where a read of [path] continues when it is at or below a recorded path
+  /// whose entry is a junction to the expected directory: a [ConfinedFs] on
+  /// that directory and the rest of the path in it. Null when the path is not
+  /// recorded or the entry is no link (a plain directory, or nothing, is read
+  /// as any other). A junction to another target, or any other link, fails
+  /// `sandbox_violation`.
+  ({ConfinedFs fs, String rest})? _through(ConfinedPath path) {
+    final recorded = _recordedPrefix(path, strict: false);
+    if (recorded == null) return null;
+    final actual = _backend.junctionTarget(recorded.path);
+    if (actual == null) return null;
+    if (!p.equals(actual, recorded.expected)) {
+      throw _violation(
+        path.requested,
+        '"${recorded.path}" is a junction to "$actual", not to '
+        '"${recorded.expected}"',
+      );
+    }
+    return (
+      fs: ConfinedFs(recorded.expected),
+      rest: path.parts.skip(recorded.path.parts.length).join('/'),
+    );
+  }
+
   // ---- errors ----------------------------------------------------------------
 
   YaguraException _linkMet(ConfinedPath path) =>
@@ -471,6 +611,14 @@ class ConfinedFs {
 
   YaguraException _violation(String requested, String why) =>
       confinedViolation(requested, why);
+}
+
+/// A recorded junction: the confined path and the directory it must point to.
+class _Recorded {
+  const _Recorded(this.path, this.expected);
+
+  final ConfinedPath path;
+  final String expected;
 }
 
 /// The `sandbox_violation` for [requested], which is refused because of [why].
