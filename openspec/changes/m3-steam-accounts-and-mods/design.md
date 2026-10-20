@@ -422,7 +422,7 @@ flowchart LR
 ## ADRs
 
 - **In force, constraining this change:** 0001, 0002, 0003, 0004, 0005, 0006, 0008, 0009, 0011, 0014, 0015 (also 0007 and 0012 for the API gate and the service).
-- **To record during apply:** none. D6 and D7 implement ADR 0005 and the junction exception ADR 0015 already states; D2 and D3 implement ADR 0014.
+- **To record during apply:** an amendment note on ADR 0004 for D9's single pass (bindings no longer apply before `onPreStart`). D6 and D7 implement ADR 0005 and the junction exception ADR 0015 already states; D2 and D3 implement ADR 0014.
 
 ## Open Questions
 

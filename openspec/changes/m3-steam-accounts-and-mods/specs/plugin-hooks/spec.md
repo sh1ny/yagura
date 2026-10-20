@@ -11,7 +11,7 @@ The daemon SHALL call these optional hooks when `hooks.js` exports them: `onPost
 
 #### Scenario: Mods-staged hook edits a config
 - **WHEN** `onModsStaged` returns a file edit for `cfggameplay.json` after two mods are staged
-- **THEN** the edit is applied after the bindings and before `onPreStart`, and the start continues
+- **THEN** the edit is applied in the start's config pass after the bindings and before the `onPreStart` edits, and the start continues
 
 #### Scenario: Migration hook result applied
 - **WHEN** `migrateSettings` returns `{"settings": {...}}` that validates against the new schema

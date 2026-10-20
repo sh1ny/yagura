@@ -30,7 +30,7 @@ The daemon SHALL run at most one lifecycle operation per instance at a time and 
 - **THEN** the call fails with `RESOURCE_EXHAUSTED` reason `queue_full` and no operation is created
 
 ### Requirement: Updates stop and restart a running server
-An update or validate of a running instance SHALL stop it with its stop strategy, snapshot its data paths, update the app and any mods with updates, re-apply bindings, run the plugin's `onPostUpdate` hook and apply its file edits (step `apply_config`), and start it again; an update of a stopped instance leaves it stopped.
+An update or validate of a running instance SHALL stop it with its stop strategy, snapshot its data paths, update the app and any mods with updates, run the plugin's `onPostUpdate` hook, then apply the bindings and its file edits in one pass, bindings first (step `apply_config`), and start it again; an update of a stopped instance leaves it stopped.
 
 #### Scenario: Update while running
 - **WHEN** a client updates a running instance

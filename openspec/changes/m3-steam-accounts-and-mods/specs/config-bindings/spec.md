@@ -7,7 +7,7 @@ Applies instance settings to the game configuration files a plugin declares. It 
 ## ADDED Requirements
 
 ### Requirement: Bindings map settings to file keys
-A binding SHALL name a file (relative to the instance root, templated), a format, a key path in that format, and a setting. The daemon SHALL apply all bindings of an instance before `onPreStart` on every start and on `ApplyConfig`.
+A binding SHALL name a file (relative to the instance root, templated), a format, a key path in that format, and a setting. On every start the daemon SHALL apply all bindings of an instance before the process is launched, in one pass with that start's hook file edits: bindings first, then the hook edits in order.
 
 #### Scenario: Scalar binding applied
 - **WHEN** an instance with `maxPlayers: 40` and a binding `{file: serverDZ.cfg, format: dayz-cfg, key: maxPlayers, setting: maxPlayers}` is started

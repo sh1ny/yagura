@@ -2,21 +2,66 @@
 
 ## Metadata
 
-- **Round:** 1
-- **Prior round:** none
-- **Re-check:** this is the round-1 re-check of the nine Required Changes (M1-M9), not a new round. It re-read `design.md` and the delta specs `mod-management`, `steam-content`, `daemon-protocol`, `instance-lifecycle`, `plugin-manifest`, and the main spec `daemon-protocol`. It judged only the applied edits and the contradictions they introduced. A second pass re-checked only the M2 and M7 follow-up edits and the M6 wording, and a third pass re-checked only the M1 follow-through in `plugin-hooks` and the WatchPrompts wording. Reviewer: fresh-context subagent (specwright-reviewer, Claude Code). Skills loaded: none (none named).
+- **Round:** 2
+- **Prior round:** 1
+- **Re-check:** amendment re-check. A spec amendment made during apply (task 3.3) voided the round-1 verdict. The amendment aligns the specs with design D9's single config pass: `specs/config-bindings/spec.md` "Bindings map settings to file keys", `specs/plugin-hooks/spec.md` scenario "Mods-staged hook edits a config", and `proposal.md` "Config bindings" (bindings apply on every start in one pass with the start's hook edits, bindings first; `ApplyConfig` stays unimplemented in M3). This round judged three questions only: whether the amendment makes specs, proposal and design consistent, whether it contradicts anything else, and whether dropping `ApplyConfig` from M3 is coherent with the roadmap.
 - **Reviewer:** fresh-context subagent (specwright-reviewer, Claude Code)
-- **Reviewed:** `proposal.md`, `design.md`, the 10 delta specs (`steam-content`, `config-bindings`, `mod-management`, `plugin-manifest`, `plugin-hooks`, `instance-lifecycle`, `daemon-protocol`, `host-service`, `log-streaming`, `desktop-client`); main specs `steam-content`, `plugin-manifest`, `plugin-hooks`, `instance-lifecycle`, `daemon-protocol`, `host-service`, `daemon-security`; `openspec/architecture.md`; `openspec/roadmap.md` (M3); `openspec/changes/platform-backlog/tasks.md` groups 14-17; ADRs 0004, 0005, 0014, 0015. Source checked: `apps/yagurad/lib/src/instances/lifecycle.dart`, `instances/instance_manager.dart` (reconcilePlugins, recover), `operations/operation_runner.dart`, `steam/steamcmd_service.dart`, `process/launcher_modes.dart`, `process/windows_process_host.dart`, `process/default_host.dart`, `cli/run_command.dart`, `host/migrations.dart`, `host/acl_layout.dart`, `host/data_directory.dart`, `hooks/hook_point.dart`, `hooks/host_api.dart`, `api/operations_api.dart`, `api/stub_apis.dart`, `api/gated_service.dart`, `security/auth_gate.dart`, `security/method_access.dart`, `logs/capture_writer.dart`, `packages/yagura_plugin/lib/src/templates.dart`, `plugins/valheim/plugin.yaml`, `proto/yagura/v1/{operations,steam,mods}.proto`. Skills loaded: `dart-add-unit-test`, `flutter-add-widget-test` (they shape no finding here; the design review has no test code to judge).
+- **Reviewed:** `git diff -- openspec/changes/m3-steam-accounts-and-mods`; `proposal.md`; `design.md` (D7 step 5, D9, T3 diagram, ADRs section); `tasks.md`; the delta specs `config-bindings`, `plugin-hooks`, `instance-lifecycle` and `plugin-manifest` (every delta was grepped for `binding`, `onPreStart` and `ApplyConfig`); main specs `plugin-hooks`, `instance-lifecycle` and `plugin-manifest`; `docs/protocol.md` (methods by version); `docs/plugins/hooks.md`; `openspec/roadmap.md` (M3, M4, Later); `openspec/architecture.md` (ADR table); ADR 0004; `openspec/changes/platform-backlog` (working-tree specs, proposal and tasks, grepped for `ApplyConfig`). Source checked: `apps/yagurad/lib/src/api/instances_api.dart:347-350`, `instances/lifecycle.dart:174,244,309-311,401-402`, `proto/yagura/v1/instances.proto:33`, `security/method_access.dart:45`. Skills loaded: none (none named).
 
 <!-- This verdict covers only the contents reviewed. Editing proposal, specs or design afterward (other than applying Required Changes) voids it. -->
 
 ## Findings
 
-### Critical (blocking)
+### Round 2 (amendment re-check)
+
+**What holds.**
+- The amended config-bindings requirement, the plugin-hooks scenario and the proposal now agree with:
+  - design D9 "Binder": `Start` makes one pass with bindings, `onModsStaged` edits and `onPreStart` edits, in that order;
+  - D7 step 5: `onModsStaged` edits are re-applied with the bindings on every stage step;
+  - the T3 diagram: one binder call after `onPreStart` returns;
+  - `docs/plugins/hooks.md:86`: "the bindings first, then the edits in order".
+- No delta spec or scenario still requires bindings before `onPreStart`, and none requires any `ApplyConfig` behaviour. The remaining `ApplyConfig` mentions all fit "stays unimplemented": the proto method (`instances.proto:33`), the stub that throws `not_implemented` (`instances_api.dart:347-350`), its access entry, and the M1 and M2 rows of `docs/protocol.md`.
+- The config-bindings scenarios "Scalar binding applied", "Bound file missing" and "Missing file created from the plugin template" state their outcome relative to the launch, and the new wording keeps that.
+- Dropping `ApplyConfig` from M3 fits the M3 outcome and exit criteria. They require config files written through round-tripping bindings and manual-edit detection, and the start-time pass meets both. No criterion names a re-apply while the server runs.
+
+#### Critical (blocking)
 
 None.
 
-### Moderate
+#### Moderate
+
+**R2-M1. In-force ADR 0004 still states the ordering the amendment removed.**
+ADR 0004 is accepted, and the design's "ADRs" section lists it as in force and constraining this change. It says "Bindings apply before `onPreStart`; the same parsers are exposed to hooks as host functions for cases bindings cannot express" (`docs/adr/0004-config-bindings-with-round-trip-parsers.md:11`), and the old spec wording came from that sentence. After the amendment, `onPreStart` runs before the bindings are applied, so it reads bound files as they were before this start's bindings. The user accepted that consequence, but the ADR records the opposite. The design's ADRs section says "To record during apply: none", so nothing brings the two into line. The consequences:
+- The architecture baseline keeps a decision that the implementation contradicts.
+- ADR 0004 is the reference for how hooks and bindings interact, so a plugin author who reads it will expect bound values to be visible in `onPreStart`.
+
+The design needs to record the change in one of two ways. Either write a superseding ADR, the mechanism that `architecture.md`'s ADR table provides. Or, if the project treats the sentence as a wording correction, add an amendment note to ADR 0004 stating that bindings and hook edits apply in one pass after the hooks return, bindings first. In both cases, update the design's "ADRs: To record during apply".
+
+**R2-M2. `ApplyConfig` now has no owner in any plan.**
+In round 1, the backlog's config-bindings requirement carried "on every start and on `ApplyConfig`". That requirement moved from `platform-backlog` into this change (the working-tree `platform-backlog/specs/config-bindings/spec.md` deletes "Bindings map settings to file keys"), and the amendment now drops the `ApplyConfig` half from M3. `grep` finds `ApplyConfig` nowhere in `openspec/changes/platform-backlog`, and `openspec/roadmap.md` does not name it under M4 or "Later". The proposal's "`ApplyConfig` stays unimplemented in M3" implies that it arrives later, but nothing parks it. The consequences:
+- The roadmap's backlog rule ("when a milestone starts, take its part of the backlog ... and delete that part") lets the method drop out of the plan without anyone deciding it.
+- A defined `yagura.v1` method stays `not_implemented` with no milestone that will build it.
+
+Park it. Either add the `ApplyConfig` requirement to `platform-backlog` under a named milestone (one pass that applies all bindings of a stopped or running instance, with its operation step), or record in the proposal that it is dropped from the roadmap and why.
+
+#### Suggestions
+
+- **R2-S1. The update path is still worded as a sequence that matches the old start ordering.**
+  - The instance-lifecycle delta "Updates stop and restart a running server" lists "re-apply bindings, run the plugin's `onPostUpdate` hook and apply its file edits (step `apply_config`)". That reads as bindings before the hook runs. D9 instead makes one pass after `onPostUpdate` returns (bindings, `onModsStaged` edits, `onPostUpdate` edits), and `lifecycle.dart:309-311` already runs the hook first.
+  - The plugin-hooks requirement calls each hook "after the daemon's own work for that step", which a reader may take to include applying the bindings.
+
+  Neither statement is false under a loose reading, and the scenarios check only step names. But the start-path amendment was made for exactly this ambiguity. Consider "run the plugin's `onPostUpdate` hook, then apply the bindings and its file edits in one pass (step `apply_config`)".
+- **R2-S2. Task 11.2 should name `ApplyConfig` in the M3 protocol row.** Task 11.2 lists what M3 implements, plus "still not `Rcon`". The M2 row of `docs/protocol.md:140` lists `Instances.ImportInstance`, `ExportInstance` and `ApplyConfig` as not implemented. The M3 row should keep `ApplyConfig` in that list, so the document matches the proposal.
+
+### Round 1 (history)
+
+The round-1 findings, the round-1 verdict (approve with changes) and its Required Changes are kept below as history. All nine round-1 Required Changes were applied and re-checked in round 1 (see Rebuttals, round 1).
+
+#### Critical (blocking)
+
+None.
+
+#### Moderate
 
 **M1. D12 and the mod-management specs mix up the instance root and the server's working directory, so the DayZ plugin as designed cannot find its config, BattlEye path or mods.**
 The game is installed into `<instance>/server` and launched with that as its working directory (`lifecycle.dart:31,120,341,347`). `data_paths` resolve against the instance root (`templates.dart:303-312`), and bindings are "relative to the instance root" (config-bindings spec). D12 then has:
@@ -60,7 +105,7 @@ D7 step 3 says: "remove whatever entry exists at its staged name without followi
 **M9. The daemon-protocol delta leaves a main-spec scenario false and gives the new stream no requirement.**
 The main spec scenario "Service not built yet" (daemon-protocol, "Methods a daemon version does not implement") uses `Mods.ListMods`, which this change implements, so after the archive the spec asserts something the daemon no longer does. Separately, `Operations.WatchPrompts` (D13) is a new protocol method with a snapshot, `raised`/`resolved` events, 32 subscribers and `resync_required`, but no spec requirement or scenario covers it. Only the desktop "Prompt from another device's operation" scenario touches it, from the client side. The `RespondToPrompt` refusals (`prompt_resolved`, `prompt_answer_invalid`) also have no daemon-side scenario. Modify the requirement so its examples use a still-unbuilt service (for example `Rcon.Execute`), and add a daemon-protocol requirement for `WatchPrompts` and `RespondToPrompt` with a failure scenario (a late answer, a too-many-subscribers refusal).
 
-### Suggestions
+#### Suggestions
 
 - **S1. The heavy-limit scenario does not match what the slot covers.** The scenario says "the install waits in the queue until one of the four ends". The slot is held only around SteamCMD runs (`ctx.heavy`), so it frees before the operation ends (publish copy, staging), and the waiting install shows `waiting_for_steamcmd`, not a queue position. A `Start` that downloads mods also takes a slot, but `start` is not in the requirement's list. Reword the requirement to "heavy steps" and the THEN to "until one of them releases its SteamCMD slot".
 - **S2. D9's apply passes are inconsistent.** D9 lists `onPreStart` edits inside the one apply pass, while the T3 sequence diagram applies them in a second binder call. Say which, and what rollback covers. Also say whether a standalone `ApplyMods` applies `onModsStaged` edits, and whether a later `Start` with unchanged mods calls `onModsStaged` again. Otherwise those edits can be lost.
@@ -71,11 +116,7 @@ The main spec scenario "Service not built yet" (daemon-protocol, "Methods a daem
 - **S7. Very short secrets over-mask.** Whole-word masking of 1-3 character secrets (D11) masks every standalone occurrence, such as a numeric port value. Consider a minimum length, or refusing secrets under 4 characters, at `SetSecret`.
 - **S8. A duplicate account has no defined outcome.** `AddAccount` for a username already added has no reason or scenario. Specify one (for example `ALREADY_EXISTS` `account_exists`).
 
-## Verdict
-
-VERDICT: APPROVE_WITH_CHANGES
-
-## Required Changes
+#### Round 1 Required Changes (history, all applied)
 
 1. **M1.** In design D12, and where needed D7, state the frame of reference for mod links, bindings, data paths, log sources and launch args (the instance root versus the server working directory `<instance>/server`). Rewrite the DayZ args (`-config`, `-BEpath`, `-profiles`, `-mod`/`-serverMod`), bindings, `data_paths` and log sources so they agree. Make the mod-management scenario "DayZ mod linked" name the matching link path.
 2. **M2.** In D6, state that the mod pipeline (not an operation) owns each acquisition run, including its installation lock, heavy slot, cancel token and progress fan-out to waiters. State that the run is cancelled only when its last waiter detaches, and that an operation waiting on another operation's keys holds no lock or slot. Correct the Flow & State Gaps bullet on fixed-order lock acquisition to match.
@@ -91,12 +132,47 @@ VERDICT: APPROVE_WITH_CHANGES
 8. **M8.** In D1, the account state diagram and the Failure table, add startup recovery for accounts left in `adding`: delete the row, its `steam:<id>` secret and its installation (no-follow). Add a steam-content scenario for a daemon restart during `AddAccount`.
 9. **M9.** In the daemon-protocol delta, modify "Methods a daemon version does not implement" so its example service is one this version still does not build. Add a requirement for `Operations.WatchPrompts` (snapshot, raised/resolved events, subscriber bound, resync) and the `RespondToPrompt` refusals, with at least one failure scenario.
 
+## Verdict
+
+VERDICT: APPROVE_WITH_CHANGES
+
+## Required Changes
+
+1. **R2-M1.** Bring ADR 0004's "Bindings apply before `onPreStart`" into line with the amended specs. Record a superseding ADR or an amendment note stating that bindings and hook edits apply in one pass after the hooks return, bindings first, so hooks read bound files as they were before this start's bindings. Update the design's "ADRs: To record during apply" to name it.
+2. **R2-M2.** Give `ApplyConfig` an owner. Either park its requirement in `platform-backlog` (the config-bindings delta, with a task group under a named milestone), or state in the proposal that it is dropped from the roadmap and why.
+
 <!-- yes (applied, and re-checked by the reviewer - only the reviewer sets it) | no (outstanding) | n/a (any other verdict) -->
 CHANGES_APPLIED: yes
 
 ## Rebuttals
 
 <!-- Author: fixed (cite) or rebutted (reason) per finding. A Critical/Moderate rebuttal counts only once marked "accepted by reviewer". -->
+
+### Round 2
+
+- **R2-M1 fixed.** `docs/adr/0004-config-bindings-with-round-trip-parsers.md` gains "Amendment (2026-10-20, m3-steam-accounts-and-mods)": one binder pass per operation after its hooks return, bindings first, then hook edits in order (start: `onModsStaged`, `onPreStart`; update: `onModsStaged`, `onPostUpdate`), one rollback; hooks read bound files as they were before that operation's bindings. design "ADRs: To record during apply" names it.
+- **R2-M2 fixed.** `ApplyConfig` is parked in M4: `openspec/roadmap.md` "Next: M4" now lists "`ApplyConfig` (a bindings-only pass on a stopped instance, left out of M3)", and `proposal.md` says it moves to M4 with the complex-config work. Not written into `platform-backlog`, which holds uncommitted edits of the user's.
+- **R2-S1 fixed.** instance-lifecycle "Updates stop and restart a running server": "run the plugin's `onPostUpdate` hook, then apply the bindings and its file edits in one pass, bindings first (step `apply_config`)".
+- **R2-S2 fixed.** Task 11.2 now reads "and still not `Rcon` or `Instances.ApplyConfig` (M4)".
+
+#### Reviewer re-check (round 2)
+
+I re-checked only the edits listed above (`git diff` of ADR 0004, `openspec/roadmap.md`, and the change's `design.md`, `proposal.md`, `specs/instance-lifecycle/spec.md` and `tasks.md`) and looked for contradictions they introduce.
+
+- **R2-M1: applied.** ADR 0004 now has an "Amendment (2026-10-20, m3-steam-accounts-and-mods)" section, which states:
+  - one binder pass per operation, made after the hooks return;
+  - bindings first, then hook edits in order (start: `onModsStaged`, then `onPreStart`; update: `onModsStaged`, then `onPostUpdate`);
+  - one rollback over the pass;
+  - hooks read bound files as they were before that operation's bindings.
+
+  This matches D9 "Binder", the amended config-bindings requirement, the plugin-hooks scenario "Mods-staged hook edits a config" and `docs/plugins/hooks.md:86`. The original Decision sentence ("Bindings apply before `onPreStart`") stays in the ADR, but the amendment opens with "Bindings no longer apply before `onPreStart`", so a reader cannot take the old sentence as current. D9's `ApplyMods` pass (bindings and `onModsStaged` edits) is not listed in the amendment's examples, but it follows the same "each operation makes one pass" rule, so the two do not conflict. The design's "ADRs: To record during apply" now names the amendment.
+- **R2-M2: applied.** `ApplyConfig` now has an owner. The M4 paragraph of `openspec/roadmap.md` lists "`ApplyConfig` (a bindings-only pass on a stopped instance, left out of M3)", and the proposal says it "stays unimplemented in M3 and moves to M4 with the complex-config work". Neither the proto (`instances.proto:33`, no comment) nor `docs/protocol.md` defines its behaviour, so the "stopped instance" scope contradicts nothing. Non-blocking note: the same M4 paragraph says its change is "taken from `platform-backlog` groups 18-19", and those groups hold no `ApplyConfig` requirement. When the M4 change is created, it has to add the requirement from the roadmap line, not from the backlog. The author's reason for not editing `platform-backlog` (it holds the user's uncommitted edits) is acceptable.
+- **R2-S1: applied.** The instance-lifecycle update requirement now says "run the plugin's `onPostUpdate` hook, then apply the bindings and its file edits in one pass, bindings first (step `apply_config`)". This matches D9, the ADR amendment and `lifecycle.dart:309-311`. The scenario step list (`stop`, `snapshot`, `download`, `update_mods`, `apply_config`, `start`) is unchanged and still holds. The requirement does not name the `onModsStaged` edits that D9 includes in the update pass, but it does not exclude them, and D7 step 5 covers them.
+- **R2-S2: applied.** Task 11.2 now says "still not `Rcon` or `Instances.ApplyConfig` (M4)", which matches the proposal and the roadmap.
+
+**Outstanding:** none. Both round-2 Required Changes are applied and re-checked, and the edits introduce no new contradiction. Changes applied: yes.
+
+### Round 1 (history)
 
 - **M1 fixed.** design D7 "Frame of reference" (manifest paths relative to the instance root, launch args relative to `<instance>/server`, links staged in `mods.stage_dir`, default `server`). D12 "Frame", "Bindings", "Mods", "Launch" and "Other" rewritten to `server/yagura/...`, `stage_dir: server`, `server/keys/`, `data_paths: [server/mpmissions/, server/profiles/]`, log sources `server/profiles/...`. D8 rule `to: server/keys/`. Spec mod-management "DayZ mod linked" now names `<instance>/server/@Community-Framework`, and the key scenarios use `server/keys/`.
 - **M2 fixed.** design D6 "Runs belong to the pipeline", "Locks and slots", "Cancel": the pipeline owns each run with its installation lock, heavy slot, cancel token and progress fan-out; waiting operations hold no lock or slot; a run is cancelled only when no key has a waiter. The Flow & State Gaps bullet "Two instances need the same item version" is corrected, and the State, Resource Bounds and T3 diagram rows match.
@@ -117,7 +193,7 @@ CHANGES_APPLIED: yes
 - **S8 fixed.** Spec steam-content "Account already added" (`ALREADY_EXISTS` `account_exists`); design D1 counts `adding` rows.
 - **Route note.** The `select` output picked codex. This host's codex route cannot read files (repository memory), so the review ran on the `subagent` route and was recorded without `--selection`.
 
-### Reviewer re-check
+#### Reviewer re-check
 
 - **M1: applied.** D7 "Frame of reference" and D12 "Frame", "Bindings", "Mods", "Launch" and "Other" now agree. `server/yagura/serverDZ.cfg` matches `-config=yagura/serverDZ.cfg` under `<instance>/server`, `-profiles=profiles` matches the log sources `server/profiles/*` and `data_paths` `server/profiles/`, and `server/mpmissions/` is in `data_paths`. The mod-management scenario "DayZ mod linked" names `<instance>/server/@Community-Framework`, and the key scenarios use `server/keys/`.
 - **M2: applied, but the fix introduced a contradiction with D2.** D6 "Runs belong to the pipeline", "Locks and slots" and "Cancel", and the Flow & State Gaps bullet, are correct and consistent. D2 was not brought in line:
@@ -141,13 +217,13 @@ CHANGES_APPLIED: yes
   - *M6 wording.* The name is "fixed once when metadata is first read or found unavailable", which matches D7 "Names" and the scenario "Title unavailable when added".
   - *Link failure.* The requirement no longer says the step fails when linking fails and `copy_fallback` is false, but the scenario "Link not permitted" (`stage_link_failed`) still states that, so no behaviour is lost.
   - *Wording nit, non-blocking.* The WatchPrompts requirement says each snapshot entry comes "with its operation", in the singular, while a pipeline-run prompt is attached to several operations. Saying "with its operations" in the requirement, or in the proto comment, would remove the ambiguity. The behaviour itself is defined by D2.
-- **Third pass (edits made after `CHANGES_APPLIED: yes`): consistent, verdict kept.**
+- **Third pass (edits made after changes applied: yes): consistent, verdict kept.**
   - *plugin-hooks.* The scenario "Reading a staged mod" now reads `server/@CF/meta.cpp` with `server/@CF` as the recorded link, and "Edit into a staged mod refused" uses `server/@CF/config.cpp`. Both follow D7 "Frame of reference" (hook and manifest paths relative to the instance root, links staged in `mods.stage_dir`, default `server`) and M1/D12 (`stage_dir: server`). Both also follow D7 "The ADR 0015 exception": a read through a recorded link continues read-only in the content-store version directory, and writes below a recorded path are refused with `sandbox_violation`. "Staged mods in the context" still lists the staged name `@CF`, not a path, which matches D7 "Template".
   - *daemon-protocol.* "with its operations and their instance or account" closes the nit above, and matches D2 "Prompts in pipeline runs" (one prompt attached to every waiting operation).
 
-**Outstanding before `CHANGES_APPLIED: yes`:** none. All nine Required Changes are applied and re-checked, the M2 and M7 follow-ups hold, and the two later edits (plugin-hooks paths, WatchPrompts wording) are consistent with D2, D7 and M1. `CHANGES_APPLIED: yes`.
+**Outstanding before changes applied: yes:** none. All nine Required Changes are applied and re-checked, the M2 and M7 follow-ups hold, and the two later edits (plugin-hooks paths, WatchPrompts wording) are consistent with D2, D7 and M1. changes applied: yes.
 
-### Author response to the re-check
+#### Author response to the re-check
 
 - **M2 follow-up fixed.** design D2 "Prompts in pipeline runs": one prompt id attached to every waiting operation and published once on `WatchPrompts`; `RespondToPrompt` accepts it with any of those operation ids; a cancelled waiter only detaches; the prompt resolves `cancelled` only when the run is cancelled. Staging path is now `content/.staging/<run-id>/` in D5 and the T2 diagram.
 - **M7 follow-up fixed.** Spec mod-management "Staging by link with copy fallback": "Staging SHALL never remove an entry Yagura did not create, except a link where Yagura recorded one, removed without following."
