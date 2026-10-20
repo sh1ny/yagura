@@ -147,7 +147,7 @@ PluginResult loadPlugin(String directory) {
   if (report.isNotEmpty) return rejected(report.reasons, json);
 
   final manifest = PluginManifest.fromJson(json);
-  _checkSemantics(manifest, report);
+  _checkSemantics(manifest, directory, report);
   if (report.isNotEmpty) return rejected(report.reasons, json);
 
   return PluginResult(
@@ -404,11 +404,23 @@ Object? _valueAt(Map<String, Object?> json, String pointer) {
 /// Sections and values the schema accepts but this version refuses.
 void _checkUnsupported(Map<String, Object?> json, _Report report) {
   const code = 'unsupported_in_this_version';
-  for (final section in ['bindings', 'mods', 'rcon']) {
+  for (final section in ['mods', 'rcon']) {
     if (json.containsKey(section)) {
       report.add(code, [
         section,
       ], 'the "$section" section is not supported in this version');
+    }
+  }
+  for (final (i, binding)
+      in ((json['bindings'] as List<Object?>?) ?? const []).indexed) {
+    final format = (binding as Map<String, Object?>)['format'];
+    if (laterConfigFormats.contains(format)) {
+      report.add(
+        code,
+        ['bindings', i, 'format'],
+        'binding format "$format" is not supported in this version; '
+        'supported formats: ${supportedConfigFormats.join(', ')}',
+      );
     }
   }
   if ((json['stop'] as Map<String, Object?>?)?['strategy'] == 'rcon') {
@@ -437,7 +449,11 @@ final _placeholderContext = LaunchContext(
 );
 
 /// Cross-field checks that JSON Schema cannot express.
-void _checkSemantics(PluginManifest manifest, _Report report) {
+void _checkSemantics(
+  PluginManifest manifest,
+  String directory,
+  _Report report,
+) {
   const code = invalidManifestCode;
   final portNames = <String>{};
   final basePorts = {
@@ -520,6 +536,135 @@ void _checkSemantics(PluginManifest manifest, _Report report) {
   }
   for (final (i, path) in manifest.dataPaths.indexed) {
     _checkInstancePath(path, ['data_paths', i], 'data path', report);
+  }
+  _checkBindings(manifest, scope, directory, report);
+}
+
+/// Checks `bindings`: formats, settings, file path templates, templates of
+/// created files, and the limit of distinct files.
+void _checkBindings(
+  PluginManifest manifest,
+  TemplateScope scope,
+  String pluginDirectory,
+  _Report report,
+) {
+  // Placeholder values stand in for settings and ports, to check at load that
+  // a file path resolves inside the instance (the daemon checks the real
+  // values when it applies the binding).
+  final context = LaunchContext(
+    settings: {for (final name in manifest.settings.keys) name: 'x'},
+    ports: {for (final port in scope.ports) port: 1},
+    // The server directory lives inside the instance directory.
+    paths: {
+      'instance': _placeholderContext.paths['instance']!,
+      'server': p.join(_placeholderContext.paths['instance']!, 'server'),
+    },
+    os: 'linux',
+  );
+  final files = <String, (int, FileBinding)>{};
+  for (final (i, binding) in manifest.bindings.indexed) {
+    final label = 'bindings[$i]';
+    final where = 'file "${binding.file}", key "${binding.key}"';
+
+    if (!supportedConfigFormats.contains(binding.format)) {
+      report.add(
+        invalidManifestCode,
+        ['bindings', i, 'format'],
+        'binding format "${binding.format}" is not supported; supported '
+        'formats: ${supportedConfigFormats.join(', ')}',
+      );
+    }
+
+    final def = manifest.settings[binding.setting];
+    if (def == null) {
+      report.add(
+        invalidManifestCode,
+        ['bindings', i, 'setting'],
+        '$label ($where) names setting "${binding.setting}", which the '
+        'manifest does not declare',
+      );
+    } else if (def.type == SettingType.object || def.type == SettingType.list) {
+      report.add(
+        invalidManifestCode,
+        ['bindings', i, 'setting'],
+        '$label ($where) names setting "${binding.setting}", which is a '
+        '${def.type.wireName} setting; a binding writes a scalar, enum, '
+        'secret or string_list setting',
+      );
+    }
+
+    final problems = checkTemplate(binding.file, scope);
+    for (final problem in problems) {
+      report.add(invalidManifestCode, ['bindings', i, 'file'], problem);
+    }
+    if (problems.isEmpty &&
+        resolveInstancePath(
+              renderTemplate(binding.file, context),
+              context.paths['instance']!,
+            ) ==
+            null) {
+      report.add(
+        invalidManifestCode,
+        ['bindings', i, 'file'],
+        'binding file "${binding.file}" resolves outside the instance '
+        'directory',
+      );
+    }
+
+    if (binding.template case final template?) {
+      final resolved = p.normalize(p.join(pluginDirectory, template));
+      if (p.isAbsolute(template) ||
+          p.windows.rootPrefix(template).isNotEmpty ||
+          !p.isWithin(pluginDirectory, resolved)) {
+        report.add(invalidManifestCode, [
+          'bindings',
+          i,
+          'template',
+        ], 'binding template "$template" is outside the plugin directory');
+      } else if (!File(resolved).existsSync()) {
+        report.add(
+          invalidManifestCode,
+          ['bindings', i, 'template'],
+          'binding template "$template" does not exist in the plugin '
+          'directory',
+        );
+      }
+    }
+
+    final key = binding.file.replaceAll(r'', '/').toLowerCase();
+    final first = files[key];
+    if (first == null) {
+      files[key] = (i, binding);
+    } else {
+      final (j, other) = first;
+      if (other.format != binding.format) {
+        report.add(
+          invalidManifestCode,
+          ['bindings', i, 'format'],
+          'binding file "${binding.file}" is bound as ${other.format} by '
+          'bindings[$j] and as ${binding.format} by $label',
+        );
+      }
+      if (other.template != null &&
+          binding.template != null &&
+          other.template != binding.template) {
+        report.add(
+          invalidManifestCode,
+          ['bindings', i, 'template'],
+          'binding file "${binding.file}" has the templates '
+          '"${other.template}" (bindings[$j]) and "${binding.template}" '
+          '($label)',
+        );
+      }
+    }
+  }
+  if (files.length > maxBoundFiles) {
+    report.add(
+      invalidManifestCode,
+      ['bindings'],
+      'bindings name ${files.length} distinct files; at most $maxBoundFiles '
+      'are allowed',
+    );
   }
 }
 

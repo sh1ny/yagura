@@ -74,6 +74,7 @@ void main() {
       ...propertiesOf('steam'),
       ...propertiesOf('port'),
       ...propertiesOf('setting'),
+      ...propertiesOf('binding'),
       'grace_seconds',
       'start_timeout_seconds',
       'timeout_seconds',

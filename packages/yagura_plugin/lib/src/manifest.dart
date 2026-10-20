@@ -231,6 +231,60 @@ class LogSource {
   bool get isStdout => stdout;
 }
 
+/// The file formats a binding or a hook file edit may name in this version.
+const supportedConfigFormats = ['json', 'ini', 'dayz-cfg', 'kv'];
+
+/// Formats of a later version: named in a binding or an edit they are refused
+/// with `unsupported_in_this_version`.
+const laterConfigFormats = ['ue-ini', 'xml', 'vdf'];
+
+/// The most distinct files a plugin's bindings may name.
+const maxBoundFiles = 64;
+
+/// One entry of `bindings`: a setting written to one key of one file.
+class FileBinding {
+  const FileBinding({
+    required this.file,
+    required this.format,
+    required this.key,
+    required this.setting,
+    this.create = false,
+    this.template,
+    this.gameWrites = false,
+  });
+
+  factory FileBinding.fromJson(Map<String, Object?> json) => FileBinding(
+    file: json['file']! as String,
+    format: json['format']! as String,
+    key: json['key']! as String,
+    setting: json['setting']! as String,
+    create: json['create'] as bool? ?? false,
+    template: json['template'] as String?,
+    gameWrites: json['game_writes'] as bool? ?? false,
+  );
+
+  /// The templated path, relative to the instance directory.
+  final String file;
+
+  /// One of [supportedConfigFormats].
+  final String format;
+
+  /// The key path in the file.
+  final String key;
+
+  /// The top-level setting whose value is written.
+  final String setting;
+
+  /// Whether a missing file is created instead of failing the start.
+  final bool create;
+
+  /// A file of the plugin directory a missing file is created from.
+  final String? template;
+
+  /// Whether the game rewrites the file itself.
+  final bool gameWrites;
+}
+
 class SteamSpec {
   const SteamSpec({
     required this.appId,
@@ -258,6 +312,7 @@ class PluginManifest {
     required this.dataPaths,
     required this.logs,
     required this.hooksTimeoutSeconds,
+    this.bindings = const [],
     this.description,
     this.steam,
   });
@@ -329,6 +384,10 @@ class PluginManifest {
       ],
       hooksTimeoutSeconds:
           hooks?['timeout_seconds'] as int? ?? defaultHookTimeoutSeconds,
+      bindings: [
+        for (final b in (json['bindings'] as List<Object?>?) ?? const [])
+          FileBinding.fromJson(b! as Map<String, Object?>),
+      ],
     );
   }
 
@@ -357,6 +416,9 @@ class PluginManifest {
   final List<String> dataPaths;
   final List<LogSource> logs;
   final int hooksTimeoutSeconds;
+
+  /// The settings written into game files, in the manifest's order.
+  final List<FileBinding> bindings;
 
   /// Operating systems with a declared executable, sorted.
   List<String> get platforms => executables.keys.toList()..sort();

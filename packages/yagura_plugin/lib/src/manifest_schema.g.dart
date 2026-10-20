@@ -6,7 +6,7 @@ const manifestSchemaV1 = r'''
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://yagura.dev/schemas/plugin-manifest.v1.json",
   "title": "Yagura plugin manifest, version 1",
-  "description": "Structure of plugin.yaml for manifest_version 1. Some sections validate here but the loader refuses them in this release (bindings, mods, rcon, stop.strategy rcon, health.type query) with reason unsupported_in_this_version. Template references, derived ports, regular expressions and path containment are checked by the loader after this schema.",
+  "description": "Structure of plugin.yaml for manifest_version 1. Some sections validate here but the loader refuses them in this release (mods, rcon, stop.strategy rcon, health.type query) with reason unsupported_in_this_version. Template references, derived ports, regular expressions and path containment are checked by the loader after this schema.",
   "type": "object",
   "additionalProperties": false,
   "required": ["manifest_version", "id", "name", "version", "executable", "launch"],
@@ -123,11 +123,29 @@ const manifestSchemaV1 = r'''
         ]
       }
     },
-    "bindings": { "description": "Not supported in this release.", "type": "object" },
+    "bindings": {
+      "description": "Settings written into game configuration files: each entry binds one setting to one key of one file. The loader checks the file templates, the settings, the formats (ue-ini, xml and vdf are refused with unsupported_in_this_version) and the limit of 64 distinct files.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/binding" }
+    },
     "mods": { "description": "Not supported in this release.", "type": "object" },
     "rcon": { "description": "Not supported in this release.", "type": "object" }
   },
   "definitions": {
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "format", "key", "setting"],
+      "properties": {
+        "file": { "description": "Templated path of the bound file, relative to the instance directory; the templates may use settings, ports, paths and os. It must resolve inside the instance directory.", "type": "string", "minLength": 1 },
+        "format": { "description": "File format: json, ini, dayz-cfg or kv.", "type": "string", "minLength": 1 },
+        "key": { "description": "Key path in the file's format: dotted for json, ini (section.key) and dayz-cfg (class.key), a plain key for kv.", "type": "string", "minLength": 1 },
+        "setting": { "description": "Name of the top-level setting whose value is written to the key.", "type": "string", "minLength": 1 },
+        "create": { "description": "Create the file when it does not exist (from template, or empty) instead of failing the start with binding_file_missing.", "type": "boolean" },
+        "template": { "description": "File in the plugin directory the missing file is created from; used with create.", "type": "string", "minLength": 1 },
+        "game_writes": { "description": "The game rewrites this file itself: a change made since the last apply is not reported as an external edit.", "type": "boolean" }
+      }
+    },
     "steam": {
       "type": "object",
       "additionalProperties": false,

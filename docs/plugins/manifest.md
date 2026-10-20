@@ -31,8 +31,8 @@ Sizes are checked before the file is parsed.
 |---|---|
 | `unsupported_manifest_version` | `manifest_version` is not one of the supported versions (currently `[1]`); the error lists them. |
 | `file_too_large` | `plugin.yaml` or `hooks.js` is over its limit; the error names the file and the limit. |
-| `unsupported_in_this_version` | The manifest uses something this release refuses, naming the field: a `bindings`, `mods` or `rcon` section, `stop.strategy: rcon`, `health.type: query`. |
-| `invalid_manifest` | Anything else: YAML syntax, a schema violation (with the allowed values), an unknown template reference, a bad regular expression, a data path outside the instance. |
+| `unsupported_in_this_version` | The manifest uses something this release refuses, naming the field: a `mods` or `rcon` section, `stop.strategy: rcon`, `health.type: query`, or a binding in the format `ue-ini`, `xml` or `vdf`. |
+| `invalid_manifest` | Anything else: YAML syntax, a schema violation (with the allowed values), an unknown template reference, a bad regular expression, a data path outside the instance, a binding that names an undeclared setting or an unknown format, a binding file outside the instance. |
 
 Every error carries the field path (`ports[0].protocol`) and the line of the offending value in `plugin.yaml`.
 
@@ -313,9 +313,44 @@ hooks:
 
 Optional. `timeout_seconds` (`hooks.timeout_seconds` as a field path) is the deadline of each hook call in `hooks.js`: 5 seconds by default, at most 60. A larger value rejects the plugin, naming `hooks.timeout_seconds` and the 60 s maximum. See [hooks](hooks.md) for what hooks can do.
 
+### `bindings`
+
+```yaml fragment
+bindings:
+  - file: yagura/serverDZ.cfg
+    format: dayz-cfg
+    key: maxPlayers
+    setting: maxPlayers
+    create: true
+    template: templates/serverDZ.cfg
+  - file: yagura/serverDZ.cfg
+    format: dayz-cfg
+    key: hostname
+    setting: hostname
+  - file: "{{paths.server}}/battleye/BEServer_x64.cfg"
+    format: kv
+    key: RConPassword
+    setting: rconPassword
+    game_writes: true
+```
+
+Optional. Each entry writes one setting to one key of one file, every time the instance starts and after an update. The daemon is the only writer of these files: it keeps the comments, blank lines, key order, unknown keys, line endings and encoding of the file, changes only the bound keys, and writes only files whose bytes change (see the config binder in the daemon design).
+
+| Field | Required | Meaning |
+|---|---|---|
+| `file` | yes | Path of the file relative to the instance directory, as a template over `settings`, `ports`, `paths` and `os` (not secret settings). It must resolve inside the instance directory; a value that moves it outside fails the start with `sandbox_violation`. |
+| `format` | yes | `json`, `ini`, `dayz-cfg` or `kv`. `ue-ini`, `xml` and `vdf` are refused with `unsupported_in_this_version`; any other name is rejected with an error listing the supported formats. All bindings of one file must use the same format. |
+| `key` | yes | The key path in the file: dotted for `json` (`GeneralData.disableBaseDamage`), for `ini` (`section.key`) and for `dayz-cfg` (`class.key`); the plain key for `kv`. |
+| `setting` | yes | The top-level setting whose value is written, a scalar, enum, secret or `string_list` setting. A name the manifest does not declare rejects the plugin, naming the binding and the setting. A secret is read from the secret store only when the binding is applied. A setting without a value is not written. |
+| `create` | no | `true` creates the file when it does not exist (from `template`, or empty). Without it a missing file fails the start with `binding_file_missing`, naming the file and the binding. |
+| `template` | no | A file in the plugin directory (`templates/serverDZ.cfg`) that a created file starts from. It must exist and stay inside the plugin directory. |
+| `game_writes` | no | `true` when the game rewrites the file itself. A change made since the last apply is then not reported as an `external_edit` warning. |
+
+A plugin may bind at most 64 distinct files. A hand edit to a bound key is overwritten at the next start and reported as an `external_edit` warning on the operation, naming each key with its old and new value (`***` for keys bound to secret settings); a hand edit to any other key is kept.
+
 ### Reserved sections
 
-`bindings`, `mods` and `rcon` are reserved for later versions. In this version a manifest that has any of them is rejected with `unsupported_in_this_version` naming the section, like `stop.strategy: rcon` and `health.type: query`.
+`mods` and `rcon` are reserved for later versions. In this version a manifest that has either of them is rejected with `unsupported_in_this_version` naming the section, like `stop.strategy: rcon` and `health.type: query`.
 
 ### The complete Valheim manifest
 
