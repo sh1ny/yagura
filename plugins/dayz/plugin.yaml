@@ -1,0 +1,172 @@
+manifest_version: 1
+id: dayz
+name: DayZ Server
+version: 0.1.0
+description: DayZ dedicated server through a Steam account, with workshop mods.
+
+# DayZ Server (223350) is not available to the anonymous login, so the
+# instance is linked to a Steam account. Its workshop items belong to the
+# DayZ client app (221100).
+steam:
+  app_id: 223350
+  login: account
+  size_hint_bytes: 3500000000
+
+executable:
+  windows: DayZServer_x64.exe
+
+# The launch arguments resolve against the working directory
+# <instance>/server (design D7); manifest paths are relative to <instance>.
+ports:
+  - name: game
+    default: 2302
+    protocol: udp
+    purpose: game
+  - name: query
+    derive: { from: game, offset: 3 }
+    protocol: udp
+    purpose: query
+
+settings:
+  hostname:
+    type: string
+    label: Server name
+    default: Yagura DayZ
+    min: 1
+    max: 100
+    group: General
+  maxPlayers:
+    type: integer
+    label: Maximum players
+    default: 60
+    min: 1
+    max: 127
+    group: General
+  verifySignatures:
+    type: integer
+    label: Verify signatures
+    description: "2 checks every .pbo against its .bisign (the only value DayZ supports); 0 turns the check off."
+    default: 2
+    min: 0
+    max: 2
+    group: General
+    advanced: true
+  logs:
+    type: boolean
+    label: Extra logs
+    description: Adds -dologs, -adminlog and -netlog.
+    default: false
+    group: General
+  rconPort:
+    type: integer
+    label: BattlEye RCon port
+    description: Written to BEServer_x64.cfg. The port is not opened in the firewall; RCon support comes later.
+    default: 2306
+    min: 1
+    max: 65535
+    group: Admin
+    advanced: true
+  serverPassword:
+    type: secret
+    label: Server password
+    group: Admin
+  adminPassword:
+    type: secret
+    label: Admin password
+    group: Admin
+  rconPassword:
+    type: secret
+    label: BattlEye RCon password
+    group: Admin
+
+# The files live under server/yagura/, which holds no depot file, so
+# SteamCMD's `app_update validate` never restores them (design D12). The
+# daemon creates each from its template on the first start.
+bindings:
+  - file: server/yagura/serverDZ.cfg
+    format: dayz-cfg
+    key: hostname
+    setting: hostname
+    create: true
+    template: templates/serverDZ.cfg
+  - file: server/yagura/serverDZ.cfg
+    format: dayz-cfg
+    key: maxPlayers
+    setting: maxPlayers
+  - file: server/yagura/serverDZ.cfg
+    format: dayz-cfg
+    key: verifySignatures
+    setting: verifySignatures
+  - file: server/yagura/serverDZ.cfg
+    format: dayz-cfg
+    key: password
+    setting: serverPassword
+  - file: server/yagura/serverDZ.cfg
+    format: dayz-cfg
+    key: passwordAdmin
+    setting: adminPassword
+  - file: server/yagura/battleye/BEServer_x64.cfg
+    format: kv
+    key: RConPort
+    setting: rconPort
+    create: true
+    template: templates/BEServer_x64.cfg
+  - file: server/yagura/battleye/BEServer_x64.cfg
+    format: kv
+    key: RConPassword
+    setting: rconPassword
+
+mods:
+  source: steam_workshop
+  workshop_app_id: 221100
+  stage: link
+  stage_dir: server
+  link_name: "@{{mod.name_safe}}"
+  copy_fallback: true
+  keys:
+    - { from: "**/*.bikey", to: server/keys/ }
+  roles: [client, server]
+
+launch:
+  args:
+    - -config=yagura/serverDZ.cfg
+    - -BEpath=yagura/battleye
+    - -profiles=profiles
+    - "-port={{ports.game}}"
+    - "-steamQueryPort={{ports.query}}"
+    - when: settings.logs
+      args: [-dologs, -adminlog, -netlog]
+    - join: { list: mods.client, separator: ";", prefix: "-mod=" }
+    - join: { list: mods.server, separator: ";", prefix: "-serverMod=" }
+
+# A2 (design): the grace period is the time DayZ gets to save after the
+# console control event. If it does not exit on it, the plugin switches to
+# `kill` (task 10.3).
+stop:
+  strategy: signal
+  grace_seconds: 60
+
+# The server writes its profile (RPT and script logs) to server/profiles/.
+# The ready line is the one DayZ prints when the host is created; confirm it
+# on a real server (task 10.3).
+health:
+  type: log_match
+  log_match: "Dedicated host created"
+  source: rpt
+  start_timeout_seconds: 300
+
+logs:
+  - name: rpt
+    path: "server/profiles/*.RPT"
+    encoding: utf-8
+    rotation: newest
+  - name: script
+    path: "server/profiles/script_*.log"
+    encoding: utf-8
+    rotation: newest
+
+# Persistent world state is under mpmissions/<mission>/storage_<instanceId>/;
+# profiles/ holds the logs and the mods' saved data.
+data_paths:
+  - "server/mpmissions/"
+  - "server/profiles/"

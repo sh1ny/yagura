@@ -295,7 +295,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 ## 10. [M3] DayZ plugin and real-host verification
 
-- [ ] 10.1 Write `plugins/dayz/` per D12:
+- [x] 10.1 Write `plugins/dayz/` per D12:
   - account login, app 223350, workshop app 221100;
   - `server/yagura/serverDZ.cfg` and `server/yagura/battleye/BEServer_x64.cfg` created from templates, with `dayz-cfg` and `kv` bindings;
   - `stage_dir: server`, `link_name: "@{{mod.name_safe}}"`, `copy_fallback: true`, key rule to `server/keys/`, roles `client` and `server`;

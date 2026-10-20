@@ -44,6 +44,18 @@ void main() {
     },
   );
 
+  test('plugin lint exits 0 for the shipped DayZ plugin', () async {
+    final (code, out, err) = await _run([
+      'plugin',
+      'lint',
+      p.join('..', '..', 'plugins', 'dayz'),
+    ]);
+
+    expect(err, isEmpty);
+    expect(code, 0);
+    expect(out, contains('dayz: loaded'));
+  });
+
   test('plugin lint without a directory is a usage error', () async {
     final (code, _, err) = await _run(['plugin', 'lint']);
 
