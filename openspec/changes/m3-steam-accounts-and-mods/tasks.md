@@ -236,7 +236,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 ## 6. [M3] Workshop metadata, downloads and content store
 
-- [ ] 6.1 Write the failing tests for this group's red rows against the fake Web API and fake SteamCMD. Verify: they fail because the workshop client and the content store are missing.
+- [x] 6.1 Write the failing tests for this group's red rows against the fake Web API and fake SteamCMD. Verify: they fail because the workshop client and the content store are missing.
 - [ ] 6.2 Implement the workshop metadata client (D5): batches of 100, 1 request/s, a 15 s timeout, a configurable base URL, the version re-read after download, and `workshop_item_changing`. Verify: `workshop_item_downloaded` and `item_removed_from_the_workshop` pass.
 - [ ] 6.3 Implement the content store (D6):
   - pipeline-owned acquisition runs that take the runner's installation lock and heavy slot, with their own cancel token and progress fanned out to waiters;
