@@ -593,11 +593,10 @@ void _checkMods(ModsSpec mods, _Report report) {
         '(got ${mods.stage.name})',
       );
     case (ModSource.steamWorkshop, ModStage.none):
-      report.add(
-        code,
-        ['mods', 'stage'],
-        'mods source steam_workshop needs stage link or copy, not none',
-      );
+      report.add(code, [
+        'mods',
+        'stage',
+      ], 'mods source steam_workshop needs stage link or copy, not none');
     default:
   }
   if (mods.source == ModSource.steamWorkshop && mods.workshopAppId == null) {

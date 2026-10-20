@@ -176,7 +176,7 @@ String? checkReference(
       if (def.type == SettingType.secret && expected == 'scalar') {
         return '$reference is a secret and cannot be read through settings'
             '${scope.allowSecrets ? '; a launch argument writes it as '
-                '{{secrets.${segments.last}}}' : ''}';
+                      '{{secrets.${segments.last}}}' : ''}';
       }
       return switch (expected) {
         'boolean' => '$reference is a ${def.type.wireName}, not a boolean',
@@ -189,7 +189,9 @@ String? checkReference(
       if (!scope.allowSecrets) {
         return 'secrets are only available in launch arguments';
       }
-      if (expected != 'scalar') return '$reference is a secret, not a $expected';
+      if (expected != 'scalar') {
+        return '$reference is a secret, not a $expected';
+      }
       if (segments.length != 2) return 'secrets needs a setting name';
       final def = scope.settings[segments[1]];
       if (def == null) return 'unknown setting ${segments[1]}';
@@ -199,7 +201,9 @@ String? checkReference(
       }
       return null;
     case 'mods':
-      if (!scope.allowMods) return 'mods are only available in launch arguments';
+      if (!scope.allowMods) {
+        return 'mods are only available in launch arguments';
+      }
       if (segments.length != 2 || !scope.roles.contains(segments[1])) {
         return scope.roles.isEmpty
             ? 'unknown mod role $reference (the manifest declares no mods '
@@ -347,8 +351,7 @@ LaunchArgument? _renderArgument(String template, LaunchContext context) {
     switch (part) {
       case TemplateText(:final text):
         (secret == null ? prefix : suffix).write(text);
-      case TemplateRef(:final segments)
-          when segments.first == 'secrets':
+      case TemplateRef(:final segments) when segments.first == 'secrets':
         if (secret != null) {
           throw TemplateException(
             'template "$template" names more than one secret',
