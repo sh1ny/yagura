@@ -236,11 +236,13 @@ class _Report {
   }
 }
 
-final JsonSchema _schema = JsonSchema.create(manifestSchemaV1);
-
 void _checkSchema(Map<String, Object?> json, _Report report) {
   final schemaJson = jsonDecode(manifestSchemaV1) as Map<String, Object?>;
-  for (final error in _schema.validate(json).errors) {
+  // Built for each load and dropped after it: a JsonSchema kept for the
+  // daemon's life made its memory grow with every Start
+  // (allocation_beyond_the_cap).
+  final schema = JsonSchema.create(schemaJson);
+  for (final error in schema.validate(json).errors) {
     final segments = report.segmentsOf(error.instancePath);
     final message = error.message;
 
