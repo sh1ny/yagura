@@ -71,14 +71,12 @@ void main() {
     expect(result.manifest!.bindings, isEmpty);
   });
 
-  test('the mods and rcon sections stay unsupported', () {
-    for (final section in ['mods', 'rcon']) {
-      final result = load('${valheimManifest()}\n$section:\n  anything: 1\n');
+  test('the rcon section stays unsupported', () {
+    final result = load('${valheimManifest()}\nrcon:\n  anything: 1\n');
 
-      expect(result.status, PluginStatus.rejected);
-      expect(result.reasons.single.code, 'unsupported_in_this_version');
-      expect(result.reasons.single.path, section);
-    }
+    expect(result.status, PluginStatus.rejected);
+    expect(result.reasons.single.code, 'unsupported_in_this_version');
+    expect(result.reasons.single.path, 'rcon');
   });
 
   test('formats of a later version are unsupported in this version', () {

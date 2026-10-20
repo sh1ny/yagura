@@ -1,6 +1,7 @@
 @Timeout(Duration(minutes: 10))
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -22,6 +23,8 @@ import '../../test/support/service_rig.dart';
 // (`dart test --concurrency 1 -t elevated`), never on a developer's desktop.
 
 const _firstLogon = Duration(minutes: 5);
+
+const _token = 'GSLT-2B90E1D5-NEVER-ON-DISK';
 
 void main() {
   test('server_process_identity', tags: ['elevated'], () async {
@@ -192,4 +195,77 @@ void main() {
     );
     expect(await rightsOf('yagura-steam'), containsAll(denied));
   });
+
+  // steam-content, "Game Server Login Tokens", service mode (design D4): the
+  // value travels daemon -> launcher -> relay -> server over standard input as
+  // `yagura-srv`, and no run file holds it.
+  test('secret_launch_argument', tags: ['elevated'], () async {
+    final rig = await ServiceRig.create(
+      instances: 1,
+      serverArgs: ['-gslt={{secrets.gslt}}'],
+      gslt: true,
+    );
+    await rig.install();
+    // The token is unset at the first start, so the server starts without
+    // the argument; the argument is the next start's.
+    await rig.whenServersAttached(1, timeout: _firstLogon);
+    final client = await ServiceClient.pair(rig);
+    final row = queryDatabase(
+      rig.data,
+      'SELECT id, directory FROM instances',
+    ).single;
+    final id = row['id']! as String;
+    final directory = row['directory']! as String;
+    await client.instances.setSecret(
+      pb.SetSecretRequest(instanceId: id, key: 'gslt', value: _token),
+    );
+    await client.succeeded(
+      await client.instances.stop(pb.LifecycleRequest(instanceId: id)),
+    );
+
+    await client.succeeded(
+      await client.instances.start(pb.LifecycleRequest(instanceId: id)),
+      timeout: _firstLogon,
+    );
+
+    final pid = rig.runningServers().values.single;
+    expect(await processOwnerSid(pid), await accountSid('yagura-srv'));
+    final args = File(p.join(directory, 'state', 'args.txt'));
+    await rig.eventuallyHolds(
+      () => args.existsSync() && args.readAsStringSync().contains('-gslt='),
+      reason: 'the server to record its arguments',
+    );
+    expect(args.readAsStringSync().split('\n'), contains('-gslt=$_token'));
+    // No other file of the instance holds the value, and neither do the
+    // operations the service recorded.
+    final needle = utf8.encode(_token);
+    for (final file
+        in Directory(directory)
+            .listSync(recursive: true)
+            .whereType<File>()
+            .where((f) => f.path != args.path)) {
+      final bytes = file.readAsBytesSync();
+      expect(
+        _contains(bytes, needle),
+        isFalse,
+        reason: '${file.path} holds the token',
+      );
+    }
+    final operations = queryDatabase(
+      rig.data,
+      'SELECT result_reason, result_message FROM operations',
+    );
+    expect(jsonEncode(operations), isNot(contains(_token)));
+  });
+}
+
+bool _contains(List<int> haystack, List<int> needle) {
+  outer:
+  for (var i = 0; i + needle.length <= haystack.length; i++) {
+    for (var j = 0; j < needle.length; j++) {
+      if (haystack[i + j] != needle[j]) continue outer;
+    }
+    return true;
+  }
+  return false;
 }

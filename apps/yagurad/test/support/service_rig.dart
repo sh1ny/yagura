@@ -69,7 +69,11 @@ class ServiceRig {
   /// (design D9: only a relay's child running as `yagura-srv` is verified), so
   /// the rows wait for the servers with [whenServersAttached] after
   /// [install].
-  static Future<ServiceRig> create({int instances = 2}) async {
+  static Future<ServiceRig> create({
+    int instances = 2,
+    List<String> serverArgs = const [],
+    bool gslt = false,
+  }) async {
     if (!Platform.isWindows || !isElevated()) {
       fail(
         'the service rows install a Windows service and need an elevated '
@@ -87,7 +91,11 @@ class ServiceRig {
         '${squatter.stdout}${squatter.stderr}\n${await processListing()}',
       );
     }
-    final process = await ProcessRig.create(parent: programDataBase());
+    final process = await ProcessRig.create(
+      parent: programDataBase(),
+      serverArgs: serverArgs,
+    );
+    if (gslt) process.addGsltSetting();
     final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     final port = socket.port;
     await socket.close();

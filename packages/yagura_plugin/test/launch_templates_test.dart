@@ -57,6 +57,66 @@ void main() {
     ]);
   });
 
+  test('mod_roles_joined_into_arguments', () {
+    final manifest = _load(dayzManifestText);
+    LaunchContext contextWith(Map<String, List<String>> mods) => LaunchContext(
+      settings: validateSettings(manifest, {}).values,
+      ports: const {'game': 2302},
+      paths: const {'instance': '/i', 'server': '/i/server'},
+      os: 'windows',
+      mods: mods,
+    );
+
+    final args = renderLaunchArgs(
+      manifest,
+      contextWith({
+        'client': ['@CF', '@VPP'],
+        'server': ['@VPPAdminTools'],
+      }),
+    );
+    final emptyRole = renderLaunchArgs(
+      manifest,
+      contextWith({
+        'client': ['@CF', '@VPP'],
+        'server': <String>[],
+      }),
+    );
+    final noMods = renderLaunchArgs(manifest, contextWith({}));
+
+    expect(args, [
+      '-config=yagura/serverDZ.cfg',
+      '-port=2302',
+      '-mod=@CF;@VPP',
+      '-serverMod=@VPPAdminTools',
+    ]);
+    expect(emptyRole, [
+      '-config=yagura/serverDZ.cfg',
+      '-port=2302',
+      '-mod=@CF;@VPP',
+    ]);
+    expect(noMods, ['-config=yagura/serverDZ.cfg', '-port=2302']);
+  });
+
+  test('secret_outside_the_secrets_namespace', () {
+    for (final (template, mentions) in [
+      // A secret setting through `settings`, and a non-secret through
+      // `secrets`.
+      ('-rcon={{settings.rconPassword}}', 'settings.rconPassword'),
+      ('-max={{secrets.maxPlayers}}', 'secrets.maxPlayers'),
+    ]) {
+      final result = loadPlugin(
+        writePlugin(dayzWith('-config=yagura/serverDZ.cfg', template)),
+      );
+
+      expect(result.status, PluginStatus.rejected, reason: template);
+      final reason = result.reasons.single;
+      expect(reason.code, 'invalid_manifest');
+      expect(reason.message, contains(template), reason: 'names the template');
+      expect(reason.message, contains(mentions));
+      expect(reason.path, 'launch.args[0]');
+    }
+  });
+
   test('template_references_an_unknown_setting', () {
     final result = loadPlugin(
       writePlugin(
@@ -140,6 +200,107 @@ void main() {
         loadPlugin(writePlugin(badJoin)).reasons.first.path,
         'launch.args[2].join.list',
       );
+    });
+
+    test('a secrets reference renders as a structured argument', () {
+      final manifest = _load(
+        dayzWith('-config=yagura/serverDZ.cfg', '-gslt={{secrets.gslt}}x'),
+      );
+      final context = LaunchContext(
+        settings: validateSettings(manifest, {}).values,
+        ports: const {'game': 2302},
+        paths: const {'instance': '/i', 'server': '/i/server'},
+        os: 'windows',
+        secretsSet: const {'gslt'},
+      );
+
+      final args = renderLaunchArguments(manifest, context);
+
+      expect(args.first.secretSetting, 'gslt');
+      expect(args.first.prefix, '-gslt=');
+      expect(args.first.suffix, 'x');
+      expect(args.first.redacted, '-gslt=***x');
+      expect(args.first.resolve({'gslt': 'T0KEN'}), '-gslt=T0KENx');
+      expect(args[1].secretSetting, isNull);
+      expect(args[1].resolve(const {}), '-port=2302');
+      // The string form never holds a value.
+      expect(renderLaunchArgs(manifest, context).first, '-gslt=***x');
+    });
+
+    test('an argument naming an unset secret renders nothing', () {
+      final manifest = _load(
+        dayzWith('-config=yagura/serverDZ.cfg', '-gslt={{secrets.gslt}}'),
+      );
+
+      final args = renderLaunchArgs(
+        manifest,
+        LaunchContext(
+          settings: validateSettings(manifest, {}).values,
+          ports: const {'game': 2302},
+          paths: const {'instance': '/i', 'server': '/i/server'},
+          os: 'windows',
+        ),
+      );
+
+      expect(args, ['-port=2302']);
+    });
+
+    test('secrets are allowed in launch arguments and nowhere else', () {
+      final ok = loadPlugin(
+        writePlugin(
+          dayzWith('-config=yagura/serverDZ.cfg', '-gslt={{secrets.gslt}}'),
+        ),
+      );
+      expect(ok.reasons, isEmpty);
+      expect(ok.status, PluginStatus.loaded);
+
+      for (final (name, text) in [
+        (
+          'binding file',
+          dayzWith(
+            'file: server/yagura/serverDZ.cfg',
+            'file: "{{secrets.gslt}}.cfg"',
+          ),
+        ),
+        ('data path', '${dayzManifestText}data_paths: ["{{secrets.gslt}}/"]\n'),
+        (
+          'condition',
+          dayzWith(
+            '-config=yagura/serverDZ.cfg',
+            '-config=x\n    - when: secrets.gslt\n      args: [-y]',
+          ),
+        ),
+      ]) {
+        final result = loadPlugin(writePlugin(text));
+        expect(result.status, PluginStatus.rejected, reason: name);
+      }
+    });
+
+    test('an unknown mod role or a scalar use of a role is rejected', () {
+      final unknown = loadPlugin(
+        writePlugin(dayzWith('list: mods.server', 'list: mods.both')),
+      );
+      expect(unknown.status, PluginStatus.rejected);
+      expect(unknown.reasons.single.path, 'launch.args[3].join.list');
+      expect(unknown.reasons.single.message, contains('mods.both'));
+
+      final scalar = loadPlugin(
+        writePlugin(
+          dayzWith('-config=yagura/serverDZ.cfg', '-mods={{mods.client}}'),
+        ),
+      );
+      expect(scalar.status, PluginStatus.rejected);
+      expect(scalar.reasons.single.path, 'launch.args[0]');
+      expect(scalar.reasons.single.message, contains('join'));
+    });
+
+    test('mods references need a mods section', () {
+      final text = valheimWith('-nographics', '"{{mods.client}}"');
+
+      final result = loadPlugin(writePlugin(text));
+
+      expect(result.status, PluginStatus.rejected);
+      expect(result.reasons.single.message, contains('mods.client'));
     });
 
     test('the os and paths namespaces render', () {

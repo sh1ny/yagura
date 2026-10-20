@@ -4,6 +4,25 @@ import 'package:yagura_plugin/yagura_plugin.dart';
 import 'support.dart';
 
 void main() {
+  test('bindings_and_mods_sections_accepted', () {
+    final result = loadPlugin(writePlugin(dayzManifestText));
+
+    expect(result.reasons, isEmpty);
+    expect(result.status, PluginStatus.loaded);
+    final manifest = result.manifest!;
+    expect(manifest.bindings, hasLength(1));
+    expect(manifest.mods, isNotNull);
+    expect(manifest.mods!.source, ModSource.steamWorkshop);
+    expect(manifest.mods!.roles, ['client', 'server']);
+
+    // Only an rcon section would be rejected.
+    final withRcon = loadPlugin(
+      writePlugin('${dayzManifestText}rcon:\n  port: game\n'),
+    );
+    expect(withRcon.status, PluginStatus.rejected);
+    expect(withRcon.reasons.single.path, 'rcon');
+  });
+
   test('invalid_health_regex', () {
     final result = loadPlugin(
       writePlugin(
@@ -48,17 +67,15 @@ void main() {
       expect(result.reasons.single.path, 'health.type');
     });
 
-    for (final section in ['mods', 'rcon']) {
-      test('the $section section is unsupported in this version', () {
-        final result = loadPlugin(
-          writePlugin('${valheimManifest()}\n$section:\n  anything: 1\n'),
-        );
+    test('the rcon section is unsupported in this version', () {
+      final result = loadPlugin(
+        writePlugin('${valheimManifest()}\nrcon:\n  anything: 1\n'),
+      );
 
-        expect(result.status, PluginStatus.rejected);
-        expect(result.reasons.single.code, 'unsupported_in_this_version');
-        expect(result.reasons.single.path, section);
-      });
-    }
+      expect(result.status, PluginStatus.rejected);
+      expect(result.reasons.single.code, 'unsupported_in_this_version');
+      expect(result.reasons.single.path, 'rcon');
+    });
 
     test('log_match must name a declared log source', () {
       final result = loadPlugin(
