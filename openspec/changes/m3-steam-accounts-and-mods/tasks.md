@@ -326,7 +326,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 - [x] 11.1 Extend `apps/yagurad/integration_test/secrets_data_directory_scan_test.dart` with a run that adds an account through the fake SteamCMD with a known password, remembered and not remembered, and sets a GSLT and a secret bound into a config file. Scan the data directory, the account installations, snapshots, run files, operation history and daemon logs. Verify: no secret value is found outside the accepted locations: the secrets table, SteamCMD's `config.vdf` cached token, and a bound secret's own file.
 - [x] 11.2 Update `docs/protocol.md`: this version implements `Steam`, `Mods`, `Operations.WatchPrompts` and `RespondToPrompt`, and still not `Rcon` or `Instances.ApplyConfig` (M4). Verify: `service_not_built_yet` and `method_not_built_yet` pass and are flipped green, and the document lists the methods.
-- [ ] 11.3 Write back into `openspec/architecture.md`:
+- [x] 11.3 Write back into `openspec/architecture.md`:
   - the content-store publisher is the mod pipeline, not the Steam service (line 155);
   - the components this change adds (account service, prompt broker, workshop client, config binder, secret masker);
   - the State & Ownership and Resource Bounds rows this design adds (accounts 32, mods per instance 256, prompts, `WatchPrompts` 32, bound files 64, key rules 1,024, update check).
