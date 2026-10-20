@@ -285,15 +285,128 @@ class FileBinding {
   final bool gameWrites;
 }
 
+/// The `secret` setting that holds the instance's Game Server Login Token,
+/// named by `steam.gslt`.
+class GsltSpec {
+  const GsltSpec({required this.setting, this.required = false});
+
+  factory GsltSpec.fromJson(Map<String, Object?> json) => GsltSpec(
+    setting: json['setting']! as String,
+    required: json['required'] as bool? ?? false,
+  );
+
+  /// The name of a top-level `secret` setting.
+  final String setting;
+
+  /// Whether Start fails `gslt_required` while the setting is unset.
+  final bool required;
+}
+
 class SteamSpec {
   const SteamSpec({
     required this.appId,
     this.anonymous = true,
     this.sizeHintBytes,
+    this.gslt,
   });
   final int appId;
   final bool anonymous;
   final int? sizeHintBytes;
+  final GsltSpec? gslt;
+}
+
+/// Where an instance's mods come from. `url_archive` is a later version's.
+enum ModSource {
+  steamWorkshop('steam_workshop'),
+  serverManaged('server_managed');
+
+  const ModSource(this.wireName);
+
+  /// The spelling used in the manifest.
+  final String wireName;
+}
+
+/// How a mod reaches the server: a directory link, a copy, or not at all (the
+/// server fetches its own mods; role lists carry item ids).
+enum ModStage { link, copy, none }
+
+/// One entry of `mods.keys`: files of a staged mod matching [from] are placed
+/// in the directory [to].
+class ModKeyRule {
+  const ModKeyRule({required this.from, required this.to});
+
+  factory ModKeyRule.fromJson(Map<String, Object?> json) => ModKeyRule(
+    from: json['from']! as String,
+    to: json['to']! as String,
+  );
+
+  /// A glob over the files of the mod's content.
+  final String from;
+
+  /// A directory, relative to the instance root.
+  final String to;
+}
+
+/// The `mods` section: how a plugin's mods are acquired, staged and ordered.
+class ModsSpec {
+  const ModsSpec({
+    required this.source,
+    required this.stage,
+    required this.roles,
+    this.workshopAppId,
+    this.stageDir = defaultStageDir,
+    this.linkName = defaultLinkName,
+    this.copyFallback = false,
+    this.keys = const [],
+  });
+
+  factory ModsSpec.fromJson(Map<String, Object?> json) {
+    final source = ModSource.values.firstWhere(
+      (s) => s.wireName == json['source'],
+    );
+    return ModsSpec(
+      source: source,
+      workshopAppId: json['workshop_app_id'] as int?,
+      stage: switch (json['stage']) {
+        final String name => ModStage.values.byName(name),
+        _ => source == ModSource.serverManaged ? ModStage.none : ModStage.link,
+      },
+      stageDir: json['stage_dir'] as String? ?? defaultStageDir,
+      linkName: json['link_name'] as String? ?? defaultLinkName,
+      copyFallback: json['copy_fallback'] as bool? ?? false,
+      keys: [
+        for (final k in (json['keys'] as List<Object?>?) ?? const [])
+          ModKeyRule.fromJson(k! as Map<String, Object?>),
+      ],
+      roles: [...(json['roles']! as List<Object?>).cast<String>()],
+    );
+  }
+
+  /// The stage directory when the manifest names none.
+  static const defaultStageDir = 'server';
+
+  /// The link name template when the manifest names none.
+  static const defaultLinkName = '{{mod.name_safe}}';
+
+  final ModSource source;
+
+  /// The Steam app the workshop items belong to; `steam_workshop` only.
+  final int? workshopAppId;
+  final ModStage stage;
+
+  /// Where links or copies are made, relative to the instance root.
+  final String stageDir;
+
+  /// The template of a staged mod's name; `{{mod.name_safe}}` is its sanitised
+  /// title.
+  final String linkName;
+
+  /// Copy a mod whose link could not be created.
+  final bool copyFallback;
+  final List<ModKeyRule> keys;
+
+  /// The roles a mod can have; each is a list in the launch templates.
+  final List<String> roles;
 }
 
 /// The validated plugin manifest.
@@ -313,6 +426,7 @@ class PluginManifest {
     required this.logs,
     required this.hooksTimeoutSeconds,
     this.bindings = const [],
+    this.mods,
     this.description,
     this.steam,
   });
@@ -336,6 +450,10 @@ class PluginManifest {
               appId: steam['app_id']! as int,
               anonymous: steam['login'] != 'account',
               sizeHintBytes: steam['size_hint_bytes'] as int?,
+              gslt: switch (steam['gslt']) {
+                final Map<String, Object?> gslt => GsltSpec.fromJson(gslt),
+                _ => null,
+              },
             ),
       executables: (json['executable']! as Map<String, Object?>)
           .cast<String, String>(),
@@ -388,6 +506,10 @@ class PluginManifest {
         for (final b in (json['bindings'] as List<Object?>?) ?? const [])
           FileBinding.fromJson(b! as Map<String, Object?>),
       ],
+      mods: switch (json['mods']) {
+        final Map<String, Object?> mods => ModsSpec.fromJson(mods),
+        _ => null,
+      },
     );
   }
 
@@ -419,6 +541,9 @@ class PluginManifest {
 
   /// The settings written into game files, in the manifest's order.
   final List<FileBinding> bindings;
+
+  /// How the plugin's mods are acquired and staged; null when it has none.
+  final ModsSpec? mods;
 
   /// Operating systems with a declared executable, sorted.
   List<String> get platforms => executables.keys.toList()..sort();

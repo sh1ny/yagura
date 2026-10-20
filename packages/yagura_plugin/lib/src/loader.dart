@@ -404,12 +404,18 @@ Object? _valueAt(Map<String, Object?> json, String pointer) {
 /// Sections and values the schema accepts but this version refuses.
 void _checkUnsupported(Map<String, Object?> json, _Report report) {
   const code = 'unsupported_in_this_version';
-  for (final section in ['mods', 'rcon']) {
-    if (json.containsKey(section)) {
-      report.add(code, [
-        section,
-      ], 'the "$section" section is not supported in this version');
-    }
+  if (json.containsKey('rcon')) {
+    report.add(code, [
+      'rcon',
+    ], 'the "rcon" section is not supported in this version');
+  }
+  if ((json['mods'] as Map<String, Object?>?)?['source'] == 'url_archive') {
+    report.add(
+      code,
+      ['mods', 'source'],
+      'mods source "url_archive" is not supported in this version; '
+      'supported sources: ${[for (final s in ModSource.values) s.wireName].join(', ')}',
+    );
   }
   for (final (i, binding)
       in ((json['bindings'] as List<Object?>?) ?? const []).indexed) {
@@ -495,7 +501,17 @@ void _checkSemantics(
   }
 
   final scope = TemplateScope(settings: manifest.settings, ports: portNames);
-  _checkLaunch(manifest.launchArgs, ['launch', 'args'], scope, report);
+  // Only launch arguments may name secrets and mod roles.
+  final launchScope = TemplateScope(
+    settings: manifest.settings,
+    ports: portNames,
+    allowSecrets: true,
+    allowMods: true,
+    roles: {...?manifest.mods?.roles},
+  );
+  _checkLaunch(manifest.launchArgs, ['launch', 'args'], launchScope, report);
+  _checkGslt(manifest, report);
+  if (manifest.mods case final mods?) _checkMods(mods, report);
 
   final health = manifest.health;
   if (health.type == HealthType.logMatch) {
@@ -538,6 +554,102 @@ void _checkSemantics(
     _checkInstancePath(path, ['data_paths', i], 'data path', report);
   }
   _checkBindings(manifest, scope, directory, report);
+}
+
+/// Checks `steam.gslt`: it names a declared top-level secret setting.
+void _checkGslt(PluginManifest manifest, _Report report) {
+  final gslt = manifest.steam?.gslt;
+  if (gslt == null) return;
+  const path = ['steam', 'gslt', 'setting'];
+  final def = manifest.settings[gslt.setting];
+  if (def == null) {
+    report.add(
+      invalidManifestCode,
+      path,
+      'steam.gslt names setting "${gslt.setting}", which the manifest does '
+      'not declare',
+    );
+  } else if (def.type != SettingType.secret) {
+    report.add(
+      invalidManifestCode,
+      path,
+      'steam.gslt names setting "${gslt.setting}", which is not a secret '
+      'setting (it is a ${def.type.wireName})',
+    );
+  }
+}
+
+/// Checks `mods`: the source and stage mode suit each other, the workshop app
+/// is named, the stage directory and key targets stay inside the instance,
+/// and the link name renders to one directory name.
+void _checkMods(ModsSpec mods, _Report report) {
+  const code = invalidManifestCode;
+  switch ((mods.source, mods.stage)) {
+    case (ModSource.serverManaged, ModStage.link || ModStage.copy):
+      report.add(
+        code,
+        ['mods', 'stage'],
+        'mods source server_managed stages nothing: use stage none '
+        '(got ${mods.stage.name})',
+      );
+    case (ModSource.steamWorkshop, ModStage.none):
+      report.add(
+        code,
+        ['mods', 'stage'],
+        'mods source steam_workshop needs stage link or copy, not none',
+      );
+    default:
+  }
+  if (mods.source == ModSource.steamWorkshop && mods.workshopAppId == null) {
+    report.add(
+      code,
+      ['mods', 'workshop_app_id'],
+      'required field "workshop_app_id" is missing for mods source '
+      'steam_workshop',
+    );
+  }
+  _checkInstancePath(mods.stageDir, ['mods', 'stage_dir'], 'stage_dir', report);
+  for (final (i, rule) in mods.keys.indexed) {
+    _checkInstancePath(
+      rule.to,
+      ['mods', 'keys', i, 'to'],
+      'key target',
+      report,
+    );
+  }
+
+  final List<TemplatePart> parts;
+  try {
+    parts = parseTemplate(mods.linkName);
+  } on TemplateException catch (e) {
+    report.add(code, ['mods', 'link_name'], e.message);
+    return;
+  }
+  var known = true;
+  for (final TemplateRef(:reference) in parts.whereType<TemplateRef>()) {
+    if (reference != 'mod.name_safe') {
+      known = false;
+      report.add(
+        code,
+        ['mods', 'link_name'],
+        'link_name "${mods.linkName}" uses {{$reference}}: only '
+        '{{mod.name_safe}} is available',
+      );
+    }
+  }
+  if (known) {
+    final literal = parts.whereType<TemplateText>().map((t) => t.text).join();
+    if (literal.contains(RegExp(r'[\/:*?"<>|]')) ||
+        literal == '.' ||
+        literal == '..') {
+      report.add(
+        code,
+        ['mods', 'link_name'],
+        'link_name "${mods.linkName}" must name one directory: it cannot hold '
+        'a path separator or a character Windows forbids in a name',
+      );
+    }
+  }
 }
 
 /// Checks `bindings`: formats, settings, file path templates, templates of
@@ -718,6 +830,17 @@ bool _checkSetting(
   return patternsOk;
 }
 
+int _secretReferences(String template) {
+  try {
+    return parseTemplate(template)
+        .whereType<TemplateRef>()
+        .where((ref) => ref.segments.first == 'secrets')
+        .length;
+  } on TemplateException {
+    return 0;
+  }
+}
+
 void _checkLaunch(
   List<LaunchEntry> entries,
   List<Object> path,
@@ -743,6 +866,14 @@ void _checkLaunch(
       case LiteralEntry(:final template):
         for (final problem in checkTemplate(template, scope)) {
           report.add(invalidManifestCode, here, problem);
+        }
+        if (_secretReferences(template) > 1) {
+          report.add(
+            invalidManifestCode,
+            here,
+            'template "$template" names more than one secret; an argument '
+            'holds at most one',
+          );
         }
       case GroupEntry(:final entries):
         _checkLaunch(entries, [...here, 'args'], scope, report);

@@ -31,8 +31,8 @@ Sizes are checked before the file is parsed.
 |---|---|
 | `unsupported_manifest_version` | `manifest_version` is not one of the supported versions (currently `[1]`); the error lists them. |
 | `file_too_large` | `plugin.yaml` or `hooks.js` is over its limit; the error names the file and the limit. |
-| `unsupported_in_this_version` | The manifest uses something this release refuses, naming the field: a `mods` or `rcon` section, `stop.strategy: rcon`, `health.type: query`, or a binding in the format `ue-ini`, `xml` or `vdf`. |
-| `invalid_manifest` | Anything else: YAML syntax, a schema violation (with the allowed values), an unknown template reference, a bad regular expression, a data path outside the instance, a binding that names an undeclared setting or an unknown format, a binding file outside the instance. |
+| `unsupported_in_this_version` | The manifest uses something this release refuses, naming the field: an `rcon` section, `mods.source: url_archive`, `stop.strategy: rcon`, `health.type: query`, or a binding in the format `ue-ini`, `xml` or `vdf`. |
+| `invalid_manifest` | Anything else: YAML syntax, a schema violation (with the allowed values), an unknown template reference, a bad regular expression, a data path outside the instance, a binding that names an undeclared setting or an unknown format, a binding file outside the instance, a secret or a mod role used outside its namespace, a `mods` section whose source and stage mode do not fit or whose directories leave the instance, a `steam.gslt` that does not name a secret setting. |
 
 Every error carries the field path (`ports[0].protocol`) and the line of the offending value in `plugin.yaml`.
 
@@ -65,6 +65,7 @@ steam:
   app_id: 896660
   login: anonymous
   size_hint_bytes: 1500000000
+  gslt: { setting: gslt, required: true }
 ```
 
 | Field | Required | Meaning |
@@ -72,6 +73,7 @@ steam:
 | `app_id` | yes | Steam application id of the dedicated server. |
 | `login` | no | `anonymous` (default), `account_optional` (installed with the anonymous login in this version) or `account` (refused with `steam_account_required` until Steam accounts exist). |
 | `size_hint_bytes` | no | Approximate install size, used to warn about disk space before installing. |
+| `gslt` | no | `{ setting: <name>, required: <bool> }`: the `secret` setting that holds the instance's Game Server Login Token. `setting` must name a declared top-level secret setting, or the plugin is rejected. With `required: true` a Start while the token is unset fails `gslt_required` (checked before `secret_required`), and no process is launched. The launch arguments hand it to the server as `{{secrets.<setting>}}`; it is never used as a Steam account login. |
 
 The whole section is optional for games that are not installed through Steam.
 
@@ -233,6 +235,20 @@ With `logs: true` and `serverMods: ["@CF", "@VPP"]` this renders `-config=server
 | `paths.instance`, `paths.server` | The instance directory and the server install directory. |
 | `instance` | Shorthand for `paths.instance`. |
 | `os` | `windows` or `linux`. |
+| `secrets.<setting>` | The value of a top-level `secret` setting. Only in `launch.args`, and only for secret settings: `{{settings.<secret>}}` and `{{secrets.<non-secret>}}` both reject the plugin. At most one secret per argument. An argument whose secret is unset is left out. |
+| `mods.<role>` | The instance's mods of one role, in load order. Only as the `list` of a `join` in `launch.args`. A role the `mods` section does not declare rejects the plugin. |
+
+**Secrets reach only the server.** The value of a `secrets` reference travels from the daemon to the launcher and on to the relay over standard input, and is put into the server's command line in memory just before the server starts. It is never written to a file: `launch.json` records `{"secret": "<setting>", "prefix": ..., "suffix": ...}` for the argument, and every argument list the daemon logs or reports shows `***` in its place. A launch whose input line is missing or unreadable fails `launch_input_missing` and starts nothing.
+
+```yaml fragment
+launch:
+  args:
+    - "-gslt={{secrets.gslt}}"
+    - join: { list: mods.client, separator: ";", prefix: "-mod=" }
+    - join: { list: mods.server, separator: ";", prefix: "-serverMod=" }
+```
+
+With client mods `[@CF, @VPP]` and server mods `[@VPPAdminTools]` this renders `-mod=@CF;@VPP` and `-serverMod=@VPPAdminTools` as separate arguments; an empty role renders no argument.
 
 All references are checked when the plugin loads. A template that uses `{{settings.doesNotExist}}` rejects the plugin with an error naming the template and the unknown path, instead of failing at start.
 
@@ -348,9 +364,39 @@ Optional. Each entry writes one setting to one key of one file, every time the i
 
 A plugin may bind at most 64 distinct files. A hand edit to a bound key is overwritten at the next start and reported as an `external_edit` warning on the operation, naming each key with its old and new value (`***` for keys bound to secret settings); a hand edit to any other key is kept.
 
+### `mods`
+
+```yaml fragment
+mods:
+  source: steam_workshop
+  workshop_app_id: 221100
+  stage: link
+  stage_dir: server
+  link_name: "@{{mod.name_safe}}"
+  copy_fallback: true
+  keys:
+    - { from: "**/*.bikey", to: server/keys/ }
+  roles: [client, server]
+```
+
+Optional. Declares that instances of the plugin have mods, where they come from, how they reach the server, and in which lists they are ordered. A plugin without `mods` rejects mod operations with `mods_not_supported`.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `source` | yes | `steam_workshop` (downloaded through SteamCMD into a store shared by all instances) or `server_managed` (the server fetches its own mods; nothing is downloaded or staged, and the role lists carry the item ids). `url_archive` is refused with `unsupported_in_this_version` naming `mods.source`. |
+| `workshop_app_id` | `steam_workshop` | The Steam app the workshop items belong to (`221100` for DayZ). |
+| `stage` | no | `link` (a directory link to the shared content; the default for `steam_workshop`), `copy`, or `none` (the only mode of `server_managed`). |
+| `stage_dir` | no | Where links or copies are made, relative to the instance directory. Default `server`. It must stay inside the instance. |
+| `link_name` | no | Template of a staged mod's name. `{{mod.name_safe}}` is its sanitised workshop title (or `@<item id>` when the title is not available); it is the only reference. It must name one directory. Default `{{mod.name_safe}}`. |
+| `copy_fallback` | no | `true` copies a mod whose link cannot be created (for example on a network share). Default `false`: the step fails `stage_link_failed`. |
+| `keys` | no | Rules `{ from, to }` applied after staging: files of a staged mod matching the glob `from` (such as `**/*.bikey`) are placed in the directory `to`, relative to the instance and inside it. A key is removed only when no staged mod provides it, and one the daemon did not place is never overwritten. |
+| `roles` | yes | The roles a mod can have, such as `[client, server]`: lowercase names, at least one, each once. Each role is a list in the launch templates (`mods.<role>`). |
+
+Every path in the manifest is relative to the instance directory, while launch arguments resolve against the server's working directory, `<instance>/server`. A plugin whose `stage_dir` is not `server` therefore prefixes the relative path in its launch template.
+
 ### Reserved sections
 
-`mods` and `rcon` are reserved for later versions. In this version a manifest that has either of them is rejected with `unsupported_in_this_version` naming the section, like `stop.strategy: rcon` and `health.type: query`.
+`rcon` is reserved for a later version. In this version a manifest that has it is rejected with `unsupported_in_this_version` naming the section, like `stop.strategy: rcon` and `health.type: query`.
 
 ### The complete Valheim manifest
 
@@ -459,4 +505,54 @@ launch:
     - when: settings.logs
       args: [-dologs, -adminlog, -netlog]
     - join: { list: settings.serverMods, separator: ";", prefix: "-mod=" }
+```
+
+## A third complete example
+
+A DayZ-style plugin: a Game Server Login Token handed to the server as a secret argument, a bound configuration file, and workshop mods in two roles:
+
+```yaml
+manifest_version: 1
+id: dayz
+name: DayZ
+version: 0.1.0
+steam:
+  app_id: 223350
+  login: account
+  gslt: { setting: gslt, required: false }
+executable:
+  windows: DayZServer_x64.exe
+ports:
+  - name: game
+    default: 2302
+    protocol: udp
+    purpose: game
+settings:
+  hostname: { type: string, default: DayZ }
+  maxPlayers: { type: integer, default: 60, min: 1, max: 127 }
+  rconPassword: { type: secret }
+  gslt: { type: secret }
+bindings:
+  - file: server/yagura/serverDZ.cfg
+    format: dayz-cfg
+    key: hostname
+    setting: hostname
+    create: true
+mods:
+  source: steam_workshop
+  workshop_app_id: 221100
+  stage: link
+  stage_dir: server
+  link_name: "@{{mod.name_safe}}"
+  copy_fallback: true
+  keys:
+    - { from: "**/*.bikey", to: server/keys/ }
+  roles: [client, server]
+launch:
+  args:
+    - -config=yagura/serverDZ.cfg
+    - "-port={{ports.game}}"
+    - join: { list: mods.client, separator: ";", prefix: "-mod=" }
+    - join: { list: mods.server, separator: ";", prefix: "-serverMod=" }
+    - "-gslt={{secrets.gslt}}"
 ```

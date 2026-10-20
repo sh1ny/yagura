@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://yagura.dev/schemas/plugin-manifest.v1.json",
   "title": "Yagura plugin manifest, version 1",
-  "description": "Structure of plugin.yaml for manifest_version 1. Some sections validate here but the loader refuses them in this release (mods, rcon, stop.strategy rcon, health.type query) with reason unsupported_in_this_version. Template references, derived ports, regular expressions and path containment are checked by the loader after this schema.",
+  "description": "Structure of plugin.yaml for manifest_version 1. Some values validate here but the loader refuses them in this release (the rcon section, mods.source url_archive, stop.strategy rcon, health.type query, binding formats ue-ini, xml and vdf) with reason unsupported_in_this_version. Template references, derived ports, regular expressions and path containment are checked by the loader after this schema.",
   "type": "object",
   "additionalProperties": false,
   "required": ["manifest_version", "id", "name", "version", "executable", "launch"],
@@ -124,7 +124,7 @@
       "type": "array",
       "items": { "$ref": "#/definitions/binding" }
     },
-    "mods": { "description": "Not supported in this release.", "type": "object" },
+    "mods": { "$ref": "#/definitions/mods" },
     "rcon": { "description": "Not supported in this release.", "type": "object" }
   },
   "definitions": {
@@ -149,7 +149,45 @@
       "properties": {
         "app_id": { "type": "integer", "minimum": 1 },
         "login": { "type": "string", "enum": ["anonymous", "account", "account_optional"] },
-        "size_hint_bytes": { "type": "integer", "minimum": 0 }
+        "size_hint_bytes": { "type": "integer", "minimum": 0 },
+        "gslt": {
+          "description": "The secret setting that holds the instance's Game Server Login Token. Reference it in launch.args as {{secrets.<setting>}}. It is never a Steam account login.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["setting"],
+          "properties": {
+            "setting": { "description": "Name of a top-level secret setting.", "type": "string", "minLength": 1 },
+            "required": { "description": "Start fails with gslt_required while the token is unset. Default false.", "type": "boolean" }
+          }
+        }
+      }
+    },
+    "mods": {
+      "description": "How the plugin's mods are acquired, staged and ordered. The loader checks the source/stage combination, workshop_app_id, that stage_dir and key targets stay inside the instance, and link_name (url_archive is refused with unsupported_in_this_version).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "roles"],
+      "properties": {
+        "source": { "description": "steam_workshop: downloaded through SteamCMD and shared. server_managed: the server fetches its own mods; nothing is downloaded or staged. url_archive is reserved.", "type": "string", "enum": ["steam_workshop", "server_managed", "url_archive"] },
+        "workshop_app_id": { "description": "Steam app the workshop items belong to; required for steam_workshop.", "type": "integer", "minimum": 1 },
+        "stage": { "description": "link (directory link to the shared content), copy, or none. Default link for steam_workshop; server_managed uses none.", "type": "string", "enum": ["link", "copy", "none"] },
+        "stage_dir": { "description": "Directory the links or copies are made in, relative to the instance root. Default server.", "type": "string", "minLength": 1 },
+        "link_name": { "description": "Template of a staged mod's name; {{mod.name_safe}} is its sanitised title. Default {{mod.name_safe}}.", "type": "string", "minLength": 1 },
+        "copy_fallback": { "description": "Copy a mod whose link cannot be created. Default false.", "type": "boolean" },
+        "keys": {
+          "description": "Key file rules, applied after staging.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from", "to"],
+            "properties": {
+              "from": { "description": "Glob over the files of a staged mod, such as **/*.bikey.", "type": "string", "minLength": 1 },
+              "to": { "description": "Directory the matching files are placed in, relative to the instance root.", "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "roles": { "description": "The roles a mod can have; each is a list in launch templates: {{mods.<role>}} in a join.", "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" } }
       }
     },
     "port": {

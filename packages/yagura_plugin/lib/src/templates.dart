@@ -9,6 +9,8 @@ class LaunchContext {
     required this.ports,
     required this.paths,
     required this.os,
+    this.mods = const {},
+    this.secretsSet = const {},
   });
 
   /// Validated setting values (defaults applied), see `validateSettings`.
@@ -22,6 +24,15 @@ class LaunchContext {
 
   /// `windows` or `linux`.
   final String os;
+
+  /// The instance's ordered mod list per role: staged names, or item ids for
+  /// stage `none`. A role without an entry is empty.
+  final Map<String, List<String>> mods;
+
+  /// The names of the `secret` settings that have a value. An argument that
+  /// names one that has none renders nothing. The values themselves never
+  /// pass through the renderer.
+  final Set<String> secretsSet;
 }
 
 /// Thrown when a template cannot be parsed or rendered.
@@ -40,12 +51,24 @@ class TemplateScope {
     required this.ports,
     this.allowSettings = true,
     this.allowPorts = true,
+    this.allowSecrets = false,
+    this.allowMods = false,
+    this.roles = const {},
   });
 
   final Map<String, SettingDef> settings;
   final Set<String> ports;
   final bool allowSettings;
   final bool allowPorts;
+
+  /// `secrets.<setting>` is available: in launch arguments only.
+  final bool allowSecrets;
+
+  /// `mods.<role>` is available: in launch arguments only.
+  final bool allowMods;
+
+  /// The roles the manifest's `mods` section declares.
+  final Set<String> roles;
 }
 
 /// Directories a template can name through `paths.<name>`; `{{instance}}` is
@@ -150,6 +173,11 @@ String? checkReference(
         _ => _scalarTypes.contains(def.type),
       };
       if (ok) return null;
+      if (def.type == SettingType.secret && expected == 'scalar') {
+        return '$reference is a secret and cannot be read through settings'
+            '${scope.allowSecrets ? '; a launch argument writes it as '
+                '{{secrets.${segments.last}}}' : ''}';
+      }
       return switch (expected) {
         'boolean' => '$reference is a ${def.type.wireName}, not a boolean',
         'list' => '$reference is a ${def.type.wireName}, not a string_list',
@@ -157,6 +185,31 @@ String? checkReference(
           '$reference is a ${def.type.wireName} and cannot be written '
               'into a string${def.type == SettingType.stringList ? '; use join' : ''}',
       };
+    case 'secrets':
+      if (!scope.allowSecrets) {
+        return 'secrets are only available in launch arguments';
+      }
+      if (expected != 'scalar') return '$reference is a secret, not a $expected';
+      if (segments.length != 2) return 'secrets needs a setting name';
+      final def = scope.settings[segments[1]];
+      if (def == null) return 'unknown setting ${segments[1]}';
+      if (def.type != SettingType.secret) {
+        return '$reference names a ${def.type.wireName} setting, not a '
+            'secret; use {{settings.${segments[1]}}}';
+      }
+      return null;
+    case 'mods':
+      if (!scope.allowMods) return 'mods are only available in launch arguments';
+      if (segments.length != 2 || !scope.roles.contains(segments[1])) {
+        return scope.roles.isEmpty
+            ? 'unknown mod role $reference (the manifest declares no mods '
+                  'section)'
+            : 'unknown mod role $reference (declared roles: '
+                  '${scope.roles.join(', ')})';
+      }
+      return expected == 'list'
+          ? null
+          : '$reference is a list of mods, not a $expected; use join';
     case 'ports':
       if (!scope.allowPorts) return 'ports are not available here';
       if (expected != 'scalar') return '$reference is not a $expected';
@@ -178,7 +231,7 @@ String? checkReference(
       return null;
     default:
       return 'unknown namespace "${segments.first}" in $reference '
-          '(known: settings, ports, paths, os, instance)';
+          '(known: settings, ports, paths, os, instance, mods, secrets)';
   }
 }
 
@@ -247,22 +300,101 @@ bool _applies(LaunchEntry entry, LaunchContext context) =>
     (entry.when == null || _isTrue(entry.when!, context)) &&
     (entry.unless == null || !_isTrue(entry.unless!, context));
 
-/// Renders the manifest's launch templates into an argument list. Every
-/// result is one argv entry, so nothing is split or interpreted by a shell.
-List<String> renderLaunchArgs(PluginManifest manifest, LaunchContext context) {
-  final args = <String>[];
+/// What an argument that holds a secret shows wherever it is logged or
+/// reported.
+const redactedSecret = '***';
+
+/// One rendered launch argument. A plain argument is [prefix] alone. An
+/// argument that holds a secret is [prefix], the value of the setting
+/// [secretSetting], then [suffix]; the value is not known here, so the
+/// argument can be recorded, logged and reported without it.
+class LaunchArgument {
+  const LaunchArgument(this.prefix, {this.secretSetting, this.suffix = ''});
+
+  /// The whole text of a plain argument, or the text before the secret.
+  final String prefix;
+
+  /// The `secret` setting whose value goes between [prefix] and [suffix].
+  final String? secretSetting;
+
+  /// The text after the secret.
+  final String suffix;
+
+  /// The argument with the secret as `***`: safe to log and to report.
+  String get redacted =>
+      secretSetting == null ? prefix : '$prefix$redactedSecret$suffix';
+
+  /// The argument as the server receives it. [secrets] maps setting names to
+  /// values; throws [TemplateException] when the secret's value is missing.
+  String resolve(Map<String, String> secrets) {
+    final setting = secretSetting;
+    if (setting == null) return prefix;
+    final value = secrets[setting];
+    if (value == null) {
+      throw TemplateException('the secret "$setting" has no value');
+    }
+    return '$prefix$value$suffix';
+  }
+}
+
+/// Renders one launch template. A `{{secrets.<setting>}}` reference becomes
+/// the argument's secret slot, or null when the setting has no value.
+LaunchArgument? _renderArgument(String template, LaunchContext context) {
+  final prefix = StringBuffer();
+  final suffix = StringBuffer();
+  String? secret;
+  for (final part in parseTemplate(template)) {
+    switch (part) {
+      case TemplateText(:final text):
+        (secret == null ? prefix : suffix).write(text);
+      case TemplateRef(:final segments)
+          when segments.first == 'secrets':
+        if (secret != null) {
+          throw TemplateException(
+            'template "$template" names more than one secret',
+          );
+        }
+        secret = segments.elementAtOrNull(1) ?? '';
+        if (!context.secretsSet.contains(secret)) return null;
+      case TemplateRef(:final reference):
+        (secret == null ? prefix : suffix).write(
+          _resolveReference(reference, context),
+        );
+    }
+  }
+  return LaunchArgument(
+    prefix.toString(),
+    secretSetting: secret,
+    suffix: suffix.toString(),
+  );
+}
+
+/// Renders the manifest's launch templates into arguments. Every result is
+/// one argv entry, so nothing is split or interpreted by a shell. An argument
+/// that names a secret keeps it as a slot ([LaunchArgument.secretSetting]);
+/// one whose secret has no value is left out.
+List<LaunchArgument> renderLaunchArguments(
+  PluginManifest manifest,
+  LaunchContext context,
+) {
+  final args = <LaunchArgument>[];
   void render(List<LaunchEntry> entries) {
     for (final entry in entries) {
       if (!_applies(entry, context)) continue;
       switch (entry) {
         case LiteralEntry(:final template):
-          args.add(renderTemplate(template, context));
+          if (_renderArgument(template, context) case final argument?) {
+            args.add(argument);
+          }
         case GroupEntry(:final entries):
           render(entries);
         case JoinEntry(:final list, :final separator, :final prefix):
-          final items = _lookupValue(list.split('.'), context.settings);
+          final segments = list.split('.');
+          final items = segments.first == 'mods'
+              ? context.mods[segments.elementAtOrNull(1)]
+              : _lookupValue(segments, context.settings);
           if (items is List<Object?> && items.isNotEmpty) {
-            args.add('$prefix${items.join(separator)}');
+            args.add(LaunchArgument('$prefix${items.join(separator)}'));
           }
       }
     }
@@ -271,6 +403,15 @@ List<String> renderLaunchArgs(PluginManifest manifest, LaunchContext context) {
   render(manifest.launchArgs);
   return args;
 }
+
+/// The launch arguments as strings, with every secret shown as `***`: the
+/// form a daemon logs and reports. Use [renderLaunchArguments] to start a
+/// process.
+List<String> renderLaunchArgs(PluginManifest manifest, LaunchContext context) =>
+    [
+      for (final argument in renderLaunchArguments(manifest, context))
+        argument.redacted,
+    ];
 
 /// Resolves a path that must stay inside [instanceRoot]: a relative path is
 /// taken from the instance root, an absolute one must already be inside.
