@@ -249,7 +249,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 ## 7. [M3] Mod pipeline: rows, staging, keys, apply and updates
 
-- [ ] 7.1 Write the failing tests for this group's red rows. Extend `integration_test/files/daemon_file_operations_do_not_follow_links_test.dart` (`windows`) with recorded-junction cases:
+- [x] 7.1 Write the failing tests for this group's red rows. Extend `integration_test/files/daemon_file_operations_do_not_follow_links_test.dart` (`windows`) with recorded-junction cases:
   - a read continues into the content store;
   - a write below the junction is refused;
   - a recorded path whose junction points at another target is `sandbox_violation`;

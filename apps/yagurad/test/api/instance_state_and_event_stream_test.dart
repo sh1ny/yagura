@@ -8,7 +8,11 @@ import 'package:yagurad/src/host/daemon.dart';
 import 'package:yagurad/src/instances/instance.dart';
 
 import '../support/api_support.dart';
+import '../support/content_support.dart';
 import '../support/daemon_support.dart';
+import '../support/mods_support.dart';
+
+import 'package:yagurad/src/mods/mod_check_schedule.dart';
 
 /// What a `WatchInstances` subscriber has received so far.
 class Watcher {
@@ -53,6 +57,42 @@ Future<void> rename(Daemon daemon, String instanceId, String name) async {
 }
 
 void main() {
+  test('mod_update_count_delta', () async {
+    final rig = await ModsRig.start();
+    rig.item(cfMod, title: 'CF');
+    rig.item(vppMod, title: 'VPP');
+    final a = await rig.instance(name: 'Alpha');
+    await rig.setMods(a, [ModSpec(cfMod), ModSpec(vppMod)]);
+    await rig.apply(a);
+    rig.workshop.items[cfMod]!.timeUpdated = 1700500000;
+    rig.workshop.items[vppMod]!.timeUpdated = 1700500000;
+
+    // The daemon starts again; its first scheduled check finds both.
+    await rig.restart(
+      schedule: const ModCheckSchedule(
+        first: Duration(milliseconds: 600),
+        interval: Duration(hours: 1),
+        jitter: Duration.zero,
+      ),
+    );
+    final watcher = Watcher(rig.grpc.instances.watchInstances(watchRequest()));
+    await watcher.until((e) => e.isNotEmpty);
+    expect(
+      watcher.events.first.snapshot.instances.single.modsUpdateAvailable,
+      0,
+    );
+
+    await watcher.until(
+      (e) => e.any((x) => x.hasChanged() && x.changed.modsUpdateAvailable == 2),
+      reason: 'a delta with the update count',
+    );
+    final delta = watcher.changes.firstWhere(
+      (e) => e.changed.modsUpdateAvailable == 2,
+    );
+    expect(delta.changed.id, a.id);
+    expect(delta.changed.settingsOmitted, isTrue);
+  });
+
   test('snapshot_then_deltas', () async {
     final env = TestEnv()..installValheim();
     final daemon = await env.start();

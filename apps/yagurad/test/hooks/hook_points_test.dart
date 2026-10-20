@@ -7,9 +7,73 @@ import 'package:test/test.dart';
 import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/operations/operations.dart';
 
+import '../support/content_support.dart';
 import '../support/daemon_support.dart';
+import '../support/mods_support.dart';
 
 void main() {
+  test('mods_staged_hook_edits_a_config', () async {
+    // A binding writes `GeneralData.name`; the mods-staged hook and the
+    // pre-start hook edit the same file.
+    final rig = await ModsRig.start(
+      manifest: moddedValheimManifest(
+        extra: '''
+bindings:
+  - file: cfggameplay.json
+    format: json
+    key: GeneralData.name
+    setting: serverName
+    create: true
+''',
+      ),
+      hooks: '''
+exports.onModsStaged = function (ctx) {
+  return {files: [{path: "cfggameplay.json", format: "json", patch: {
+    GeneralData: {
+      name: "from-mods-hook",
+      title: "mods-hook",
+      staged: ctx.mods.map((m) => m.stagedName).join(",")
+    }
+  }}]};
+};
+exports.onPreStart = function () {
+  return {files: [{path: "cfggameplay.json", format: "json", patch: {
+    GeneralData: {title: "pre-start-hook"}
+  }}]};
+};
+''',
+    );
+    rig.item(cfMod, title: 'CF');
+    rig.item(vppMod, title: 'VPP');
+    final instance = await rig.instance();
+    await rig.setMods(instance, [ModSpec(cfMod), ModSpec(vppMod)]);
+
+    final done = await runStart(rig.daemon, instance.id);
+
+    // The start continued.
+    expect(done.status, OperationStatus.succeeded, reason: done.resultMessage);
+    expect(rig.current(instance).state, InstanceState.running);
+    final general =
+        (jsonDecode(
+              File(p.join(instance.directory, 'cfggameplay.json'))
+                  .readAsStringSync(),
+            ) as Map<String, Object?>)['GeneralData']
+            as Map<String, Object?>;
+    // Applied after the bindings (the binding wrote "Friends"), with the mods
+    // already staged, and before the pre-start edits (which win).
+    expect(general['name'], 'from-mods-hook');
+    expect(general['staged'], '@CF,@VPP');
+    expect(general['title'], 'pre-start-hook');
+    // One pass: the file was written once, so the next start finds no hand
+    // edit.
+    await runStop(rig.daemon, instance.id);
+    final second = await runStart(rig.daemon, instance.id);
+    expect(
+      second.warnings.where((w) => w.startsWith('external_edit')),
+      isEmpty,
+    );
+  });
+
   test('hook_not_exported', () async {
     final env = TestEnv();
     // hooks.js exports only onPreStart; the install runs onPostInstall.

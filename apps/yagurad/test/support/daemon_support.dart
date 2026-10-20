@@ -16,6 +16,8 @@ import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/instances/instance_acls.dart';
 import 'package:yagurad/src/logs/log_hub.dart';
 import 'package:yagurad/src/logs/log_models.dart';
+import 'package:yagurad/src/mods/mod_check_schedule.dart';
+import 'package:yagurad/src/mods/stage_link.dart';
 import 'package:yagurad/src/operations/operations.dart';
 import 'package:yagurad/src/host/secret_store.dart';
 import 'package:yagurad/src/process/process.dart';
@@ -392,6 +394,11 @@ class TestEnv {
     FirewallBackend? firewall,
     Duration firewallTimeout = const Duration(seconds: 30),
     int maxRetainedOperationEvents = 2000,
+    Uri? workshopEndpoint,
+    Duration workshopMinInterval = const Duration(milliseconds: 5),
+    // The update check runs only when a test asks for it.
+    ModCheckSchedule modCheckSchedule = const ModCheckSchedule.off(),
+    StageLinkCreator stageLink = defaultStageLink,
     // Nothing polls by itself unless a test says so: tests call `pollNow`.
     LogHubOptions logOptions = const LogHubOptions.manual(),
   }) async {
@@ -428,6 +435,10 @@ class TestEnv {
         firewallTimeout: firewallTimeout,
         maxRetainedOperationEvents: maxRetainedOperationEvents,
         logOptions: logOptions,
+        workshopEndpoint: workshopEndpoint,
+        workshopMinInterval: workshopMinInterval,
+        modCheckSchedule: modCheckSchedule,
+        stageLink: stageLink,
         hookHost: hookHost,
         os: os,
         migrations: migrations,

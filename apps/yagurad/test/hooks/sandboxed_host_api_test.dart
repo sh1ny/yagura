@@ -9,10 +9,71 @@ import 'package:yagurad/src/hooks/hooks.dart';
 import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/operations/operations.dart';
 
+import '../support/content_support.dart';
 import '../support/daemon_support.dart';
+import '../support/mods_support.dart';
 import 'hook_test_support.dart';
 
 void main() {
+  test('reading_a_staged_mod', () async {
+    final rig = await ModsRig.start(
+      hooks: r'''
+exports.onPreStart = function () {
+  const text = yagura.fs.readText("server/@CF/meta.cpp");
+  const m = /publishedid = (\d+)/.exec(text);
+  return {args: ["-meta=" + m[1]]};
+};
+''',
+    );
+    rig.item(cfMod, title: 'CF');
+    final instance = await rig.instance();
+    await rig.setMods(instance, [ModSpec(cfMod)]);
+
+    final done = await runStart(rig.daemon, instance.id);
+
+    // Reading through the recorded link works.
+    expect(done.status, OperationStatus.succeeded, reason: done.resultMessage);
+    expect(rig.launchArgs.last, startsWith('-meta='));
+    expect(rig.launchArgs.last, contains(cfMod));
+  });
+
+  test('edit_into_a_staged_mod_refused', () async {
+    final rig = await ModsRig.start(
+      hooks: '''
+exports.onPreStart = function () {
+  return {files: [{path: "server/@CF/config.cpp", format: "json", patch: {a: 1}}]};
+};
+''',
+    );
+    rig.item(cfMod, title: 'CF');
+    final instance = await rig.instance();
+    await rig.setMods(instance, [ModSpec(cfMod)]);
+    await rig.apply(instance);
+    final before =
+        Directory(rig.versionDir(cfMod, '1700000000'))
+            .listSync(recursive: true)
+            .whereType<File>()
+            .map((f) => '${f.path}:${f.lengthSync()}')
+            .toList()
+          ..sort();
+    final launches = rig.env.process.launches.length;
+
+    final done = await runStart(rig.daemon, instance.id);
+
+    expect(done.status, OperationStatus.failed);
+    expect(done.resultReason, 'sandbox_violation');
+    expect(done.resultMessage, contains('@CF'));
+    expect(rig.env.process.launches.length, launches);
+    final after =
+        Directory(rig.versionDir(cfMod, '1700000000'))
+            .listSync(recursive: true)
+            .whereType<File>()
+            .map((f) => '${f.path}:${f.lengthSync()}')
+            .toList()
+          ..sort();
+    expect(after, before);
+  });
+
   test('file_edit_returned_and_applied_by_the_daemon', () async {
     final env = TestEnv();
     env.installValheim(

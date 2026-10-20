@@ -23,6 +23,7 @@ class ApiHarness {
       instances = pb.InstancesClient(channel),
       operations = pb.OperationsClient(channel),
       steam = pb.SteamClient(channel),
+      mods = pb.ModsClient(channel),
       logs = pb.LogsClient(channel);
 
   final Daemon daemon;
@@ -37,6 +38,7 @@ class ApiHarness {
   final pb.InstancesClient instances;
   final pb.OperationsClient operations;
   final pb.SteamClient steam;
+  final pb.ModsClient mods;
   final pb.LogsClient logs;
 
   /// Starts [daemon] (a fresh one on [env] when null) behind a server.
