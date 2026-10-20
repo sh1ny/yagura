@@ -21,10 +21,10 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 | host-service → Data directory layout | Instance on another drive | apps/yagurad/integration_test/admin/instance_roots_test.dart | instance_on_another_drive (elevated) | 1 | green |
 | host-service → Data directory layout | Root writable by non-administrators | apps/yagurad/integration_test/admin/instance_roots_test.dart | root_writable_by_non_administrators (elevated) | 1 | green |
 | host-service → Data directory layout | Root still in use | apps/yagurad/integration_test/admin/instance_roots_test.dart | root_still_in_use (elevated) | 1 | green |
-| config-bindings → Round-trip preservation | Unchanged file stays identical | packages/yagura_formats/test/round_trip_preservation_test.dart | unchanged_file_stays_identical | 2 | red |
-| config-bindings → Round-trip preservation | Comments and unknown keys survive | packages/yagura_formats/test/round_trip_preservation_test.dart | comments_and_unknown_keys_survive | 2 | red |
-| config-bindings → Round-trip preservation | Unparseable file | packages/yagura_formats/test/round_trip_preservation_test.dart | unparseable_file | 2 | red |
-| config-bindings → Supported formats | Array value in dayz-cfg | packages/yagura_formats/test/supported_formats_test.dart | array_value_in_dayz_cfg | 2 | red |
+| config-bindings → Round-trip preservation | Unchanged file stays identical | packages/yagura_formats/test/round_trip_preservation_test.dart | unchanged_file_stays_identical | 2 | green |
+| config-bindings → Round-trip preservation | Comments and unknown keys survive | packages/yagura_formats/test/round_trip_preservation_test.dart | comments_and_unknown_keys_survive | 2 | green |
+| config-bindings → Round-trip preservation | Unparseable file | packages/yagura_formats/test/round_trip_preservation_test.dart | unparseable_file | 2 | green |
+| config-bindings → Supported formats | Array value in dayz-cfg | packages/yagura_formats/test/supported_formats_test.dart | array_value_in_dayz_cfg | 2 | green |
 | config-bindings → Bindings map settings to file keys | Scalar binding applied | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | scalar_binding_applied | 3 | red |
 | config-bindings → Bindings map settings to file keys | Bound file missing | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | bound_file_missing | 3 | red |
 | config-bindings → Bindings map settings to file keys | Missing file created from the plugin template | apps/yagurad/test/config/bindings_map_settings_to_file_keys_test.dart | missing_file_created_from_the_plugin_template | 3 | red |
@@ -184,7 +184,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 - [x] 2.1 Collect real-file corpora under `packages/yagura_formats/test/corpus/`: DayZ `serverDZ.cfg`, `cfggameplay.json`, `BEServer_x64.cfg`, a generic INI with `;` and `#` comments, files with a BOM, CRLF and LF line endings, and trailing whitespace. Verify: each corpus file is present with its source noted in `corpus/README.md`.
 - [x] 2.2 Write the failing tests for this group's rows, plus `corpus_round_trips_byte_for_byte`, which covers every corpus file in every format, in `round_trip_preservation_test.dart`. Verify: they fail because the parsers are missing.
-- [ ] 2.3 Implement `IniDocument`, `DayzCfgDocument` and `KvDocument` with the `JsonDocument` surface (`parse`, `toSource`, `get`, `set`), on token trees that keep comments, whitespace, line endings, BOM and order (D9). Verify: this group's rows and the corpus test pass, the rows are flipped green, and `dart analyze packages/yagura_formats` is clean.
+- [x] 2.3 Implement `IniDocument`, `DayzCfgDocument` and `KvDocument` with the `JsonDocument` surface (`parse`, `toSource`, `get`, `set`), on token trees that keep comments, whitespace, line endings, BOM and order (D9). Verify: this group's rows and the corpus test pass, the rows are flipped green, and `dart analyze packages/yagura_formats` is clean.
 
 ## 3. [M3] Config binder and hook edits
 
