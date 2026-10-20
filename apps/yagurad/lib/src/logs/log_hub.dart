@@ -73,6 +73,10 @@ class LogHub {
   /// The secret values to mask in the log of an instance; null masks nothing.
   final List<String> Function(String instanceId)? secretValues;
   final _maskers = <String, SecretMasker>{};
+
+  /// The last masker built per instance, kept through a rebuild so a failed
+  /// read of the secrets never lets a line through unmasked.
+  final _lastMaskers = <String, SecretMasker>{};
   final LogOffsetStore? _offsets;
   final DateTime Function() _clock;
   late final Timer _persistTimer;
@@ -95,11 +99,14 @@ class LogHub {
     final source = secretValues;
     if (source == null) return SecretMasker.none;
     try {
-      return _maskers[instanceId] = SecretMasker(source(instanceId));
+      final masker = SecretMasker(source(instanceId));
+      _lastMaskers[instanceId] = masker;
+      return _maskers[instanceId] = masker;
     } on Object {
-      // The secrets cannot be read right now: nothing is kept, so the next
-      // line asks again.
-      return SecretMasker.none;
+      // The secrets cannot be read right now. The last masker built keeps
+      // masking; before any was built the line is withheld. Nothing is
+      // cached, so the next line asks again.
+      return _lastMaskers[instanceId] ?? SecretMasker.withholding;
     }
   }
 

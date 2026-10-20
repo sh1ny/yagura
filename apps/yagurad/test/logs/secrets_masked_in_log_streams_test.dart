@@ -2,10 +2,13 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:yagurad/src/files/files.dart';
 import 'package:yagurad/src/host/daemon.dart';
 import 'package:yagurad/src/instances/instance.dart';
+import 'package:yagurad/src/logs/logs.dart';
 
 import '../support/daemon_support.dart';
+import '../support/temp_support.dart';
 import 'log_test_support.dart';
 
 /// The instance's `logs/server.log`, where the Valheim fixture logs.
@@ -161,5 +164,65 @@ void main() {
     await followed.settle();
 
     expect(followed.texts, ['*** *** ***', 'firstpassword secondpassword ***']);
+  });
+
+  // The secret store may fail to read (DPAPI, a locked database). No line
+  // passes unmasked: the last masker built keeps masking, and before any was
+  // built the line is withheld.
+  group('secret store cannot be read', () {
+    late Directory dir;
+    late File log;
+    late bool storeFails;
+    late LogHub hub;
+
+    setUp(() async {
+      dir = createCanonicalTempSync('yagurad_masker_');
+      log = File(p.join(dir.path, 'server.log'))..writeAsStringSync('');
+      storeFails = false;
+      hub = LogHub(
+        options: const LogHubOptions.manual(),
+        secretValues: (_) {
+          if (storeFails) throw StateError('secret store unavailable');
+          return ['hunter22secret'];
+        },
+      );
+      addTearDown(() async {
+        await hub.close();
+        dir.deleteSync(recursive: true);
+      });
+      await hub.attach('i', [
+        LogSourceSpec(
+          name: 'server',
+          kind: LogSourceKind.file,
+          pattern: log.path,
+          encoding: LogEncoding.utf8,
+        ),
+      ], fs: InstanceFs(dir.path));
+    });
+
+    /// Appends [line] to the log and returns what a follower then gets.
+    Future<List<String>> write(String line) async {
+      final followed = Collector(hub.follow('i'));
+      log.writeAsStringSync('$line\n', mode: FileMode.append);
+      await hub.pollNow('i');
+      await followed.settle();
+      return followed.texts;
+    }
+
+    test('a failed rebuild keeps the last masker', () async {
+      expect(await write('pw hunter22secret'), ['pw ***']);
+      storeFails = true;
+      hub.rebuildMasker('i');
+      expect(await write('again hunter22secret'), ['again ***']);
+      hub.rebuildMaskers();
+      expect(await write('still hunter22secret'), ['still ***']);
+    });
+
+    test('no masker built yet withholds the line', () async {
+      storeFails = true;
+      expect(await write('pw hunter22secret'), [SecretMasker.withheld]);
+      storeFails = false;
+      expect(await write('later hunter22secret'), ['later ***']);
+    });
   });
 }
