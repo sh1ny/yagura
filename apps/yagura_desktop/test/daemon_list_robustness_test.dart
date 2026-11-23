@@ -477,7 +477,7 @@ void main() {
     testWidgets('a_pairing_after_a_damaged_file_keeps_the_other_keys', (
       tester,
     ) async {
-      final world = await _afterDamageAndPairing(tester, file);
+      final world = (await _afterDamageAndPairing(tester, file)).world;
 
       // After a restart the daemons of the damaged file keep their keys
       // (and the copy can still be restored by hand): only pending keys are
@@ -499,7 +499,7 @@ void main() {
     testWidgets('the_damaged_copy_is_discarded_only_after_confirming', (
       tester,
     ) async {
-      final world = await _afterDamageAndPairing(tester, file);
+      final (:world, :store) = await _afterDamageAndPairing(tester, file);
 
       // Cancelling changes nothing.
       await tester.tap(find.byKey(const ValueKey('daemons:discard-copy')));
@@ -514,12 +514,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('daemons:discard-copy')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('discard-copy:confirm')));
-      await settleIo(
-        tester,
-        until: () =>
-            !File('${file.path}.damaged').existsSync() &&
-            world.stateOf(tester, 'charlie') == 'connected',
-      );
+      await store.settle(tester);
       expect(File('${file.path}.damaged').existsSync(), isFalse);
       expect(find.byKey(const ValueKey('daemons:problem')), findsNothing);
       final keys = world.keychain.entries.keys;
@@ -661,8 +656,13 @@ void main() {
 /// Session one reads a damaged list (so lists nothing), pairs charlie, and
 /// session two starts from the file that results. Alpha and bravo were in the
 /// damaged file; their keys are in the keychain.
-Future<World> _afterDamageAndPairing(WidgetTester tester, File file) async {
+Future<({World world, _WidgetFileStore store})> _afterDamageAndPairing(
+  WidgetTester tester,
+  File file,
+) async {
   file.writeAsStringSync('{"daemons": [');
+  final ioZone = (await tester.runAsync(() async => Zone.current))!;
+  final firstStore = _WidgetFileStore(file, ioZone);
   final world = World();
   final alpha = world.addHost('alpha');
   final bravo = world.addHost('bravo', host: '10.0.0.3');
@@ -671,49 +671,67 @@ Future<World> _afterDamageAndPairing(WidgetTester tester, File file) async {
   await world.prePair(bravo);
   world
     ..store.records = []
-    ..fileStore = FileDaemonListStore(file);
+    ..fileStore = firstStore;
   await world.pump(tester);
-  await settleIo(tester);
+  await firstStore.settle(tester);
   expect(find.textContaining('is damaged'), findsOneWidget);
-  final pairing = world.container
-      .read(daemonRegistryProvider.notifier)
-      .pair(charlie.pairingString(), 'laptop');
-  unawaited(pairing.then((_) {}, onError: (Object _) {}));
-  await settleIo(tester, until: () => _lists(file, 'charlie'));
+  await Future.wait<void>([
+    world.container
+        .read(daemonRegistryProvider.notifier)
+        .pair(charlie.pairingString(), 'laptop'),
+    firstStore.settle(tester),
+  ]);
+  expect(file.readAsStringSync(), contains('"id":"charlie"'));
 
   // The restart.
   await tester.pumpWidget(const SizedBox());
-  world.fileStore = FileDaemonListStore(file);
+  final store = _WidgetFileStore(file, ioZone);
+  world.fileStore = store;
   await world.pump(tester);
-  await settleIo(
-    tester,
-    until: () =>
-        find
-            .byKey(const ValueKey('daemons:discard-copy'))
-            .evaluate()
-            .isNotEmpty &&
-        world.stateOf(tester, 'charlie') == 'connected',
-  );
-  return world;
+  await store.settle(tester);
+  return (world: world, store: store);
 }
 
-/// Whether [file] holds a saved list with the daemon [id].
-bool _lists(File file, String id) {
-  try {
-    return file.readAsStringSync().contains('"id":"$id"');
-  } on FileSystemException {
-    return false; // mid-save
+// Keep the real file store, but run its I/O outside the widget's fake clock.
+// Wait for completed operations before pumping their effects into the widget.
+final class _WidgetFileStore implements DaemonListStore {
+  _WidgetFileStore(File file, this._ioZone)
+    : _store = FileDaemonListStore(file);
+
+  final FileDaemonListStore _store;
+  final Zone _ioZone;
+  var _pending = <Future<void>>[];
+
+  Future<T> _track<T>(Future<T> Function() operation) {
+    final done = _ioZone.run(operation);
+    _pending.add(done);
+    return done;
   }
-}
 
-/// Lets real file I/O finish (the fake clock of a widget test does not), then
-/// settles the widgets. With [until], it goes on, for up to 10 s, until that
-/// holds: a loaded runner can take longer than the 30 rounds.
-Future<void> settleIo(WidgetTester tester, {bool Function()? until}) async {
-  for (var i = 0; i < 30 || (until != null && !until() && i < 1000); i++) {
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 10)),
-    );
+  Future<void> settle(WidgetTester tester) async {
     await settleAll(tester);
+    // A completed load can connect a daemon and queue a last-seen save.
+    while (_pending.isNotEmpty) {
+      final pending = _pending;
+      _pending = [];
+      await tester.runAsync(() => Future.wait(pending));
+      await settleAll(tester);
+    }
   }
+
+  @override
+  Future<DaemonListLoad> load() => _track(_store.load);
+
+  @override
+  Future<void> save(List<DaemonRecord> daemons) =>
+      _track(() => _store.save(daemons));
+
+  @override
+  Future<void> discardDamagedCopies() => _track(_store.discardDamagedCopies);
+
+  @override
+  void discardUnreadable() => _store.discardUnreadable();
+
+  @override
+  String? get saveRefusal => _store.saveRefusal;
 }
