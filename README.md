@@ -2,7 +2,7 @@
 
 Self-hosted game server manager: a headless Dart daemon (`yagurad`) that installs, configures and runs dedicated servers on Windows (Linux later, no Docker), and a Flutter desktop client that manages several daemons over mTLS gRPC. Every game is a plugin: a YAML manifest plus optional JavaScript hooks. "Yagura" is a working name.
 
-Planning is done with [Specwright](https://github.com/sh1ny/specwright) on OpenSpec 1.14.1. M1 (`init-core-platform`) is being implemented.
+Planning uses [Specwright](https://github.com/sh1ny/specwright) with OpenSpec 1.16.0. See [AGENTS.md](AGENTS.md) for the pinned Specwright CLI and workflow.
 
 ## Read in this order
 
