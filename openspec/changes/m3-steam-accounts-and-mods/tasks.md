@@ -332,7 +332,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
   - a mod update re-links only the changed mod.
 
   Verify: the test passes. It covers exit criterion 4 and the agent side of exit criterion 3; record it in `docs/milestones/m3.md`.
-- [ ] 10.3 (user) On a Windows host with DayZ Server and BattlEye, which the user runs:
+- **10.3 (user) — deferred, not run or passed.** Follow-up: [sh1ny/yagura#3](https://github.com/sh1ny/yagura/issues/3), with the manual run guide in `docs/milestones/m3-task-10.3-manual-run.md`. On a Windows host with DayZ Server and BattlEye, the user will:
   - add a Steam account protected by Steam Guard from the desktop;
   - check that the code prompt reaches the desktop and the login completes;
   - search the data directory and the daemon logs for the password, and find none;
@@ -343,7 +343,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
   - **A2:** does DayZ save and exit on Ctrl+C? If not, switch the plugin to `kill` and note it.
   - **A3:** does BattlEye load mods through junctions? If not, the plugin keeps `copy_fallback` and the result is noted.
 
-  Verify: the user's results for exit criteria 2 and 3 are recorded in `docs/milestones/m3.md`. They are never marked passed on the user's behalf.
+  In the follow-up, record the user's results for exit criteria 2 and 3 in `docs/milestones/m3.md`. They are never marked passed on the user's behalf.
 
 ## 11. [M3] Integration, write-back and M3 exit
 
@@ -359,7 +359,7 @@ Rows marked `green` ride along unchanged inside a MODIFIED requirement and alrea
 
 ## Workflow follow-up
 
-- Archive this change after its PR merges, and run `specwright-roadmap close` for M3 once exit criteria 2 and 3 have the user's results.
+- Archive this change on its PR branch. M3's roadmap exit criteria 2 and 3 remain open until the user records the real-host results in [sh1ny/yagura#3](https://github.com/sh1ny/yagura/issues/3).
 - The material this change took from `platform-backlog` (groups 14-17, decisions D8 and D19, and the M3 requirements) is already deleted there. M4 starts from what is left.
 - Once this change is archived, `platform-backlog`'s config-bindings delta still ADDs "Supported formats", which this change adds first, and its archive would refuse it. Turn that block into a MODIFIED one that keeps this change's scenarios ("Format of a later version" and the others) before M4 plans from it. It cannot be changed earlier: a MODIFIED block fails validation until the main spec has the requirement.
 - When a task adds a dependency to any workspace package, re-run the dependency skill discovery and update `.claude/skills/UPSTREAM.json`.

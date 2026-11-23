@@ -62,3 +62,4 @@ Covers: host-service → Linux service.
 - This change is never applied or archived. At each milestone, `specwright-roadmap next` creates the milestone's change (for example `m2-secure-remote-host`) from its groups here: the requirements as ADDED, or MODIFIED where this backlog lists them so, the decisions and table rows its groups depend on, and its test-map rows. That change gets its own design review. The moved material is then deleted here, and this change is deleted when nothing is left.
 - When a task adds a dependency to any workspace package, re-run the dependency skill discovery and update `.claude/skills/UPSTREAM.json`.
 - Milestone exit criteria that are user-verified are run by the user, never marked passed on their behalf.
+- [sh1ny/yagura#3](https://github.com/sh1ny/yagura/issues/3) tracks deferred M3 task 10.3: the user-run Windows DayZ/BattlEye and Steam Guard check for exit criteria 2 and 3 and assumptions A2 and A3.
