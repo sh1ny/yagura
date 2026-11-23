@@ -1,0 +1,2 @@
+# Corpus files are byte-exact fixtures: no line-ending or BOM normalisation.
+* -text

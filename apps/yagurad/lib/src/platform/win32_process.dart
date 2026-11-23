@@ -66,7 +66,9 @@ class SpawnFailure implements Exception {
 /// [stdin], [stdout] and [stderr] are inheritable handles for the child's
 /// standard handles; when none is given the child gets no standard handles
 /// of its own. [environment], when given, is the child's complete
-/// environment. Throws [SpawnFailure].
+/// environment. [handles], when given, are the only handles the child inherits
+/// (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`); they must be inheritable. Throws
+/// [SpawnFailure].
 SpawnedProcess spawnProcess({
   required String executable,
   List<String> args = const [],
@@ -77,17 +79,24 @@ SpawnedProcess spawnProcess({
   int? stdin,
   int? stdout,
   int? stderr,
+  List<int>? handles,
   Map<String, String>? environment,
 }) {
   final win32 = Win32.instance;
   final commandLine = windowsCommandLine(executable, args).toNativeUtf16();
   final application = executable.toNativeUtf16();
   final cwd = workingDirectory?.toNativeUtf16();
-  final info = calloc<Uint8>(Win32.startupInfoSize);
+  final info = calloc<Uint8>(Win32.startupInfoExSize);
   final processInfo = calloc<Uint8>(Win32.processInformationSize);
+  final list = handles == null ? null : calloc<IntPtr>(handles.length);
+  final listSize = calloc<IntPtr>();
+  Pointer<Void> attributes = nullptr;
+  var initialized = false;
   Pointer<Utf16> block = nullptr;
   try {
-    info.cast<Uint32>().value = Win32.startupInfoSize;
+    info.cast<Uint32>().value = handles == null
+        ? Win32.startupInfoSize
+        : Win32.startupInfoExSize;
     var startFlags = 0;
     if (hidden) {
       startFlags |= Win32.startfUseShowWindow;
@@ -101,6 +110,33 @@ SpawnedProcess spawnProcess({
     }
     (info + 60).cast<Uint32>().value = startFlags;
     var creation = flags;
+    if (list != null) {
+      for (var i = 0; i < handles!.length; i++) {
+        list[i] = handles[i];
+      }
+      win32.initializeProcThreadAttributeList(nullptr, 1, 0, listSize);
+      attributes = calloc<Uint8>(listSize.value).cast();
+      initialized =
+          win32.initializeProcThreadAttributeList(attributes, 1, 0, listSize) !=
+          0;
+      if (!initialized ||
+          win32.updateProcThreadAttribute(
+                attributes,
+                0,
+                Win32.procThreadAttributeHandleList,
+                list.cast(),
+                handles.length * 8,
+                nullptr,
+                nullptr,
+              ) ==
+              0) {
+        throw SpawnFailure(
+          'the handle list for $executable could not be built',
+        );
+      }
+      (info + 104).cast<Pointer<Void>>().value = attributes;
+      creation |= Win32.extendedStartupInfoPresent;
+    }
     if (environment != null) {
       block = _environmentBlock(environment);
       creation |= Win32.createUnicodeEnvironment;
@@ -124,6 +160,13 @@ SpawnedProcess spawnProcess({
     win32.closeHandle(thread);
     return SpawnedProcess(pid, process);
   } finally {
+    if (attributes != nullptr) {
+      // Only a list that was initialized may be deleted.
+      if (initialized) win32.deleteProcThreadAttributeList(attributes);
+      calloc.free(attributes);
+    }
+    if (list != null) calloc.free(list);
+    calloc.free(listSize);
     calloc.free(commandLine);
     calloc.free(application);
     if (cwd != null) calloc.free(cwd);

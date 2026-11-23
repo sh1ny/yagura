@@ -1,13 +1,89 @@
 import 'dart:async';
 
 import 'package:path/path.dart' as p;
+import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
+import 'package:yagura_proto/yagura_proto.dart' as pb;
 import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/operations/operations.dart';
 
 import '../support/daemon_support.dart';
+import '../support/mods_support.dart';
 
 void main() {
+  test('heavy_limit_counts_mod_downloads', () async {
+    final rig = await ModsRig.start();
+    final env = rig.env;
+    // Four instances, each with its own Steam account (so no installation
+    // lock is shared) and its own mod.
+    final db = sqlite3.open(p.join(env.data, 'yagura.db'));
+    addTearDown(db.close);
+    final instances = <Instance>[];
+    final items = ['1000001', '1000002', '1000003', '1000004'];
+    for (var i = 0; i < 4; i++) {
+      db.execute(
+        "INSERT INTO steam_accounts (id, username, status, created_at) "
+        "VALUES ('acct$i', 'user$i', 'ready', 1)",
+      );
+      rig.item(items[i], title: 'Mod $i');
+      final instance = await rig.daemon.instances.create(
+        CreateInstanceRequest(
+          pluginId: 'valheim',
+          name: 'Heavy $i',
+          settings: valheimSettings(name: 'Heavy $i'),
+          ports: {'game': 3000 + i * 10},
+          steamAccountId: 'acct$i',
+        ),
+      );
+      await rig.daemon.operations.whenDone(
+        rig.daemon.instances.install(instance.id).id,
+      );
+      final stopped = rig.daemon.instances.get(instance.id);
+      await rig.setMods(stopped, [ModSpec(items[i])]);
+      instances.add(stopped);
+    }
+    final fifth = await createValheim(
+      rig.daemon,
+      name: 'Fifth',
+      ports: {'game': 3100},
+      directory: p.join(env.data, 'instances', 'fifth'),
+    );
+    final installsBefore = rig.steam.runs.length;
+    final gate = rig.steam.workshopGate = Completer<void>();
+
+    // Four mod downloads run at once, on four installations.
+    final applies = [
+      for (final i in instances)
+        await rig.mods.applyMods(pb.ApplyModsRequest(instanceId: i.id)),
+    ];
+    await eventually(
+      () => rig.steam.workshopRunning == 4,
+      reason: 'four downloads',
+    );
+
+    // They hold the four heavy slots: an install waits for one.
+    final install = rig.daemon.instances.install(fifth.id);
+    await eventually(
+      () =>
+          rig.daemon.operations.get(install.id)!.currentStep ==
+          'waiting_for_steamcmd',
+      reason: 'the install waits for a slot',
+    );
+    expect(rig.steam.runs, hasLength(installsBefore));
+
+    gate.complete();
+    for (final op in applies) {
+      expect(
+        (await rig.daemon.operations.whenDone(op.id)).status,
+        OperationStatus.succeeded,
+      );
+    }
+    expect(
+      (await rig.daemon.operations.whenDone(install.id)).status,
+      OperationStatus.succeeded,
+    );
+  });
+
   test('concurrent_requests_on_one_instance', () async {
     final env = TestEnv();
     env.installValheim();

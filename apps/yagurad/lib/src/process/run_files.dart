@@ -101,7 +101,15 @@ class RunFiles {
   void writeLaunch(LaunchRequest request) {
     _writeConfined(launchPath, {
       'executable': request.executable,
-      'args': request.args,
+      // A secret argument is recorded as its slot, never with the value.
+      'args': [
+        for (final (index, arg) in request.args.indexed)
+          if (request.secretArguments.where((s) => s.index == index).firstOrNull
+              case final s?)
+            {'secret': s.setting, 'prefix': s.prefix, 'suffix': s.suffix}
+          else
+            arg,
+      ],
       'working_directory': request.workingDirectory,
       'instance_directory': request.instanceDirectory,
       'run_id': request.runId,
@@ -112,11 +120,35 @@ class RunFiles {
   LaunchRequest? readLaunch() {
     final json = readJson(launchPath);
     if (json == null) return null;
+    final args = <String>[];
+    final secretArguments = <SecretArgument>[];
+    for (final arg in json['args']! as List) {
+      switch (arg) {
+        case String():
+          args.add(arg);
+        case {
+          'secret': final String setting,
+          'prefix': final String prefix,
+          'suffix': final String suffix,
+        }:
+          final slot = SecretArgument(
+            index: args.length,
+            setting: setting,
+            prefix: prefix,
+            suffix: suffix,
+          );
+          secretArguments.add(slot);
+          args.add(slot.redacted);
+        default:
+          return null;
+      }
+    }
     return LaunchRequest(
       instanceId: '',
       runId: json['run_id'] as String? ?? '',
       executable: json['executable']! as String,
-      args: [for (final a in json['args']! as List) a as String],
+      args: args,
+      secretArguments: secretArguments,
       env: const {},
       workingDirectory: json['working_directory']! as String,
       instanceDirectory: json['instance_directory']! as String,

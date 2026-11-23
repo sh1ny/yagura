@@ -147,7 +147,7 @@ PluginResult loadPlugin(String directory) {
   if (report.isNotEmpty) return rejected(report.reasons, json);
 
   final manifest = PluginManifest.fromJson(json);
-  _checkSemantics(manifest, report);
+  _checkSemantics(manifest, directory, report);
   if (report.isNotEmpty) return rejected(report.reasons, json);
 
   return PluginResult(
@@ -236,11 +236,13 @@ class _Report {
   }
 }
 
-final JsonSchema _schema = JsonSchema.create(manifestSchemaV1);
-
 void _checkSchema(Map<String, Object?> json, _Report report) {
   final schemaJson = jsonDecode(manifestSchemaV1) as Map<String, Object?>;
-  for (final error in _schema.validate(json).errors) {
+  // Built for each load and dropped after it: a JsonSchema kept for the
+  // daemon's life made its memory grow with every Start
+  // (allocation_beyond_the_cap).
+  final schema = JsonSchema.create(schemaJson);
+  for (final error in schema.validate(json).errors) {
     final segments = report.segmentsOf(error.instancePath);
     final message = error.message;
 
@@ -404,11 +406,29 @@ Object? _valueAt(Map<String, Object?> json, String pointer) {
 /// Sections and values the schema accepts but this version refuses.
 void _checkUnsupported(Map<String, Object?> json, _Report report) {
   const code = 'unsupported_in_this_version';
-  for (final section in ['bindings', 'mods', 'rcon']) {
-    if (json.containsKey(section)) {
-      report.add(code, [
-        section,
-      ], 'the "$section" section is not supported in this version');
+  if (json.containsKey('rcon')) {
+    report.add(code, [
+      'rcon',
+    ], 'the "rcon" section is not supported in this version');
+  }
+  if ((json['mods'] as Map<String, Object?>?)?['source'] == 'url_archive') {
+    report.add(
+      code,
+      ['mods', 'source'],
+      'mods source "url_archive" is not supported in this version; '
+      'supported sources: ${[for (final s in ModSource.values) s.wireName].join(', ')}',
+    );
+  }
+  for (final (i, binding)
+      in ((json['bindings'] as List<Object?>?) ?? const []).indexed) {
+    final format = (binding as Map<String, Object?>)['format'];
+    if (laterConfigFormats.contains(format)) {
+      report.add(
+        code,
+        ['bindings', i, 'format'],
+        'binding format "$format" is not supported in this version; '
+        'supported formats: ${supportedConfigFormats.join(', ')}',
+      );
     }
   }
   if ((json['stop'] as Map<String, Object?>?)?['strategy'] == 'rcon') {
@@ -437,7 +457,11 @@ final _placeholderContext = LaunchContext(
 );
 
 /// Cross-field checks that JSON Schema cannot express.
-void _checkSemantics(PluginManifest manifest, _Report report) {
+void _checkSemantics(
+  PluginManifest manifest,
+  String directory,
+  _Report report,
+) {
   const code = invalidManifestCode;
   final portNames = <String>{};
   final basePorts = {
@@ -479,7 +503,17 @@ void _checkSemantics(PluginManifest manifest, _Report report) {
   }
 
   final scope = TemplateScope(settings: manifest.settings, ports: portNames);
-  _checkLaunch(manifest.launchArgs, ['launch', 'args'], scope, report);
+  // Only launch arguments may name secrets and mod roles.
+  final launchScope = TemplateScope(
+    settings: manifest.settings,
+    ports: portNames,
+    allowSecrets: true,
+    allowMods: true,
+    roles: {...?manifest.mods?.roles},
+  );
+  _checkLaunch(manifest.launchArgs, ['launch', 'args'], launchScope, report);
+  _checkGslt(manifest, report);
+  if (manifest.mods case final mods?) _checkMods(mods, report);
 
   final health = manifest.health;
   if (health.type == HealthType.logMatch) {
@@ -520,6 +554,230 @@ void _checkSemantics(PluginManifest manifest, _Report report) {
   }
   for (final (i, path) in manifest.dataPaths.indexed) {
     _checkInstancePath(path, ['data_paths', i], 'data path', report);
+  }
+  _checkBindings(manifest, scope, directory, report);
+}
+
+/// Checks `steam.gslt`: it names a declared top-level secret setting.
+void _checkGslt(PluginManifest manifest, _Report report) {
+  final gslt = manifest.steam?.gslt;
+  if (gslt == null) return;
+  const path = ['steam', 'gslt', 'setting'];
+  final def = manifest.settings[gslt.setting];
+  if (def == null) {
+    report.add(
+      invalidManifestCode,
+      path,
+      'steam.gslt names setting "${gslt.setting}", which the manifest does '
+      'not declare',
+    );
+  } else if (def.type != SettingType.secret) {
+    report.add(
+      invalidManifestCode,
+      path,
+      'steam.gslt names setting "${gslt.setting}", which is not a secret '
+      'setting (it is a ${def.type.wireName})',
+    );
+  }
+}
+
+/// Checks `mods`: the source and stage mode suit each other, the workshop app
+/// is named, the stage directory and key targets stay inside the instance,
+/// and the link name renders to one directory name.
+void _checkMods(ModsSpec mods, _Report report) {
+  const code = invalidManifestCode;
+  switch ((mods.source, mods.stage)) {
+    case (ModSource.serverManaged, ModStage.link || ModStage.copy):
+      report.add(
+        code,
+        ['mods', 'stage'],
+        'mods source server_managed stages nothing: use stage none '
+        '(got ${mods.stage.name})',
+      );
+    case (ModSource.steamWorkshop, ModStage.none):
+      report.add(code, [
+        'mods',
+        'stage',
+      ], 'mods source steam_workshop needs stage link or copy, not none');
+    default:
+  }
+  if (mods.source == ModSource.steamWorkshop && mods.workshopAppId == null) {
+    report.add(
+      code,
+      ['mods', 'workshop_app_id'],
+      'required field "workshop_app_id" is missing for mods source '
+      'steam_workshop',
+    );
+  }
+  _checkInstancePath(mods.stageDir, ['mods', 'stage_dir'], 'stage_dir', report);
+  for (final (i, rule) in mods.keys.indexed) {
+    _checkInstancePath(
+      rule.to,
+      ['mods', 'keys', i, 'to'],
+      'key target',
+      report,
+    );
+  }
+
+  final List<TemplatePart> parts;
+  try {
+    parts = parseTemplate(mods.linkName);
+  } on TemplateException catch (e) {
+    report.add(code, ['mods', 'link_name'], e.message);
+    return;
+  }
+  var known = true;
+  for (final TemplateRef(:reference) in parts.whereType<TemplateRef>()) {
+    if (reference != 'mod.name_safe') {
+      known = false;
+      report.add(
+        code,
+        ['mods', 'link_name'],
+        'link_name "${mods.linkName}" uses {{$reference}}: only '
+        '{{mod.name_safe}} is available',
+      );
+    }
+  }
+  if (known) {
+    final literal = parts.whereType<TemplateText>().map((t) => t.text).join();
+    if (literal.contains(RegExp(r'[\/:*?"<>|]')) ||
+        literal == '.' ||
+        literal == '..') {
+      report.add(
+        code,
+        ['mods', 'link_name'],
+        'link_name "${mods.linkName}" must name one directory: it cannot hold '
+        'a path separator or a character Windows forbids in a name',
+      );
+    }
+  }
+}
+
+/// Checks `bindings`: formats, settings, file path templates, templates of
+/// created files, and the limit of distinct files.
+void _checkBindings(
+  PluginManifest manifest,
+  TemplateScope scope,
+  String pluginDirectory,
+  _Report report,
+) {
+  // Placeholder values stand in for settings and ports, to check at load that
+  // a file path resolves inside the instance (the daemon checks the real
+  // values when it applies the binding).
+  final context = LaunchContext(
+    settings: {for (final name in manifest.settings.keys) name: 'x'},
+    ports: {for (final port in scope.ports) port: 1},
+    // The server directory lives inside the instance directory.
+    paths: {
+      'instance': _placeholderContext.paths['instance']!,
+      'server': p.join(_placeholderContext.paths['instance']!, 'server'),
+    },
+    os: 'linux',
+  );
+  final files = <String, (int, FileBinding)>{};
+  for (final (i, binding) in manifest.bindings.indexed) {
+    final label = 'bindings[$i]';
+    final where = 'file "${binding.file}", key "${binding.key}"';
+
+    if (!supportedConfigFormats.contains(binding.format)) {
+      report.add(
+        invalidManifestCode,
+        ['bindings', i, 'format'],
+        'binding format "${binding.format}" is not supported; supported '
+        'formats: ${supportedConfigFormats.join(', ')}',
+      );
+    }
+
+    final def = manifest.settings[binding.setting];
+    if (def == null) {
+      report.add(
+        invalidManifestCode,
+        ['bindings', i, 'setting'],
+        '$label ($where) names setting "${binding.setting}", which the '
+        'manifest does not declare',
+      );
+    } else if (def.type == SettingType.object || def.type == SettingType.list) {
+      report.add(
+        invalidManifestCode,
+        ['bindings', i, 'setting'],
+        '$label ($where) names setting "${binding.setting}", which is a '
+        '${def.type.wireName} setting; a binding writes a scalar, enum, '
+        'secret or string_list setting',
+      );
+    }
+
+    final problems = checkTemplate(binding.file, scope);
+    for (final problem in problems) {
+      report.add(invalidManifestCode, ['bindings', i, 'file'], problem);
+    }
+    if (problems.isEmpty &&
+        resolveInstancePath(
+              renderTemplate(binding.file, context),
+              context.paths['instance']!,
+            ) ==
+            null) {
+      report.add(
+        invalidManifestCode,
+        ['bindings', i, 'file'],
+        'binding file "${binding.file}" resolves outside the instance '
+        'directory',
+      );
+    }
+
+    if (binding.template case final template?) {
+      final resolved = p.normalize(p.join(pluginDirectory, template));
+      if (p.isAbsolute(template) ||
+          p.windows.rootPrefix(template).isNotEmpty ||
+          !p.isWithin(pluginDirectory, resolved)) {
+        report.add(invalidManifestCode, [
+          'bindings',
+          i,
+          'template',
+        ], 'binding template "$template" is outside the plugin directory');
+      } else if (!File(resolved).existsSync()) {
+        report.add(
+          invalidManifestCode,
+          ['bindings', i, 'template'],
+          'binding template "$template" does not exist in the plugin '
+          'directory',
+        );
+      }
+    }
+
+    final key = binding.file.replaceAll(r'', '/').toLowerCase();
+    final first = files[key];
+    if (first == null) {
+      files[key] = (i, binding);
+    } else {
+      final (j, other) = first;
+      if (other.format != binding.format) {
+        report.add(
+          invalidManifestCode,
+          ['bindings', i, 'format'],
+          'binding file "${binding.file}" is bound as ${other.format} by '
+          'bindings[$j] and as ${binding.format} by $label',
+        );
+      }
+      if (other.template != null &&
+          binding.template != null &&
+          other.template != binding.template) {
+        report.add(
+          invalidManifestCode,
+          ['bindings', i, 'template'],
+          'binding file "${binding.file}" has the templates '
+          '"${other.template}" (bindings[$j]) and "${binding.template}" '
+          '($label)',
+        );
+      }
+    }
+  }
+  if (files.length > maxBoundFiles) {
+    report.add(
+      invalidManifestCode,
+      ['bindings'],
+      'bindings name ${files.length} distinct files; at most $maxBoundFiles '
+      'are allowed',
+    );
   }
 }
 
@@ -573,6 +831,17 @@ bool _checkSetting(
   return patternsOk;
 }
 
+int _secretReferences(String template) {
+  try {
+    return parseTemplate(template)
+        .whereType<TemplateRef>()
+        .where((ref) => ref.segments.first == 'secrets')
+        .length;
+  } on TemplateException {
+    return 0;
+  }
+}
+
 void _checkLaunch(
   List<LaunchEntry> entries,
   List<Object> path,
@@ -598,6 +867,14 @@ void _checkLaunch(
       case LiteralEntry(:final template):
         for (final problem in checkTemplate(template, scope)) {
           report.add(invalidManifestCode, here, problem);
+        }
+        if (_secretReferences(template) > 1) {
+          report.add(
+            invalidManifestCode,
+            here,
+            'template "$template" names more than one secret; an argument '
+            'holds at most one',
+          );
         }
       case GroupEntry(:final entries):
         _checkLaunch(entries, [...here, 'args'], scope, report);

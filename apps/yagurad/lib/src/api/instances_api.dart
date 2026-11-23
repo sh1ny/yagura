@@ -18,6 +18,7 @@ class WatchLimits {
     this.maxEvents = 1000,
     this.maxBytes = 8 * 1024 * 1024,
     this.maxSubscribers = 32,
+    this.maxPromptEvents = 256,
   });
 
   /// Events that may wait for a client that does not read.
@@ -28,6 +29,10 @@ class WatchLimits {
 
   /// Subscribers per daemon.
   final int maxSubscribers;
+
+  /// Prompt events that may wait for a `WatchPrompts` client that does not
+  /// read.
+  final int maxPromptEvents;
 }
 
 /// The `Instances` service (design D24).

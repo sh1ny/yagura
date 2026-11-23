@@ -5,7 +5,7 @@ import 'package:path/path.dart' as p;
 import '../errors.dart';
 
 /// The daemon's data directory (`host-service` spec): the database, SteamCMD
-/// installations, plugins, instances, snapshots and daemon logs.
+/// installations, the content store, plugins, instances, snapshots and daemon logs.
 class DataDirectory {
   DataDirectory._(this.path);
 
@@ -15,6 +15,8 @@ class DataDirectory {
   String get databasePath => p.join(path, 'yagura.db');
   String get lockPath => p.join(path, 'yagurad.lock');
   String get steamcmdPath => p.join(path, 'steamcmd');
+  String get contentPath => p.join(path, 'content');
+  String get contentStagingPath => p.join(contentPath, '.staging');
   String get pluginsPath => p.join(path, 'plugins');
   String get instancesPath => p.join(path, 'instances');
   String get snapshotsPath => p.join(path, 'snapshots');
@@ -31,6 +33,7 @@ class DataDirectory {
       for (final folder in [
         directory.path,
         directory.steamcmdPath,
+        directory.contentStagingPath,
         directory.pluginsPath,
         directory.instancesPath,
         directory.snapshotsPath,

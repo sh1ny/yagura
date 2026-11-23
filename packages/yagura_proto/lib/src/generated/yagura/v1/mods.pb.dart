@@ -35,6 +35,7 @@ class Mod extends $pb.GeneratedMessage {
     $core.String? lastError,
     $core.String? desiredVersion,
     $core.String? stagedVersion,
+    $core.Iterable<$core.String>? warnings,
   }) {
     final result = Mod._();
     if (source != null) result.source = source;
@@ -51,6 +52,7 @@ class Mod extends $pb.GeneratedMessage {
     if (lastError != null) result.lastError = lastError;
     if (desiredVersion != null) result.desiredVersion = desiredVersion;
     if (stagedVersion != null) result.stagedVersion = stagedVersion;
+    if (warnings != null) result.warnings.addAll(warnings);
     return result;
   }
 
@@ -85,6 +87,7 @@ class Mod extends $pb.GeneratedMessage {
     ..aOS(12, _omitFieldNames ? '' : 'lastError')
     ..aOS(13, _omitFieldNames ? '' : 'desiredVersion')
     ..aOS(14, _omitFieldNames ? '' : 'stagedVersion')
+    ..pPS(15, _omitFieldNames ? '' : 'warnings')
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -236,6 +239,9 @@ class Mod extends $pb.GeneratedMessage {
   $core.bool hasStagedVersion() => $_has(13);
   @$pb.TagNumber(14)
   void clearStagedVersion() => $_clearField(14);
+
+  @$pb.TagNumber(15)
+  $pb.PbList<$core.String> get warnings => $_getList(14);
 }
 
 class ListModsRequest extends $pb.GeneratedMessage {

@@ -5,7 +5,9 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagurad/src/instances/instance.dart';
 
+import '../support/content_support.dart';
 import '../support/daemon_support.dart';
+import '../support/mods_support.dart';
 import '../support/secret_support.dart';
 
 Map<String, Object?> readInstanceFile(Instance instance) => jsonDecode(
@@ -19,6 +21,52 @@ UpdateSettingsRequest rename(Instance instance, String name) =>
     );
 
 void main() {
+  test('mod_list_mirrored', () async {
+    final rig = await ModsRig.start();
+    rig.item(cfMod, title: 'CF');
+    rig.item(vppMod, title: 'VPP');
+    final instance = await rig.instance();
+    await rig.setMods(instance, [
+      ModSpec(vppMod, role: 'server'),
+      ModSpec(cfMod),
+    ]);
+    await rig.names(instance, count: 2);
+
+    // The file lists the mods in load order, with the fixed staged names.
+    final expected = [
+      {
+        'source': 'steam_workshop',
+        'item_id': vppMod,
+        'role': 'server',
+        'staged_name': '@VPP',
+      },
+      {
+        'source': 'steam_workshop',
+        'item_id': cfMod,
+        'role': 'client',
+        'staged_name': '@CF',
+      },
+    ];
+    await eventually(
+      () =>
+          readInstanceFile(instance)['mods'] is List &&
+          (readInstanceFile(instance)['mods']! as List).every(
+            (m) => (m as Map)['staged_name'] != '',
+          ),
+      reason: 'the names reach the file',
+    );
+    expect(readInstanceFile(instance)['mods'], expected);
+
+    // After the daemon is killed and started again the list is the same.
+    await rig.restart();
+    final listed = await rig.list(instance);
+    expect(
+      [for (final m in listed.mods) (m.itemId, m.role, m.stagedName)],
+      [(vppMod, 'server', '@VPP'), (cfMod, 'client', '@CF')],
+    );
+    expect(readInstanceFile(instance)['mods'], expected);
+  });
+
   test('change_persisted_and_mirrored', () async {
     final env = TestEnv();
     env.installValheim();

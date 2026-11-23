@@ -192,21 +192,28 @@ Future<int> _helper(
   final runDirectory = args['run-dir'] as String?;
   switch (mode) {
     case 'launch' when runDirectory != null:
-      AccountCredentials? credentials;
-      if (args['as-account'] as bool) {
-        // Without credentials the relay would start as this process's own
-        // account (LocalSystem under the service): never fall back to that.
-        credentials = AccountCredentials.decode(stdin.readLineSync());
-        if (credentials == null) {
-          env.err.writeln('yagurad: --as-account needs credentials on stdin');
-          return exitUsage;
-        }
+      // Every launch carries one line on standard input (design D4); without
+      // it the secret launch arguments have no value.
+      final input = readLaunchInput();
+      if (input == null) {
+        env.err.writeln(
+          'yagurad: launch_input_missing: no launch input on stdin',
+        );
+        return exitUsage;
+      }
+      // Without credentials the relay would start as this process's own
+      // account (LocalSystem under the service): never fall back to that.
+      if ((args['as-account'] as bool) && input.credentials == null) {
+        env.err.writeln('yagurad: --as-account needs credentials on stdin');
+        return exitUsage;
       }
       return runLaunchMode(
         runDirectory,
         env.out,
         env.err,
-        credentials: credentials,
+        input: (args['as-account'] as bool)
+            ? input
+            : LaunchInput(secrets: input.secrets),
       );
     case 'relay' when runDirectory != null:
       return runRelayMode(runDirectory, env.err);

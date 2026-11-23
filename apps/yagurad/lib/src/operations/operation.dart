@@ -1,3 +1,5 @@
+import 'prompt_broker.dart';
+
 /// Lifecycle status of an operation (mirrors `OperationStatus` in
 /// `operations.proto`).
 enum OperationStatus {
@@ -31,18 +33,42 @@ enum OperationKind {
   stop(heavy: false),
   restart(heavy: false),
   delete(heavy: false),
-  restore(heavy: false);
+  restore(heavy: false),
 
-  const OperationKind({required this.heavy});
+  /// Brings an instance's settings to a reloaded plugin version (design D10).
+  migrateSettings(heavy: false, wire: 'migrate_settings'),
+
+  /// Logs a new Steam account in (design D2); belongs to no instance.
+  addSteamAccount(heavy: false, wire: 'add_steam_account'),
+
+  /// Logs an account in again after its cached login expired.
+  reauthSteamAccount(heavy: false, wire: 'reauth_steam_account'),
+
+  /// Stages an instance's mods (design D7). The downloads belong to the mod
+  /// pipeline, which takes its own lock and slot (design D6).
+  applyMods(heavy: false, wire: 'apply_mods'),
+
+  /// Reads the workshop for newer mod versions (design D14); with no instance
+  /// it runs under the host subject.
+  checkModUpdates(heavy: false, wire: 'check_mod_updates'),
+
+  /// Downloads the newer versions of mods; stages them unless the instance
+  /// runs.
+  updateMods(heavy: false, wire: 'update_mods');
+
+  const OperationKind({required this.heavy, this.wire});
+
+  /// The wire name when it differs from the Dart name.
+  final String? wire;
 
   /// Heavy operations take a host heavy slot around their SteamCMD work
   /// (design D3).
   final bool heavy;
 
-  String get wireName => name;
+  String get wireName => wire ?? name;
 
   static OperationKind fromWire(String name) =>
-      values.firstWhere((k) => k.name == name);
+      values.firstWhere((k) => k.wireName == name);
 }
 
 /// An immutable view of an operation.
@@ -61,6 +87,8 @@ class Operation {
     this.resultMessage = '',
     this.warnings = const [],
     this.lastSequence = 0,
+    this.accountId = '',
+    this.pendingPrompt,
   });
 
   final String id;
@@ -81,6 +109,13 @@ class Operation {
   final String resultMessage;
   final List<String> warnings;
   final int lastSequence;
+
+  /// The Steam account an account operation is about; empty otherwise.
+  final String accountId;
+
+  /// What the operation waits to be answered; null unless its status is
+  /// [OperationStatus.waitingForInput].
+  final Prompt? pendingPrompt;
 
   @override
   String toString() => 'Operation($id ${kind.name} ${status.wireName})';
@@ -121,6 +156,26 @@ class ProgressEvent extends OperationEvent {
 class LogEvent extends OperationEvent {
   const LogEvent(super.sequence, super.at, this.text);
   final String text;
+}
+
+/// The operation raised a prompt (design D13).
+class PromptRaisedEvent extends OperationEvent {
+  const PromptRaisedEvent(super.sequence, super.at, this.prompt);
+  final Prompt prompt;
+}
+
+/// A prompt of the operation was resolved.
+class PromptResolvedEvent extends OperationEvent {
+  const PromptResolvedEvent(
+    super.sequence,
+    super.at,
+    this.promptId,
+    this.byDeviceId,
+    this.outcome,
+  );
+  final String promptId;
+  final String byDeviceId;
+  final PromptOutcome outcome;
 }
 
 /// Terminal event; the stream ends after it.

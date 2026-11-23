@@ -1,12 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:path/path.dart' as p;
 import 'package:yagura_plugin/yagura_plugin.dart';
 
+import '../config/config_binder.dart';
 import '../errors.dart';
 import '../files/files.dart';
+import '../host/secret_store.dart';
 import '../hooks/hooks.dart';
+import '../mods/mod_entry.dart';
 import '../operations/operations.dart';
 import '../plugins/plugin_registry.dart';
 import '../process/process.dart';
@@ -39,16 +43,51 @@ class Lifecycle {
     ports: {for (final port in record.ports) port.name: port.number},
     paths: {'instance': record.directory, 'server': _serverDirectory(record)},
     os: _manager.os,
+    secretsSet: _manager.setSecretsOf(record),
+    mods: _modLists(record),
   );
+
+  /// The staged names (or item ids, where the server fetches its own mods)
+  /// of each role, in load order, for the launch arguments.
+  Map<String, List<String>> _modLists(InstanceRecord record) {
+    final roles =
+        _manager.registry.find(record.pluginId)?.manifest.mods?.roles ??
+        const <String>[];
+    return {
+      for (final role in roles)
+        role: [
+          for (final mod in record.listedMods)
+            if (mod.role == role &&
+                mod.status == ModEntry.staged &&
+                mod.stagedName.isNotEmpty)
+              mod.stagedName,
+        ],
+    };
+  }
+
+  /// The staged mods in load order, as hooks see them.
+  List<Map<String, Object?>> _hookMods(InstanceRecord record) => [
+    for (final mod in record.listedMods)
+      if (mod.status == ModEntry.staged && mod.stagedName.isNotEmpty)
+        {
+          'source': mod.source,
+          'itemId': mod.itemId,
+          'role': mod.role,
+          'stagedName': mod.stagedName,
+          'version': mod.stagedVersion,
+        },
+  ];
 
   /// Runs hook [point] of [plugin] when it has a `hooks.js`; returns its
   /// result (empty when the plugin has no script or does not export it).
+  /// [fromVersion] is the plugin version `migrateSettings` migrates from.
   Future<HookRunResult> _hook(
     OperationContext ctx,
     InstanceRecord record,
     LoadedPlugin plugin,
-    HookPoint point,
-  ) async {
+    HookPoint point, {
+    String? fromVersion,
+  }) async {
     final source = plugin.hooksSource;
     if (source == null) return const HookRunResult.skipped();
     final manifest = plugin.manifest;
@@ -70,8 +109,14 @@ class Lifecycle {
               setSecrets: _manager.setSecretsOf(record),
             ),
             ports: {for (final port in record.ports) port.name: port.number},
+            mods: _hookMods(record),
+            fromVersion: fromVersion,
+            toVersion: fromVersion == null ? null : manifest.version,
           ),
-          root: InstanceFs(record.directory),
+          root: InstanceFs(
+            record.directory,
+            recorded: _manager.recordedJunctions(record),
+          ),
           deadline: Duration(seconds: manifest.hooksTimeoutSeconds),
         ),
         cancel: ctx.cancel.whenCancelled,
@@ -94,6 +139,191 @@ class Lifecycle {
     }
   }
 
+  // ---- configuration -------------------------------------------------------
+
+  /// The manifest's bindings for [record], with the file paths resolved inside
+  /// the instance directory and the values read when the pass applies them.
+  List<BoundKey> _bindings(InstanceRecord record, LoadedPlugin plugin) {
+    final manifest = plugin.manifest;
+    final context = _launchContext(record, manifest);
+    return [
+      for (var i = 0; i < manifest.bindings.length; i++)
+        _boundKey(
+          record,
+          plugin,
+          context,
+          'bindings[$i]',
+          manifest.bindings[i],
+        ),
+    ];
+  }
+
+  BoundKey _boundKey(
+    InstanceRecord record,
+    LoadedPlugin plugin,
+    LaunchContext context,
+    String id,
+    FileBinding binding,
+  ) {
+    final String rendered;
+    try {
+      rendered = renderTemplate(binding.file, context);
+    } on TemplateException catch (e) {
+      throw YaguraException(
+        'invalid_manifest',
+        '$id file "${binding.file}": $e',
+        details: {'path': binding.file},
+      );
+    }
+    final resolved = resolveInstancePath(rendered, record.directory);
+    if (resolved == null) {
+      throw confinedViolation(
+        rendered,
+        '$id file "${binding.file}" resolves outside the instance directory',
+      );
+    }
+    final isSecret =
+        plugin.manifest.settings[binding.setting]?.type == SettingType.secret;
+    final template = binding.template;
+    return BoundKey(
+      id: id,
+      file: p.relative(resolved, from: record.directory),
+      format: binding.format,
+      key: binding.key,
+      setting: binding.setting,
+      secret: isSecret,
+      create: binding.create,
+      gameWrites: binding.gameWrites,
+      template: template == null
+          ? null
+          : () =>
+                ConfinedFs(plugin.directory)
+                    .readBytes(template, maxBytes: ConfigBinder.maxFileBytes),
+      // A secret is read from the secret store here, when the pass applies it,
+      // and nowhere earlier.
+      value: () {
+        if (!isSecret) return record.settings[binding.setting];
+        final bytes = _manager.secrets.get(
+          secretIdFor(record.id, binding.setting),
+        );
+        return bytes == null ? null : utf8.decode(bytes);
+      },
+    );
+  }
+
+  /// One config pass for [record]: the bindings when [bind], then [edits]
+  /// returned by a hook. Hand edits it overwrote are warnings of [ctx].
+  Future<void> _applyConfig(
+    OperationContext ctx,
+    InstanceRecord record,
+    LoadedPlugin plugin,
+    List<FileEdit> edits, {
+    required bool bind,
+  }) async {
+    final bindings = bind ? _bindings(record, plugin) : const <BoundKey>[];
+    if (bindings.isEmpty && edits.isEmpty) return;
+    final result = await ConfigBinder(
+      InstanceFs(
+        record.directory,
+        recorded: _manager.recordedJunctions(record),
+      ),
+      store: _manager.boundFiles,
+      instanceId: record.id,
+    ).apply(bindings: bindings, edits: edits);
+    for (final event in result.externalEdits) {
+      ctx.warn(event);
+    }
+  }
+
+  /// The value of [setting]'s secret, read from the secret store when a
+  /// launch needs it (the rendering only knew that it was set).
+  String _secretValue(InstanceRecord record, String setting) {
+    final bytes = _manager.secrets.get(secretIdFor(record.id, setting));
+    if (bytes == null) {
+      throw YaguraException(
+        'secret_required',
+        'the secret $setting is not set; set it with SetSecret before starting',
+        details: {'instanceId': record.id, 'settings': setting},
+      );
+    }
+    return utf8.decode(bytes);
+  }
+
+  // ---- settings migration --------------------------------------------------
+
+  /// Moves the settings of [id] to the plugin version a reload loaded (design
+  /// D10): `migrateSettings` when the plugin exports it, then validation
+  /// against the new schema; a valid result is committed with the new version,
+  /// an invalid one or a failing hook leaves the instance `settings_invalid`.
+  Future<void> migrateSettings(OperationContext ctx, String id) async {
+    final record = _manager.recordForOperation(id);
+    final plugin = _manager.takeMigrationTarget(record);
+    final manifest = plugin.manifest;
+    final from = record.pluginVersion;
+    if (from == manifest.version) return;
+    final Map<String, Object?> migrated;
+    try {
+      migrated = await ctx.step('hook:migrateSettings', () async {
+        final hook = await _hook(
+          ctx,
+          record,
+          plugin,
+          HookPoint.migrateSettings,
+          fromVersion: from,
+        );
+        final settings = hook.result.settings ?? record.settings;
+        if (hook.ran) _checkSecretPlaceholders(record, manifest, settings);
+        final validation = validateSettings(manifest, settings);
+        if (!validation.isValid) {
+          throw _manager.settingsInvalidError(validation.errors);
+        }
+        return validation.values;
+      });
+    } on OperationCancelled {
+      _manager.migrationFailed(
+        record,
+        'the settings migration to ${manifest.version} was cancelled',
+      );
+      rethrow;
+    } on YaguraException catch (e) {
+      _manager.migrationFailed(record, e.message);
+      rethrow;
+    }
+    _manager.completeMigration(record, migrated, manifest.version);
+  }
+
+  /// A migration hook gets each secret setting as a placeholder and has to
+  /// hand it back unchanged: a secret value never passes through settings.
+  void _checkSecretPlaceholders(
+    InstanceRecord record,
+    PluginManifest manifest,
+    Map<String, Object?> settings,
+  ) {
+    final given = withSecretPlaceholders(manifest.settings, const {}, const {
+      'secret': true,
+      'set': false,
+    }, setSecrets: _manager.setSecretsOf(record));
+    for (final MapEntry(key: name, value: def) in manifest.settings.entries) {
+      if (def.type != SettingType.secret || !settings.containsKey(name)) {
+        continue;
+      }
+      final returned = settings[name];
+      final expected = given[name]! as Map<String, Object?>;
+      if (returned is Map &&
+          returned.length == 2 &&
+          returned['secret'] == true &&
+          returned['set'] == expected['set']) {
+        continue;
+      }
+      throw YaguraException(
+        'hook_result_invalid',
+        'hook migrateSettings returned an invalid result at settings.$name: a '
+            'secret setting must come back as the placeholder it was given',
+        details: {'hook': 'migrateSettings', 'path': 'settings.$name'},
+      );
+    }
+  }
+
   // ---- install and update --------------------------------------------------
 
   Future<void> _steamRun(
@@ -109,26 +339,41 @@ class Lifecycle {
         'plugin ${manifest.id} does not install through Steam',
       );
     }
-    final account = spec.anonymous || record.steamAccountId.isEmpty
+    final accountId = spec.anonymous || record.steamAccountId.isEmpty
         ? null
         : record.steamAccountId;
+    // An account that is gone, still being added, or known to need its
+    // password again fails before SteamCMD starts.
+    final account = accountId == null
+        ? null
+        : _manager.accounts.useFor(accountId);
     InstanceFs(record.directory).createDirectory('server');
-    await ctx.heavy(
-      () => _manager.steam.installApp(
-        SteamAppRequest(
-          appId: spec.appId,
-          installDirectory: _serverDirectory(record),
-          instanceDirectory: record.directory,
-          validate: validate,
-          account: account,
-          accountRequired: !spec.anonymous,
-          sizeHintBytes: spec.sizeHintBytes,
+    try {
+      await ctx.heavy(
+        () => _manager.steam.installApp(
+          SteamAppRequest(
+            appId: spec.appId,
+            installDirectory: _serverDirectory(record),
+            instanceDirectory: record.directory,
+            validate: validate,
+            account: account?.id,
+            username: account?.username,
+            rememberedPassword: account?.rememberedPassword,
+            accountRequired: spec.login == SteamLogin.account,
+            sizeHintBytes: spec.sizeHintBytes,
+          ),
+          OperationSteamReporter(ctx),
+          ctx.cancel,
         ),
-        _Reporter(ctx),
-        ctx.cancel,
-      ),
-      installation: account == null ? 'anonymous' : 'account:$account',
-    );
+        installation: account == null ? 'anonymous' : 'account:${account.id}',
+      );
+    } on YaguraException catch (e) {
+      if (account != null && e.reason == 'steam_reauth_required') {
+        _manager.accounts.markReauthRequired(account.id);
+      }
+      rethrow;
+    }
+    if (account != null) _manager.accounts.markLoggedIn(account.id);
     ctx.cancel.throwIfCancelled();
   }
 
@@ -144,7 +389,8 @@ class Lifecycle {
     try {
       await _steamRun(ctx, record, plugin.manifest, validate: validate);
       await ctx.step('post_install', () async {
-        await _hook(ctx, record, plugin, HookPoint.onPostInstall);
+        final hook = await _hook(ctx, record, plugin, HookPoint.onPostInstall);
+        await _applyConfig(ctx, record, plugin, hook.files, bind: false);
       });
       _manager.setState(record, InstanceState.stopped);
     } on Object {
@@ -209,8 +455,23 @@ class Lifecycle {
       _manager.setState(record, InstanceState.updating);
       updating = true;
       await _steamRun(ctx, record, manifest, validate: validate);
+      // Update brings the mods to their newest versions (design D7); Validate
+      // checks the game files only.
+      final modEdits = kind == OperationKind.update
+          ? await _stageMods(
+              ctx,
+              record,
+              plugin,
+              step: 'update_mods',
+              refreshAll: true,
+            )
+          : const <FileEdit>[];
       await ctx.step('apply_config', () async {
-        await _hook(ctx, record, plugin, HookPoint.onPostUpdate);
+        final hook = await _hook(ctx, record, plugin, HookPoint.onPostUpdate);
+        await _applyConfig(ctx, record, plugin, [
+          ...modEdits,
+          ...hook.files,
+        ], bind: true);
       });
       _manager.setState(record, InstanceState.stopped);
     } on OperationCancelled {
@@ -242,6 +503,83 @@ class Lifecycle {
     }
   }
 
+  // ---- mods ----------------------------------------------------------------
+
+  /// The stage step of an operation (design D7): acquires what is missing
+  /// (and the newest of [refresh] or [refreshAll]), stages the mods, places
+  /// their keys, then runs `onModsStaged`, whose file edits it returns for the
+  /// operation's one config pass. A plugin without mods has no step. With
+  /// [place] false the instance runs: the versions are acquired and recorded
+  /// but nothing is staged, and no hook runs.
+  Future<List<FileEdit>> _stageMods(
+    OperationContext ctx,
+    InstanceRecord record,
+    LoadedPlugin plugin, {
+    required String step,
+    Set<String> refresh = const {},
+    bool refreshAll = false,
+    bool place = true,
+  }) async {
+    if (plugin.manifest.mods == null) return const [];
+    return ctx.step(step, () async {
+      await _manager.modsService.stage(
+        ctx,
+        record,
+        plugin,
+        refresh: refresh,
+        refreshAll: refreshAll,
+        place: place,
+      );
+      if (!place) return const <FileEdit>[];
+      final hook = await _hook(ctx, record, plugin, HookPoint.onModsStaged);
+      return hook.files;
+    });
+  }
+
+  /// `ApplyMods`: stages the mods of a stopped instance, then one config pass
+  /// with the bindings and the hook's edits.
+  Future<void> applyMods(OperationContext ctx, String id) async {
+    final record = _manager.recordForOperation(id);
+    _manager.checkAllowed(record, OperationKind.applyMods, execution: true);
+    final plugin = _manager.requirePlugin(record);
+    final edits = await _stageMods(ctx, record, plugin, step: 'stage_mods');
+    await _modsConfigPass(ctx, record, plugin, edits);
+  }
+
+  /// `UpdateMods`: acquires the newest versions of [items] (every mod with an
+  /// update available when empty). A stopped instance is staged at once; a
+  /// running one links them at its next start.
+  Future<void> updateMods(
+    OperationContext ctx,
+    String id,
+    List<String> items,
+  ) async {
+    final record = _manager.recordForOperation(id);
+    _manager.checkAllowed(record, OperationKind.updateMods, execution: true);
+    final plugin = _manager.requirePlugin(record);
+    final targets = _manager.modsService.updateTargets(record, items);
+    final place = record.state == InstanceState.stopped;
+    final edits = await _stageMods(
+      ctx,
+      record,
+      plugin,
+      step: 'update_mods',
+      refresh: targets,
+      place: place,
+    );
+    if (place) await _modsConfigPass(ctx, record, plugin, edits);
+  }
+
+  Future<void> _modsConfigPass(
+    OperationContext ctx,
+    InstanceRecord record,
+    LoadedPlugin plugin,
+    List<FileEdit> edits,
+  ) => ctx.step(
+    'apply_config',
+    () => _applyConfig(ctx, record, plugin, edits, bind: true),
+  );
+
   SnapshotRequest _snapshotRequest(
     InstanceRecord record,
     LoadedPlugin plugin,
@@ -255,6 +593,7 @@ class Lifecycle {
       _launchContext(record, plugin.manifest),
     ),
     reason: reason,
+    recorded: _manager.recordedJunctions(record),
   );
 
   /// An update, validate or restart that ends with the server stopped clears
@@ -290,11 +629,29 @@ class Lifecycle {
     try {
       var extraArgs = const <String>[];
       var env = const <String, String>{};
+      var edits = const <FileEdit>[];
+      // The mods are staged before the bindings; the hook's edits join the
+      // one config pass below (design D9).
+      final modEdits = await _stageMods(
+        ctx,
+        record,
+        plugin,
+        step: 'stage_mods',
+      );
       await ctx.step('hook:onPreStart', () async {
         final hook = await _hook(ctx, record, plugin, HookPoint.onPreStart);
         extraArgs = hook.args ?? const [];
         env = hook.env ?? const {};
+        edits = hook.files;
       });
+      edits = [...modEdits, ...edits];
+      // One pass writes the bindings and the hook's edits, so a file is read
+      // and written once and the whole pass is undone if one file fails.
+      if (manifest.bindings.isNotEmpty || edits.isNotEmpty) {
+        await ctx.step('apply_config', () async {
+          await _applyConfig(ctx, record, plugin, edits, bind: true);
+        });
+      }
 
       // The log is marked before the launch, so a line left from the
       // previous run cannot pass the check.
@@ -334,15 +691,32 @@ class Lifecycle {
         // The arguments below are the settings this run uses; an edit made
         // after this point is what a restart is needed for.
         record.restartRequired = false;
+        final rendered = renderLaunchArguments(
+          manifest,
+          _launchContext(record, manifest),
+        );
         final launched = await _manager.processHost.launch(
           LaunchRequest(
             instanceId: record.id,
             runId: runId,
             executable: p.join(_serverDirectory(record), executable),
-            args: [
-              ...renderLaunchArgs(manifest, _launchContext(record, manifest)),
-              ...extraArgs,
+            args: [...rendered.map((a) => a.redacted), ...extraArgs],
+            secretArguments: [
+              for (final (index, a) in rendered.indexed)
+                if (a.secretSetting case final setting?)
+                  SecretArgument(
+                    index: index,
+                    setting: setting,
+                    prefix: a.prefix,
+                    suffix: a.suffix,
+                  ),
             ],
+            secrets: {
+              for (final setting in {
+                for (final a in rendered) ?a.secretSetting,
+              })
+                setting: _secretValue(record, setting),
+            },
             env: env,
             workingDirectory: _serverDirectory(record),
             instanceDirectory: record.directory,
@@ -580,7 +954,8 @@ class Lifecycle {
         // stop.
         await ctx.step('hook:onPostStop', () async {
           try {
-            await _hook(ctx, record, plugin, HookPoint.onPostStop);
+            final hook = await _hook(ctx, record, plugin, HookPoint.onPostStop);
+            await _applyConfig(ctx, record, plugin, hook.files, bind: false);
           } on YaguraException catch (e) {
             ctx.warn('onPostStop failed: ${e.message}');
           }
@@ -671,6 +1046,7 @@ class Lifecycle {
             _launchContext(record, manifest),
           ),
           snapshotId: snapshotId,
+          recorded: _manager.recordedJunctions(record),
         ),
         onStep: ctx.beginStep,
         checkCancelled: ctx.cancel.throwIfCancelled,
@@ -694,33 +1070,4 @@ class Lifecycle {
       message: 'data paths were replaced by snapshot $snapshotId',
     );
   }
-}
-
-/// Maps a Steam run's reports to step and progress events of the operation.
-class _Reporter implements SteamRunReporter {
-  _Reporter(this._ctx);
-
-  final OperationContext _ctx;
-  var _step = '';
-
-  @override
-  void step(String name) {
-    _step = name;
-    _ctx.beginStep(name);
-  }
-
-  @override
-  void progress({double percent = -1, int bytesDone = 0, int bytesTotal = 0}) =>
-      _ctx.progress(
-        _step,
-        percent: percent,
-        bytesDone: bytesDone,
-        bytesTotal: bytesTotal,
-      );
-
-  @override
-  void log(String text) => _ctx.log(text);
-
-  @override
-  void warn(String warning) => _ctx.warn(warning);
 }

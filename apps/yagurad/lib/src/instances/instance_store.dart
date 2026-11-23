@@ -5,6 +5,7 @@ import 'package:yagura_plugin/yagura_plugin.dart';
 import '../errors.dart';
 import '../host/database.dart';
 import '../process/process.dart';
+import '../mods/mod_entry.dart';
 import 'instance.dart';
 
 /// The `revision_conflict` failure for [instanceId], carrying the current
@@ -39,7 +40,8 @@ class InstanceRecord {
     this.restartRequired = false,
     this.settingsInvalid = false,
     this.revision = 1,
-  });
+    List<ModEntry>? mods,
+  }) : mods = mods ?? [];
 
   final String id;
   String name;
@@ -65,6 +67,10 @@ class InstanceRecord {
 
   /// The configuration revision (design D12).
   int revision;
+
+  /// The instance's mods in load order (design D7), then the removed ones
+  /// whose entry is still in the stage directory.
+  List<ModEntry> mods;
   final DateTime createdAt;
   DateTime stateChangedAt;
 
@@ -79,6 +85,12 @@ class InstanceRecord {
 
   /// `unknown` while the instance runs without a passed health check.
   InstanceHealth health = InstanceHealth.unspecified;
+
+  /// The mods of the list (not the removed ones).
+  List<ModEntry> get listedMods => [
+    for (final mod in mods)
+      if (!mod.isRemoved) mod,
+  ];
 
   /// Whether `error` carries one of the reasons with their own exits; any
   /// other reason is an update failure (design D17).
@@ -115,6 +127,33 @@ class InstanceStore {
             ),
           );
     }
+    final mods = <String, List<ModEntry>>{};
+    for (final row in db.select(
+      'SELECT * FROM instance_mods ORDER BY instance_id, position',
+    )) {
+      mods
+          .putIfAbsent(row['instance_id']! as String, () => [])
+          .add(
+            ModEntry(
+              source: row['source']! as String,
+              itemId: row['item_id']! as String,
+              role: row['role']! as String,
+              stagedName: row['staged_name']! as String,
+              stageKind: row['stage_kind']! as String,
+              desiredVersion: row['desired_version']! as String,
+              stagedVersion: row['staged_version']! as String,
+              status: row['status']! as String,
+              lastError: row['last_error']! as String,
+              warnings: [
+                for (final w
+                    in jsonDecode(row['warnings_json']! as String) as List)
+                  w as String,
+              ],
+              remoteUpdated: row['remote_updated']! as int,
+              updateAvailable: (row['update_available']! as int) != 0,
+            ),
+          );
+    }
     return [
       for (final row in db.select(
         'SELECT * FROM instances ORDER BY created_at, rowid',
@@ -139,6 +178,7 @@ class InstanceStore {
           restartRequired: (row['restart_required']! as int) != 0,
           settingsInvalid: (row['settings_invalid']! as int) != 0,
           revision: row['revision']! as int,
+          mods: mods[row['id']! as String],
           createdAt: DateTime.fromMillisecondsSinceEpoch(
             row['created_at']! as int,
           ),
@@ -244,6 +284,7 @@ class InstanceStore {
         [...values, record.id, record.createdAt.millisecondsSinceEpoch],
       );
     }
+    _writeMods(record);
     db.execute('DELETE FROM instance_ports WHERE instance_id = ?', [record.id]);
     for (final port in record.ports) {
       db.execute(
@@ -256,6 +297,36 @@ class InstanceStore {
           port.protocol.name,
           port.purpose.name,
           port.exposed ? 1 : 0,
+        ],
+      );
+    }
+  }
+
+  /// Replaces the instance's `instance_mods` rows with [record]'s list.
+  void _writeMods(InstanceRecord record) {
+    final db = _database.sqlite;
+    db.execute('DELETE FROM instance_mods WHERE instance_id = ?', [record.id]);
+    for (final (position, mod) in record.mods.indexed) {
+      db.execute(
+        'INSERT INTO instance_mods (instance_id, position, source, item_id, '
+        'role, staged_name, stage_kind, desired_version, staged_version, '
+        'status, last_error, warnings_json, remote_updated, '
+        'update_available) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          record.id,
+          position,
+          mod.source,
+          mod.itemId,
+          mod.role,
+          mod.stagedName,
+          mod.stageKind,
+          mod.desiredVersion,
+          mod.stagedVersion,
+          mod.status,
+          mod.lastError,
+          jsonEncode(mod.warnings),
+          mod.remoteUpdated,
+          mod.updateAvailable ? 1 : 0,
         ],
       );
     }

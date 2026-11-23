@@ -7,6 +7,7 @@ import '../providers.dart';
 import 'home_page.dart';
 import 'instance_list.dart' show instanceStateLabel;
 import 'pair_dialog.dart';
+import 'prompt_dialog.dart';
 
 /// The word the list shows for a connection state (design D13).
 String daemonStateLabel(ConnectionStatus status) => switch (status) {
@@ -76,49 +77,55 @@ class DaemonsPage extends ConsumerWidget {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(12),
+      body: Stack(
         children: [
-          if (problem != null)
-            Card(
-              key: const ValueKey('daemons:problem'),
-              color: Theme.of(context).colorScheme.errorContainer,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(problem.message),
-                    if (problem.canDiscard)
-                      TextButton(
-                        key: const ValueKey('daemons:discard'),
-                        onPressed: () => _confirmDiscard(
-                          context,
-                          ref,
-                          problem.discardDetail,
-                        ),
-                        child: const Text('Discard unreadable entries'),
-                      ),
-                    if (problem.canDiscardCopy)
-                      TextButton(
-                        key: const ValueKey('daemons:discard-copy'),
-                        onPressed: () => _confirmDiscardCopy(context, ref),
-                        child: const Text('Discard the damaged copy'),
-                      ),
-                  ],
+          // A Steam Guard prompt of any daemon opens its dialog from here.
+          for (final daemon in daemons) PromptListener(daemonId: daemon.id),
+          ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              if (problem != null)
+                Card(
+                  key: const ValueKey('daemons:problem'),
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(problem.message),
+                        if (problem.canDiscard)
+                          TextButton(
+                            key: const ValueKey('daemons:discard'),
+                            onPressed: () => _confirmDiscard(
+                              context,
+                              ref,
+                              problem.discardDetail,
+                            ),
+                            child: const Text('Discard unreadable entries'),
+                          ),
+                        if (problem.canDiscardCopy)
+                          TextButton(
+                            key: const ValueKey('daemons:discard-copy'),
+                            onPressed: () => _confirmDiscardCopy(context, ref),
+                            child: const Text('Discard the damaged copy'),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          if (daemons.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: Text(
-                'No daemons yet. Pair one with the pairing string that '
-                '"yagurad pair" prints on the host.',
-              ),
-            ),
-          for (final daemon in daemons)
-            _DaemonCard(key: ValueKey('daemon:${daemon.id}'), daemon),
+              if (daemons.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'No daemons yet. Pair one with the pairing string that '
+                    '"yagurad pair" prints on the host.',
+                  ),
+                ),
+              for (final daemon in daemons)
+                _DaemonCard(key: ValueKey('daemon:${daemon.id}'), daemon),
+            ],
+          ),
         ],
       ),
     );

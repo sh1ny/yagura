@@ -162,3 +162,16 @@ final operationsProvider = StreamProvider.family<List<OperationState>, String>(
   (ref, daemonId) =>
       ref.watch(daemonConnectionProvider(daemonId)).operationsStream,
 );
+
+/// Every prompt pending on a daemon, whoever started the operation.
+final promptsProvider = StreamProvider.family<List<PendingPrompt>, String>(
+  (ref, daemonId) =>
+      ref.watch(daemonConnectionProvider(daemonId)).promptsStream,
+);
+
+/// The daemon's `settings_invalid` notices by instance id.
+final settingsInvalidProvider =
+    StreamProvider.family<Map<String, String>, String>(
+      (ref, daemonId) =>
+          ref.watch(daemonConnectionProvider(daemonId)).settingsInvalidStream,
+    );

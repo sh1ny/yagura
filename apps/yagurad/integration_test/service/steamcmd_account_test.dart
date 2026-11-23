@@ -87,13 +87,15 @@ void main() {
     final folder = await sddlOf(p.join(rig.data, 'steamcmd'));
     expect(folder, contains('0x1301bf;;;$steam)'));
     expect(folder, isNot(contains(srv)));
-    // The data directory names neither account, and M2 has no content store
-    // yet (workshop content is M3; ADR 0015 gives it `yagura-srv` read and
-    // execute only, and `yagura-steam` no entry on it).
+    // The data directory names neither account, and the content store gives
+    // `yagura-srv` read and execute only and `yagura-steam` no entry (ADR
+    // 0015).
     final data = await sddlOf(rig.data);
     expect(data, isNot(contains(srv)));
     expect(data, isNot(contains(steam)));
-    expect(Directory(p.join(rig.data, 'content')).existsSync(), isFalse);
+    final content = await sddlOf(p.join(rig.data, 'content'));
+    expect(content, contains('0x1200a9;;;$srv)'));
+    expect(content, isNot(contains(steam)));
     // The two accounts are different principals, and what SteamCMD wrote is
     // not owned by the game server account.
     expect(srv, isNot(steam));

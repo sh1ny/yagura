@@ -54,6 +54,32 @@ abstract interface class DaemonTransport {
     int afterSequence = 0,
   });
 
+  /// Every pending prompt on the daemon (a snapshot first), then each prompt
+  /// raised or resolved (design D13).
+  Stream<PromptEvent> watchPrompts();
+
+  /// Cancels an operation; a prompt it waits on resolves `cancelled`.
+  Future<Operation> cancelOperation(String operationId);
+
+  /// Answers a pending prompt of [RespondToPromptRequest.operationId].
+  Future<Operation> respondToPrompt(RespondToPromptRequest request);
+
+  Future<List<SteamAccount>> listAccounts();
+  Future<Operation> addAccount(AddAccountRequest request);
+  Future<Operation> reauthAccount(ReauthAccountRequest request);
+
+  /// The accounts left after the removal.
+  Future<List<SteamAccount>> removeAccount(String accountId);
+
+  Future<ListModsResponse> listMods(String instanceId);
+  Future<ListModsResponse> setMods(SetModsRequest request);
+  Future<Operation> applyMods(String instanceId);
+  Future<Operation> checkModUpdates(String instanceId);
+  Future<Operation> updateMods(
+    String instanceId, {
+    List<String> itemIds = const [],
+  });
+
   Future<List<PluginSummary>> listPlugins();
   Future<PluginDetail> getPlugin(String pluginId);
 

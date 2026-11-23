@@ -4,10 +4,62 @@ import 'package:test/test.dart';
 import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/operations/operations.dart';
 
+import '../support/content_support.dart';
 import '../support/daemon_support.dart';
+import '../support/mods_support.dart';
 import '../support/secret_support.dart';
 
 void main() {
+  test('staged_mods_in_the_context', () async {
+    final rig = await ModsRig.start(
+      hooks:
+          'exports.onPreStart = (ctx) => ({args: [JSON.stringify(ctx.mods)]});',
+    );
+    rig.item(cfMod, title: 'CF');
+    rig.item(vppMod, title: 'VPP');
+    final instance = await rig.instance();
+    // Load order is the list order, not the order of the ids.
+    await rig.setMods(instance, [
+      ModSpec(vppMod, role: 'server'),
+      ModSpec(cfMod),
+    ]);
+
+    final done = await runStart(rig.daemon, instance.id);
+
+    expect(done.status, OperationStatus.succeeded, reason: done.resultMessage);
+    final mods = jsonDecode(rig.launchArgs.last) as List<Object?>;
+    expect(mods, [
+      {
+        'source': 'steam_workshop',
+        'itemId': vppMod,
+        'role': 'server',
+        'stagedName': '@VPP',
+        'version': '1700000000',
+      },
+      {
+        'source': 'steam_workshop',
+        'itemId': cfMod,
+        'role': 'client',
+        'stagedName': '@CF',
+        'version': '1700000000',
+      },
+    ]);
+  });
+
+  test('no_mods_gives_an_empty_list_in_the_context', () async {
+    final env = TestEnv();
+    env.installValheim(
+      hooks:
+          'exports.onPreStart = (ctx) => ({args: [JSON.stringify(ctx.mods)]});',
+    );
+    final daemon = await env.start();
+    final instance = await createInstalled(daemon);
+
+    await runStart(daemon, instance.id);
+
+    expect(env.process.launches.single.args.last, '[]');
+  });
+
   test('context_contents', () async {
     final env = TestEnv();
     // The hook hands its context back as the single extra argument.

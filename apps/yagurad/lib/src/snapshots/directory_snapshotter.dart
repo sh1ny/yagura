@@ -77,7 +77,10 @@ class DirectorySnapshotter implements Snapshotter {
   /// link would be dropped from the copy and from the data a restore puts
   /// back.
   int _sizeOf(SnapshotRequest request) {
-    final fs = InstanceFs(request.instanceDirectory);
+    final fs = InstanceFs(
+      request.instanceDirectory,
+      recorded: request.recorded,
+    );
     var total = 0;
     for (final path in request.dataPaths) {
       total += fs.treeSize(fs.relative(path));
@@ -107,7 +110,10 @@ class DirectorySnapshotter implements Snapshotter {
     final partial = Directory(p.join(directory, '$id$_partialSuffix'))
       ..createSync(recursive: true);
     try {
-      final fs = InstanceFs(request.instanceDirectory);
+      final fs = InstanceFs(
+        request.instanceDirectory,
+        recorded: request.recorded,
+      );
       final entries = <Map<String, Object?>>[];
       var size = 0;
       for (var i = 0; i < request.dataPaths.length; i++) {
@@ -244,7 +250,10 @@ class DirectorySnapshotter implements Snapshotter {
       for (final entry in manifest['paths'] as List<Object?>)
         entry as Map<String, Object?>,
     ];
-    final fs = InstanceFs(request.instanceDirectory);
+    final fs = InstanceFs(
+      request.instanceDirectory,
+      recorded: request.recorded,
+    );
     final targets = <String>[];
     for (final entry in entries) {
       final target = p.normalize(
@@ -279,6 +288,7 @@ class DirectorySnapshotter implements Snapshotter {
           instanceDirectory: request.instanceDirectory,
           dataPaths: request.dataPaths,
           reason: 'pre_restore',
+          recorded: request.recorded,
         ),
       );
       // The last point where the restore can be abandoned: past it, data paths

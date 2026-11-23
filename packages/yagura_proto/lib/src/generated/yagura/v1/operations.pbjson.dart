@@ -410,3 +410,140 @@ const RespondToPromptRequest$json = {
 final $typed_data.Uint8List respondToPromptRequestDescriptor = $convert.base64Decode(
     'ChZSZXNwb25kVG9Qcm9tcHRSZXF1ZXN0EiEKDG9wZXJhdGlvbl9pZBgBIAEoCVILb3BlcmF0aW'
     '9uSWQSGwoJcHJvbXB0X2lkGAIgASgJUghwcm9tcHRJZBIUCgV2YWx1ZRgDIAEoCVIFdmFsdWU=');
+
+@$core.Deprecated('Use watchPromptsRequestDescriptor instead')
+const WatchPromptsRequest$json = {
+  '1': 'WatchPromptsRequest',
+};
+
+/// Descriptor for `WatchPromptsRequest`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List watchPromptsRequestDescriptor =
+    $convert.base64Decode('ChNXYXRjaFByb21wdHNSZXF1ZXN0');
+
+@$core.Deprecated('Use promptEventDescriptor instead')
+const PromptEvent$json = {
+  '1': 'PromptEvent',
+  '2': [
+    {
+      '1': 'snapshot',
+      '3': 1,
+      '4': 1,
+      '5': 11,
+      '6': '.yagura.v1.PromptSnapshot',
+      '9': 0,
+      '10': 'snapshot'
+    },
+    {
+      '1': 'raised',
+      '3': 2,
+      '4': 1,
+      '5': 11,
+      '6': '.yagura.v1.PendingPrompt',
+      '9': 0,
+      '10': 'raised'
+    },
+    {
+      '1': 'resolved',
+      '3': 3,
+      '4': 1,
+      '5': 11,
+      '6': '.yagura.v1.PromptResolved',
+      '9': 0,
+      '10': 'resolved'
+    },
+    {
+      '1': 'resync_required',
+      '3': 4,
+      '4': 1,
+      '5': 11,
+      '6': '.yagura.v1.PromptsResyncRequired',
+      '9': 0,
+      '10': 'resyncRequired'
+    },
+  ],
+  '8': [
+    {'1': 'event'},
+  ],
+};
+
+/// Descriptor for `PromptEvent`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List promptEventDescriptor = $convert.base64Decode(
+    'CgtQcm9tcHRFdmVudBI3CghzbmFwc2hvdBgBIAEoCzIZLnlhZ3VyYS52MS5Qcm9tcHRTbmFwc2'
+    'hvdEgAUghzbmFwc2hvdBIyCgZyYWlzZWQYAiABKAsyGC55YWd1cmEudjEuUGVuZGluZ1Byb21w'
+    'dEgAUgZyYWlzZWQSNwoIcmVzb2x2ZWQYAyABKAsyGS55YWd1cmEudjEuUHJvbXB0UmVzb2x2ZW'
+    'RIAFIIcmVzb2x2ZWQSSwoPcmVzeW5jX3JlcXVpcmVkGAQgASgLMiAueWFndXJhLnYxLlByb21w'
+    'dHNSZXN5bmNSZXF1aXJlZEgAUg5yZXN5bmNSZXF1aXJlZEIHCgVldmVudA==');
+
+@$core.Deprecated('Use promptSnapshotDescriptor instead')
+const PromptSnapshot$json = {
+  '1': 'PromptSnapshot',
+  '2': [
+    {
+      '1': 'prompts',
+      '3': 1,
+      '4': 3,
+      '5': 11,
+      '6': '.yagura.v1.PendingPrompt',
+      '10': 'prompts'
+    },
+  ],
+};
+
+/// Descriptor for `PromptSnapshot`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List promptSnapshotDescriptor = $convert.base64Decode(
+    'Cg5Qcm9tcHRTbmFwc2hvdBIyCgdwcm9tcHRzGAEgAygLMhgueWFndXJhLnYxLlBlbmRpbmdQcm'
+    '9tcHRSB3Byb21wdHM=');
+
+@$core.Deprecated('Use pendingPromptDescriptor instead')
+const PendingPrompt$json = {
+  '1': 'PendingPrompt',
+  '2': [
+    {
+      '1': 'prompt',
+      '3': 1,
+      '4': 1,
+      '5': 11,
+      '6': '.yagura.v1.Prompt',
+      '10': 'prompt'
+    },
+    {
+      '1': 'operations',
+      '3': 2,
+      '4': 3,
+      '5': 11,
+      '6': '.yagura.v1.PromptSubject',
+      '10': 'operations'
+    },
+  ],
+};
+
+/// Descriptor for `PendingPrompt`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List pendingPromptDescriptor = $convert.base64Decode(
+    'Cg1QZW5kaW5nUHJvbXB0EikKBnByb21wdBgBIAEoCzIRLnlhZ3VyYS52MS5Qcm9tcHRSBnByb2'
+    '1wdBI4CgpvcGVyYXRpb25zGAIgAygLMhgueWFndXJhLnYxLlByb21wdFN1YmplY3RSCm9wZXJh'
+    'dGlvbnM=');
+
+@$core.Deprecated('Use promptSubjectDescriptor instead')
+const PromptSubject$json = {
+  '1': 'PromptSubject',
+  '2': [
+    {'1': 'operation_id', '3': 1, '4': 1, '5': 9, '10': 'operationId'},
+    {'1': 'instance_id', '3': 2, '4': 1, '5': 9, '10': 'instanceId'},
+    {'1': 'account_id', '3': 3, '4': 1, '5': 9, '10': 'accountId'},
+  ],
+};
+
+/// Descriptor for `PromptSubject`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List promptSubjectDescriptor = $convert.base64Decode(
+    'Cg1Qcm9tcHRTdWJqZWN0EiEKDG9wZXJhdGlvbl9pZBgBIAEoCVILb3BlcmF0aW9uSWQSHwoLaW'
+    '5zdGFuY2VfaWQYAiABKAlSCmluc3RhbmNlSWQSHQoKYWNjb3VudF9pZBgDIAEoCVIJYWNjb3Vu'
+    'dElk');
+
+@$core.Deprecated('Use promptsResyncRequiredDescriptor instead')
+const PromptsResyncRequired$json = {
+  '1': 'PromptsResyncRequired',
+};
+
+/// Descriptor for `PromptsResyncRequired`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List promptsResyncRequiredDescriptor =
+    $convert.base64Decode('ChVQcm9tcHRzUmVzeW5jUmVxdWlyZWQ=');

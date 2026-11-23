@@ -69,6 +69,7 @@ final class OperationState {
     this.steps = const [],
     this.percent,
     this.message = '',
+    this.warnings = const [],
     this.lastSequence = 0,
   });
 
@@ -83,6 +84,9 @@ final class OperationState {
   /// 0-100 of the current step, null when unknown.
   final double? percent;
   final String message;
+
+  /// Warnings the finished operation carries, e.g. `external_edit: ...`.
+  final List<String> warnings;
   final int lastSequence;
 
   OperationState copyWith({
@@ -91,6 +95,7 @@ final class OperationState {
     double? percent,
     bool clearPercent = false,
     String? message,
+    List<String>? warnings,
     int? lastSequence,
   }) => OperationState(
     id: id,
@@ -100,6 +105,7 @@ final class OperationState {
     steps: steps ?? this.steps,
     percent: clearPercent ? null : (percent ?? this.percent),
     message: message ?? this.message,
+    warnings: warnings ?? this.warnings,
     lastSequence: lastSequence ?? this.lastSequence,
   );
 
@@ -109,6 +115,15 @@ final class OperationState {
     OperationStatus.OPERATION_STATUS_WAITING_FOR_INPUT => false,
     _ => true,
   };
+}
+
+/// A pending prompt that another device answered, or that ended without an
+/// answer from this client.
+final class PromptResolution {
+  const PromptResolution(this.prompt, this.resolved);
+
+  final PendingPrompt prompt;
+  final PromptResolved resolved;
 }
 
 typedef Delay = Future<void> Function(Duration duration);
@@ -208,6 +223,13 @@ class DaemonConnection {
   final _status = ValueNotifier<ConnectionStatus>(const Connecting());
   final _instances = ValueNotifier<List<Instance>>(const []);
   final _operations = ValueNotifier<List<OperationState>>(const []);
+  final _prompts = ValueNotifier<List<PendingPrompt>>(const []);
+  final _settingsInvalid = ValueNotifier<Map<String, String>>(const {});
+  final _resolutions = StreamController<PromptResolution>.broadcast();
+
+  /// Prompts this client is answering or cancelling: their resolution is its
+  /// own doing and is not reported as another device's.
+  final _answeredByMe = <String>{};
   final _cache = <String, Instance>{};
   final _stop = Completer<void>();
   final _connectedWaiters = <Completer<DaemonTransport>>[];
@@ -234,6 +256,17 @@ class DaemonConnection {
   Stream<List<Instance>> get instancesStream => _replay(_instances);
   Stream<List<OperationState>> get operationsStream => _replay(_operations);
 
+  /// Every prompt pending on the daemon, from `WatchPrompts`.
+  Stream<List<PendingPrompt>> get promptsStream => _replay(_prompts);
+
+  /// Prompts that ended without this client's answer (another device answered
+  /// them, they expired or their operation was cancelled).
+  Stream<PromptResolution> get promptResolutions => _resolutions.stream;
+
+  /// What the daemon's `settings_invalid` notice said, by instance id.
+  Stream<Map<String, String>> get settingsInvalidStream =>
+      _replay(_settingsInvalid);
+
   /// The transport of the current connection; throws [StateError] when the
   /// daemon is not connected.
   DaemonTransport get transport => switch ((_status.value, _transport)) {
@@ -258,6 +291,7 @@ class DaemonConnection {
       waiter.completeError(StateError('connection disposed'));
     }
     _connectedWaiters.clear();
+    unawaited(_resolutions.close());
     // The notifiers stay undisposed: widgets may still be tearing down.
     await transport?.close();
   }
@@ -343,6 +377,7 @@ class DaemonConnection {
               waiter.complete(transport);
             }
             _connectedWaiters.clear();
+            unawaited(_watchPrompts(transport, ended.future));
             if (afterConnect case final hook?) {
               unawaited(_afterConnect(hook, transport, ended.future));
             }
@@ -415,6 +450,66 @@ class DaemonConnection {
     }
   }
 
+  /// Follows `WatchPrompts` while [ended] is pending. A failure (an older
+  /// daemon answers `UNIMPLEMENTED`) leaves the rest of the connection alone;
+  /// the next connection opens the stream again.
+  Future<void> _watchPrompts(DaemonTransport transport, Future<void> ended) {
+    final done = Completer<void>();
+    final subscription = transport.watchPrompts().listen(
+      _applyPromptEvent,
+      onError: (Object error, StackTrace stack) {
+        debugPrint('daemon $id: prompt stream failed: $error');
+        if (!done.isCompleted) done.complete();
+      },
+      onDone: () {
+        if (!done.isCompleted) done.complete();
+      },
+      cancelOnError: true,
+    );
+    return Future.any([ended, done.future])
+        .whenComplete(() => subscription.cancel());
+  }
+
+  void _applyPromptEvent(PromptEvent event) {
+    if (_disposed) return;
+    switch (event.whichEvent()) {
+      case PromptEvent_Event.snapshot:
+        _prompts.value = List.unmodifiable(event.snapshot.prompts);
+      case PromptEvent_Event.raised:
+        final raised = event.raised;
+        _prompts.value = List.unmodifiable([
+          for (final p in _prompts.value)
+            if (p.prompt.id != raised.prompt.id) p,
+          raised,
+        ]);
+      case PromptEvent_Event.resolved:
+        final resolved = event.resolved;
+        final prompt = _prompts.value
+            .where((p) => p.prompt.id == resolved.promptId)
+            .firstOrNull;
+        if (prompt == null) return;
+        // Told before the prompt leaves the list, so a view can say why it
+        // closes.
+        if (!_answeredByMe.remove(resolved.promptId)) {
+          _resolutions.add(PromptResolution(prompt, resolved));
+        }
+        _removePrompt(resolved.promptId);
+      case PromptEvent_Event.resyncRequired:
+        // A new snapshot follows on the same stream.
+        return;
+      case PromptEvent_Event.notSet:
+        return;
+    }
+  }
+
+  PendingPrompt? _removePrompt(String promptId) {
+    final list = _prompts.value;
+    final index = list.indexWhere((p) => p.prompt.id == promptId);
+    if (index < 0) return null;
+    _prompts.value = List.unmodifiable([...list]..removeAt(index));
+    return list[index];
+  }
+
   /// Applies the instance stream until it ends or [_cancelWatch] is called;
   /// a stream error is rethrown.
   Future<void> _watch(DaemonTransport transport) {
@@ -455,8 +550,28 @@ class DaemonConnection {
         // A new snapshot follows on the same stream.
         return;
       case InstanceEvent_Event.notice:
+        final notice = event.notice;
+        if (notice.kind == 'settings_invalid') {
+          _settingsInvalid.value = {
+            ..._settingsInvalid.value,
+            notice.instanceId: notice.message,
+          };
+        }
+        return;
       case InstanceEvent_Event.notSet:
         return;
+    }
+    // The flag is the truth: a message about an instance that is valid again
+    // (or gone) is stale.
+    final stale = [
+      for (final id in _settingsInvalid.value.keys)
+        if (_cache[id]?.settingsInvalid != true) id,
+    ];
+    if (stale.isNotEmpty) {
+      _settingsInvalid.value = {
+        for (final e in _settingsInvalid.value.entries)
+          if (!stale.contains(e.key)) e.key: e.value,
+      };
     }
     _instances.value = List.unmodifiable(
       _cache.values.toList()..sort((a, b) => a.name.compareTo(b.name)),
@@ -560,6 +675,79 @@ class DaemonConnection {
     ),
   );
 
+  /// Starts adding a Steam account. The password goes out with the call and is
+  /// held nowhere here.
+  Future<void> addAccount(
+    String username,
+    String password, {
+    bool rememberPassword = false,
+  }) => _track(
+    transport.addAccount(
+      AddAccountRequest(
+        username: username,
+        password: password,
+        rememberPassword: rememberPassword,
+      ),
+    ),
+  );
+
+  Future<void> reauthAccount(
+    String accountId,
+    String password, {
+    bool rememberPassword = false,
+  }) => _track(
+    transport.reauthAccount(
+      ReauthAccountRequest(
+        accountId: accountId,
+        password: password,
+        rememberPassword: rememberPassword,
+      ),
+    ),
+  );
+
+  Future<void> applyMods(Instance instance) =>
+      _track(transport.applyMods(instance.id));
+
+  Future<void> checkModUpdates(Instance instance) =>
+      _track(transport.checkModUpdates(instance.id));
+
+  Future<void> updateMods(Instance instance) =>
+      _track(transport.updateMods(instance.id));
+
+  /// Answers [pending] through the first operation waiting on it.
+  Future<void> respondToPrompt(PendingPrompt pending, String value) async {
+    final promptId = pending.prompt.id;
+    _answeredByMe.add(promptId);
+    try {
+      await transport.respondToPrompt(
+        RespondToPromptRequest(
+          operationId: pending.operations.first.operationId,
+          promptId: promptId,
+          value: value,
+        ),
+      );
+    } on Object {
+      _answeredByMe.remove(promptId);
+      rethrow;
+    }
+    _removePrompt(promptId);
+    _answeredByMe.remove(promptId);
+  }
+
+  /// Cancels the operation [pending] belongs to, which resolves the prompt.
+  Future<void> cancelPrompt(PendingPrompt pending) async {
+    final promptId = pending.prompt.id;
+    _answeredByMe.add(promptId);
+    try {
+      await transport.cancelOperation(pending.operations.first.operationId);
+    } on Object {
+      _answeredByMe.remove(promptId);
+      rethrow;
+    }
+    _removePrompt(promptId);
+    _answeredByMe.remove(promptId);
+  }
+
   /// Follows an operation the daemon accepted and shows its steps.
   Future<void> _track(Future<Operation> call) async {
     final operation = await call;
@@ -629,6 +817,21 @@ class DaemonConnection {
         message: event.finished.resultMessage.isNotEmpty
             ? event.finished.resultMessage
             : event.finished.resultReason,
+        warnings: event.finished.warnings,
+        clearPercent: true,
+      ),
+      OperationEvent_Event.prompt => current.copyWith(
+        status: OperationStatus.OPERATION_STATUS_WAITING_FOR_INPUT,
+        clearPercent: true,
+      ),
+      OperationEvent_Event.promptResolved =>
+        current.status == OperationStatus.OPERATION_STATUS_WAITING_FOR_INPUT
+            ? current.copyWith(status: OperationStatus.OPERATION_STATUS_RUNNING)
+            : current,
+      // Events were skipped: the snapshot that follows says where the
+      // operation is now, so the steps shown so far no longer add up.
+      OperationEvent_Event.eventsDropped => current.copyWith(
+        steps: const [],
         clearPercent: true,
       ),
       OperationEvent_Event.snapshot => current.copyWith(
@@ -636,6 +839,7 @@ class DaemonConnection {
         steps: current.steps.isEmpty && event.snapshot.currentStep.isNotEmpty
             ? [event.snapshot.currentStep]
             : current.steps,
+        warnings: event.snapshot.warnings,
       ),
       _ => current,
     };

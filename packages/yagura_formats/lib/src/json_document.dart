@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'config_document.dart';
+
 /// A node of a lossless JSON tree. Every node keeps the whitespace around it
 /// ([leading] before the value, [trailing] after it), so serialising an
 /// untouched tree reproduces the source byte for byte.
@@ -81,11 +83,17 @@ class JsonDocument {
   /// Maximum nesting depth accepted by [parse].
   static const maxDepth = 512;
 
-  /// Parses [source]; throws [FormatException] with the offset on bad input.
+  /// Parses [source]; throws [ConfigParseException] (a [FormatException]) with
+  /// the line and column on bad input.
   factory JsonDocument.parse(String source) {
     final bom = source.startsWith('﻿');
     final text = bom ? source.substring(1) : source;
-    final root = _Parser(text).parseDocument();
+    final JsonNode root;
+    try {
+      root = _Parser(text).parseDocument();
+    } on FormatException catch (e) {
+      throw ConfigParseException.atOffset(e.message, text, e.offset ?? 0);
+    }
     return JsonDocument._(root, bom, _Style.detect(text, root));
   }
 

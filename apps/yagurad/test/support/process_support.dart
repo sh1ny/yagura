@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yagurad/src/host/daemon.dart';
+import 'package:yagurad/src/host/secret_store.dart' show SecretProtector;
 import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/platform/job_restrictions.dart';
 import 'package:yagurad/src/platform/win32.dart';
@@ -271,6 +272,27 @@ data_paths:
 ''');
   }
 
+  /// Gives the installed plugin a `gslt` secret setting named in
+  /// `steam.gslt` (design D4); a launch argument `{{secrets.gslt}}` in
+  /// `serverArgs` then hands its value to the server.
+  void addGsltSetting({bool required = false}) {
+    final file = File(p.join(env.pluginsDir, 'valheim', 'plugin.yaml'));
+    final text = file.readAsStringSync();
+    const login = '  login: anonymous\n';
+    const max = '    max: 64\n';
+    for (final anchor in [login, max]) {
+      expect(text, contains(anchor), reason: 'plugin edit target');
+    }
+    file.writeAsStringSync(
+      text
+          .replaceFirst(
+            login,
+            '$login  gslt: { setting: gslt, required: $required }\n',
+          )
+          .replaceFirst(max, '$max  gslt:\n    type: secret\n'),
+    );
+  }
+
   /// A new Windows host running the compiled `yagurad`.
   WindowsProcessHost newHost() =>
       WindowsProcessHost(helperExecutable: tools.yagurad);
@@ -281,9 +303,11 @@ data_paths:
     ProcessHost Function(WindowsProcessHost host)? wrap,
     Duration processHealthSettle = const Duration(milliseconds: 300),
     Duration pendingRunWait = const Duration(seconds: 3),
+    SecretProtector? secretProtector,
   }) {
     final real = host = newHost();
     return env.start(
+      secretProtector: secretProtector,
       processHost: wrap == null ? real : wrap(real),
       helperExecutable: tools.yagurad,
       processHealthSettle: processHealthSettle,

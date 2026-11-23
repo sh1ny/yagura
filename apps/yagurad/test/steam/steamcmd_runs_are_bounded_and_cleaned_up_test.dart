@@ -90,6 +90,42 @@ void main() {
     await eventually(() => !alive(pid), reason: 'SteamCMD terminated');
   });
 
+  test('long_download_that_keeps_progressing', () async {
+    final env = TestEnv();
+    // Like SteamCMD, the fake holds its output back until it exits and writes
+    // it to logs/console_log.txt as it goes. The run takes longer than the
+    // no-progress limit, but its log reports progress every 250 ms.
+    final steam = SteamHarness(
+      env,
+      noProgressTimeout: const Duration(seconds: 4),
+      realOutput: true,
+      fakeEnvironment: {'FAKE_STEAMCMD_DELAY_MS': '250'},
+    );
+    final reporter = RecordingReporter();
+
+    final started = DateTime.now();
+    await steam.service.installApp(requestFor(env), reporter, CancelToken());
+    final ended = DateTime.now();
+
+    expect(
+      ended.difference(started),
+      greaterThan(const Duration(seconds: 4)),
+      reason: 'the run outlasted the limit',
+    );
+    expect(
+      reporter.progresses.last.percent,
+      100,
+      reason: 'the progress reached the end',
+    );
+    expect(reporter.progresses.map((p) => p.step), contains('download'));
+    expect(
+      reporter.times.first.isBefore(ended.subtract(const Duration(seconds: 1))),
+      isTrue,
+      reason: 'the progress came while SteamCMD ran, not when it exited',
+    );
+    expect(steam.appRuns(), hasLength(1));
+  }, timeout: const Timeout(Duration(seconds: 60)));
+
   test('total_time_cap', () async {
     final env = TestEnv();
     final steam = SteamHarness(

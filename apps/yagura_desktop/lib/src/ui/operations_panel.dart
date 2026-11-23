@@ -4,6 +4,7 @@ import 'package:yagura_proto/yagura_proto.dart';
 
 import '../connection.dart';
 import '../providers.dart';
+import 'steam_accounts_view.dart';
 
 String operationStatusLabel(OperationStatus status) => switch (status) {
   OperationStatus.OPERATION_STATUS_QUEUED => 'queued',
@@ -31,15 +32,16 @@ class OperationsPanel extends ConsumerWidget {
       padding: const EdgeInsets.all(8),
       children: [
         for (final operation in operations.reversed)
-          _OperationCard(operation: operation),
+          _OperationCard(daemonId: daemonId, operation: operation),
       ],
     );
   }
 }
 
 class _OperationCard extends StatelessWidget {
-  const _OperationCard({required this.operation});
+  const _OperationCard({required this.daemonId, required this.operation});
 
+  final String daemonId;
   final OperationState operation;
 
   @override
@@ -82,6 +84,13 @@ class _OperationCard extends StatelessWidget {
             if (percent != null && !operation.ended)
               Text('${percent.round()}%'),
             if (operation.message.isNotEmpty) Text(operation.message),
+            if (operation.kind == 'add_steam_account' &&
+                operation.status == OperationStatus.OPERATION_STATUS_FAILED)
+              TextButton(
+                key: ValueKey('operation:retry:${operation.id}'),
+                onPressed: () => showAddAccountDialog(context, daemonId),
+                child: const Text('Add the account again'),
+              ),
           ],
         ),
       ),

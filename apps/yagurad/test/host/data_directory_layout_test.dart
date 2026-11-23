@@ -15,6 +15,8 @@ void main() {
     expect(File(p.join(env.data, 'yagura.db')).existsSync(), isTrue);
     for (final folder in [
       'steamcmd',
+      'content',
+      p.join('content', '.staging'),
       'plugins',
       'instances',
       'snapshots',

@@ -9,6 +9,8 @@ import '../firewall/firewall_reconciler.dart';
 import '../admin/admin_server.dart';
 import '../admin/admin_service.dart';
 import '../admin/admin_transport.dart';
+import '../config/bound_file_store.dart';
+import '../content/content.dart';
 import '../hooks/hooks.dart';
 import '../instances/health_check.dart';
 import '../instances/instance.dart' show aclMigrationFailedReason;
@@ -19,6 +21,9 @@ import '../instances/instance_store.dart';
 import '../logs/instance_log_sync.dart';
 import '../logs/log_hub.dart';
 import '../logs/log_match_watch.dart';
+import '../mods/mod_check_schedule.dart';
+import '../mods/mods_service.dart';
+import '../mods/stage_link.dart';
 import '../operations/operations.dart';
 import '../platform/acl_writer.dart';
 import '../plugins/plugin_registry.dart';
@@ -32,6 +37,7 @@ import 'data_dir_lock.dart';
 import 'data_dir_protector.dart';
 import 'data_directory.dart';
 import 'database.dart';
+import 'replaced_secrets.dart';
 import '../security/security.dart';
 import 'secret_store.dart';
 
@@ -79,6 +85,10 @@ class DaemonConfig {
     this.healthPollInterval = const Duration(milliseconds: 250),
     this.processHealthSettle = const Duration(seconds: 2),
     this.pendingRunWait = const Duration(seconds: 10),
+    this.workshopEndpoint,
+    this.workshopMinInterval = WorkshopClient.defaultMinInterval,
+    this.modCheckSchedule = const ModCheckSchedule(),
+    this.stageLink = defaultStageLink,
   });
 
   final String dataDirectory;
@@ -182,6 +192,20 @@ class DaemonConfig {
 
   /// How long startup waits for a live relay to record its server (D2).
   final Duration pendingRunWait;
+
+  /// The Steam Web API `GetPublishedFileDetails` URL the workshop client
+  /// reads; defaults to Steam's. A seam for tests.
+  final Uri? workshopEndpoint;
+
+  /// The least time between two requests to the Steam Web API; a seam for
+  /// tests.
+  final Duration workshopMinInterval;
+
+  /// When the daemon looks for newer mod versions (design D14).
+  final ModCheckSchedule modCheckSchedule;
+
+  /// Creates the directory link of a staged mod; a seam for tests.
+  final StageLinkCreator stageLink;
 }
 
 /// The daemon core: startup sequence and the services group 8 serves.
@@ -197,6 +221,11 @@ class Daemon {
     required this.plugins,
     required this.instances,
     required this.operations,
+    required this.steamAccounts,
+    required this.content,
+    required this.mods,
+    required ContentStore contentStore,
+    required WorkshopClient workshopClient,
     required this.logs,
     required this.startupNotices,
     required this.hooks,
@@ -215,11 +244,15 @@ class Daemon {
        _database = database, // ignore: prefer_initializing_formals
        _admin = admin, // ignore: prefer_initializing_formals
        _steam = steam, // ignore: prefer_initializing_formals
+       _contentStore = contentStore, // ignore: prefer_initializing_formals
+       _workshopClient = workshopClient, // ignore: prefer_initializing_formals
        _logSync = logSync; // ignore: prefer_initializing_formals
 
   final DataDirLock _lock;
   final YaguraDatabase _database;
   final SteamService _steam;
+  final ContentStore _contentStore;
+  final WorkshopClient _workshopClient;
   final AdminServer? _admin;
   final InstanceLogSync _logSync;
   var _closed = false;
@@ -228,6 +261,15 @@ class Daemon {
   final PluginRegistry plugins;
   final InstanceManager instances;
   final OperationRunner operations;
+
+  /// The Steam accounts (design D1).
+  final SteamAccounts steamAccounts;
+
+  /// Acquires workshop items into the content store (design D5, D6).
+  final ContentAcquirer content;
+
+  /// The mod list, staging and update checks of the instances (design D7).
+  final ModsService mods;
   final LogHub logs;
   final List<StartupNotice> startupNotices;
 
@@ -325,13 +367,14 @@ class Daemon {
       lock.release();
       rethrow;
     }
+    final secretProtector = config.secretProtector ?? defaultSecretProtector();
     final DatabaseSecretStore secrets;
     try {
       secrets = _fatal(
         'secret_store',
         () => DatabaseSecretStore.open(
           database,
-          config.secretProtector ?? defaultSecretProtector(),
+          secretProtector,
           serviceMode: config.serviceMode,
         ),
       );
@@ -387,6 +430,32 @@ class Daemon {
       clock: config.clock,
       maxRetainedEvents: config.maxRetainedOperationEvents,
     );
+    final steamAccounts = SteamAccounts(
+      database: database,
+      secrets: secrets,
+      runner: runner,
+      steam: config.steam,
+      clock: config.clock,
+      log: (message) => stderr.writeln('yagurad: $message'),
+    );
+    final workshopClient = WorkshopClient(
+      endpoint: config.workshopEndpoint ?? WorkshopClient.defaultEndpoint,
+      minInterval: config.workshopMinInterval,
+    );
+    final contentStore = ContentStore(
+      database: database,
+      contentPath: dataDirectory.contentPath,
+      clock: config.clock,
+      log: (message) => stderr.writeln('yagurad: $message'),
+    );
+    final content = ContentAcquirer(
+      runner: runner,
+      store: contentStore,
+      workshop: workshopClient,
+      steam: config.steam,
+      steamcmdRoot: dataDirectory.steamcmdPath,
+      log: (message) => stderr.writeln('yagurad: $message'),
+    );
     final registry = PluginRegistry(
       pluginsDirectory: dataDirectory.pluginsPath,
       hooks: hooks,
@@ -415,6 +484,7 @@ class Daemon {
             config.processHost ??
             defaultProcessHost(helperExecutable: config.helperExecutable),
         steam: config.steam,
+        accounts: steamAccounts,
         hooks: hooks,
         snapshotter:
             config.snapshotter ??
@@ -423,6 +493,12 @@ class Daemon {
               clock: config.clock,
             ),
         runs: runStore,
+        boundFiles: BoundFileStore(database),
+        replacedSecrets: ReplacedSecrets(
+          database,
+          secretProtector,
+          clock: config.clock,
+        ),
         acls: config.serviceMode ? config.instanceAcls : null,
         healthEvaluator: HealthEvaluator(
           pollInterval: config.healthPollInterval,
@@ -444,7 +520,13 @@ class Daemon {
       database: database,
       clock: config.clock,
       options: config.logOptions,
+      secretValues: manager.secretValuesToMask,
     );
+    // The masker follows the secrets (design D11): it is built again after a
+    // change, a plugin reload (which decides what counts as a secret) and the
+    // hourly prune of replaced values.
+    manager.secretsChanged = logs.rebuildMasker;
+    manager.maskedSecretsExpired = logs.rebuildMaskers;
 
     await degraded('steam_sweep', config.steam.sweepStrays);
     await degraded('plugins', () async {
@@ -459,6 +541,19 @@ class Daemon {
         }
       }
     });
+    final mods = ModsService(
+      manager: manager,
+      runner: runner,
+      acquirer: content,
+      workshop: workshopClient,
+      contentStore: contentStore,
+      database: database,
+      schedule: config.modCheckSchedule,
+      stageLink: config.stageLink,
+      clock: config.clock,
+      log: (message) => stderr.writeln('yagurad: $message'),
+    );
+    manager.mods = mods;
     manager.logMatchWatch = (id, source, pattern) =>
         LogHubMatchWatch.open(logs, id, source, pattern);
     manager.logTail = (id, lines) async {
@@ -466,6 +561,12 @@ class Daemon {
       return [for (final e in logs.backlog(id, lines: lines).entries) e.text];
     };
     await degraded('recovery', manager.recover);
+    // After the runner marked the unfinished operations interrupted: an
+    // account still being added is gone with its password and installation.
+    await degraded('steam_accounts', steamAccounts.recoverAdding);
+    // The staging area a killed daemon left is emptied, and versions nothing
+    // uses any more are collected (design D6).
+    await degraded('content_store', contentStore.startup);
     // After the recovery has ended the runs whose relay is gone: what is
     // left names the versions still in use.
     if (config.versionSweeper case final sweeper?) {
@@ -600,8 +701,10 @@ class Daemon {
     );
     await degraded('log_tailing', logSync.syncAll);
     logSync.listen();
+    manager.pluginsReloaded.listen((_) => logs.rebuildMaskers());
     manager.autostartInstances();
     started.complete();
+    mods.start();
 
     return Daemon._(
       dataDirectory: dataDirectory,
@@ -610,6 +713,11 @@ class Daemon {
       plugins: registry,
       instances: manager,
       operations: runner,
+      steamAccounts: steamAccounts,
+      content: content,
+      mods: mods,
+      contentStore: contentStore,
+      workshopClient: workshopClient,
       logs: logs,
       startupNotices: List.unmodifiable(notices),
       hooks: hooks,
@@ -677,10 +785,13 @@ class Daemon {
     _closed = true;
     await _admin?.close();
     firewall?.close();
+    mods.close();
     await _logSync.close();
     await instances.close();
     await logs.close();
     await operations.close();
+    _contentStore.close();
+    _workshopClient.close();
     await _steam.close();
     security?.close();
     _database.close();

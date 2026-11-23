@@ -53,11 +53,15 @@ Each instance SHALL be in exactly one state: `not_installed`, `installing`, `sto
 - **THEN** the instance moves to `running` with a `health: unknown` flag and a warning event, and the process is not killed
 
 ### Requirement: One operation per instance at a time
-The daemon SHALL run at most one lifecycle operation per instance at a time and SHALL queue further requests in arrival order, reporting their queue position. At most 4 heavy operations (install, update, validate) run at once across the host; further ones wait in the queue.
+The daemon SHALL run at most one lifecycle operation per instance at a time and SHALL queue further requests in arrival order, reporting their queue position. At most 4 heavy steps (the SteamCMD runs of install, update and validate, and the mod downloads of start, apply_mods and update_mods) run at once across the host; further ones wait with step `waiting_for_steamcmd` and their position.
 
 #### Scenario: Concurrent requests on one instance
 - **WHEN** a client requests `Update` on an instance while its `Install` operation is running
 - **THEN** the update returns an operation id with status `queued` and position 1, and it starts only after the install operation ends
+
+#### Scenario: Heavy limit counts mod downloads
+- **WHEN** 4 instances are downloading mods in `ApplyMods` operations and a fifth instance's `Install` reaches its download
+- **THEN** the install reports step `waiting_for_steamcmd` with its position until one of the four mod downloads ends, then downloads
 
 #### Scenario: Stop requested while starting
 - **WHEN** a client stops an instance whose `Start` operation is running a pre-start step
@@ -106,15 +110,19 @@ When the daemon starts, it SHALL mark every operation left `queued` or `running`
 - **THEN** after restart the instance is `not_installed` with notice `install_interrupted` and a new install can be started
 
 ### Requirement: Updates stop and restart a running server
-An update or validate of a running instance SHALL stop it with its stop strategy, snapshot its data paths, update the app, run the plugin's `onPostUpdate` hook and apply its file edits (step `apply_config`), and start it again; an update of a stopped instance leaves it stopped.
+An update or validate of a running instance SHALL stop it with its stop strategy, snapshot its data paths, update the app and any mods with updates, run the plugin's `onPostUpdate` hook, then apply the bindings and its file edits in one pass, bindings first (step `apply_config`), and start it again; an update of a stopped instance leaves it stopped.
 
 #### Scenario: Update while running
 - **WHEN** a client updates a running instance
-- **THEN** the operation steps are `stop`, `snapshot`, `download`, `apply_config`, `start`, and the instance ends `running`
+- **THEN** the operation steps are `stop`, `snapshot`, `download`, `update_mods`, `apply_config`, `start`, and the instance ends `running`
 
 #### Scenario: Update fails after stop
 - **WHEN** the download step fails for a running instance
 - **THEN** the instance is `error` with the failure reason, it is not started again, and the snapshot is kept
+
+#### Scenario: Mod update fails after stop
+- **WHEN** the `update_mods` step fails for a running instance because one item is `unavailable`
+- **THEN** the instance is `error` with `workshop_item_unavailable` naming the item, it is not started again, and the other mods' links are unchanged
 
 ### Requirement: Crash detection and restart policy
 The daemon SHALL detect when a `running` instance's process exits without a stop request, record the exit code and the last 50 log lines, and apply the instance's restart policy (`never`, or `on_crash` with at most 3 restarts within 10 minutes, default `on_crash`).
@@ -165,11 +173,15 @@ Stopping SHALL follow the plugin's stop strategy (`signal` (Linux SIGTERM / Wind
 - **THEN** the daemon kills the process, the instance becomes `stopped`, and the operation result reports `stopped_by: kill`
 
 ### Requirement: Durable state with a portable instance file
-The daemon SHALL persist instances, settings and operations in its database before acknowledging a change, and SHALL write `instance.json` (plugin id and version, settings, ports, `format_version: 1`, secret settings as placeholders and never their values) into the instance directory after every committed change.
+The daemon SHALL persist instances, settings, mods and operations in its database before acknowledging a change, and SHALL write `instance.json` (plugin id and version, settings, mods, ports, `format_version: 1`, secret settings as placeholders and never their values) into the instance directory after every committed change.
 
 #### Scenario: Change persisted and mirrored
 - **WHEN** a client changes `hostname` on an instance and the call returns success
 - **THEN** a daemon restart still shows the new hostname, and `instance.json` contains it
+
+#### Scenario: Mod list mirrored
+- **WHEN** a client sets the mods of an instance and the call returns success
+- **THEN** a daemon restart shows the same ordered mods with their roles, and `instance.json` lists them with source, item id, role and staged name
 
 #### Scenario: instance.json write fails
 - **WHEN** the database commit succeeds but writing `instance.json` fails (for example the disk is full)
@@ -237,7 +249,7 @@ With `delete_files`, the daemon SHALL take the `pre_delete` snapshot, write a `.
 - **THEN** after restart the instance is not listed, the remaining directory is removed, and its `pre_delete` snapshot is listed by `ListOrphanSnapshots`
 
 ### Requirement: Error reasons have defined exits
-An instance in `error` SHALL carry a reason that allows only these exits: `crash_loop` leaves by Start or Acknowledge; `update_interrupted` and update failures by Update, Validate or Acknowledge; `restore_interrupted` by a restore or Acknowledge; `settings_invalid` by saving valid settings; `plugin_missing` by a reload that restores the plugin; `run_record_rejected` by Stop or Acknowledge. Stop (when no operation runs) and Delete (when none is queued or running) are allowed from any reason; other requests fail with `invalid_state`.
+An `error` instance's reason SHALL allow only these exits: `crash_loop` by Start or Acknowledge; `update_interrupted` and update failures by Update, Validate or Acknowledge; `restore_interrupted` by a restore or Acknowledge; `settings_invalid` by saving valid settings; `plugin_missing` by a reload that restores the plugin; `run_record_rejected` by Stop or Acknowledge. Stop (no operation running) and Delete (none queued or running) work from any reason; other requests fail with `invalid_state`.
 
 #### Scenario: Acknowledge a crash loop
 - **WHEN** a client acknowledges an instance in `error` with `crash_loop`

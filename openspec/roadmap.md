@@ -23,7 +23,7 @@ Each milestone is one change. `init-core-platform` carries M1. The requirements,
 
 ## Next: M4 - Operations and complex configs
 
-RCON (BattlEye, Source, WebRCON) with a console UI and the `rcon` stop strategy, the `ue-ini`, `xml` and `vdf` formats, ARK:SA with repeatable config groups, SCUM (UTF-16 logs, graceful stop), Rust, and instance import and export. Main risk retired: three RCON protocols behind one console and stop path. Its change is taken from `platform-backlog` groups 18-19.
+RCON (BattlEye, Source, WebRCON) with a console UI and the `rcon` stop strategy, the `ue-ini`, `xml` and `vdf` formats, ARK:SA with repeatable config groups, SCUM (UTF-16 logs, graceful stop), Rust, instance import and export, and `ApplyConfig` (a bindings-only pass on a stopped instance, left out of M3). Main risk retired: three RCON protocols behind one console and stop path. Its change is taken from `platform-backlog` groups 18-19.
 
 ## Later
 

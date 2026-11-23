@@ -231,15 +231,195 @@ class LogSource {
   bool get isStdout => stdout;
 }
 
+/// The file formats a binding or a hook file edit may name in this version.
+const supportedConfigFormats = ['json', 'ini', 'dayz-cfg', 'kv'];
+
+/// Formats of a later version: named in a binding or an edit they are refused
+/// with `unsupported_in_this_version`.
+const laterConfigFormats = ['ue-ini', 'xml', 'vdf'];
+
+/// The most distinct files a plugin's bindings may name.
+const maxBoundFiles = 64;
+
+/// One entry of `bindings`: a setting written to one key of one file.
+class FileBinding {
+  const FileBinding({
+    required this.file,
+    required this.format,
+    required this.key,
+    required this.setting,
+    this.create = false,
+    this.template,
+    this.gameWrites = false,
+  });
+
+  factory FileBinding.fromJson(Map<String, Object?> json) => FileBinding(
+    file: json['file']! as String,
+    format: json['format']! as String,
+    key: json['key']! as String,
+    setting: json['setting']! as String,
+    create: json['create'] as bool? ?? false,
+    template: json['template'] as String?,
+    gameWrites: json['game_writes'] as bool? ?? false,
+  );
+
+  /// The templated path, relative to the instance directory.
+  final String file;
+
+  /// One of [supportedConfigFormats].
+  final String format;
+
+  /// The key path in the file.
+  final String key;
+
+  /// The top-level setting whose value is written.
+  final String setting;
+
+  /// Whether a missing file is created instead of failing the start.
+  final bool create;
+
+  /// A file of the plugin directory a missing file is created from.
+  final String? template;
+
+  /// Whether the game rewrites the file itself.
+  final bool gameWrites;
+}
+
+/// The `secret` setting that holds the instance's Game Server Login Token,
+/// named by `steam.gslt`.
+class GsltSpec {
+  const GsltSpec({required this.setting, this.required = false});
+
+  factory GsltSpec.fromJson(Map<String, Object?> json) => GsltSpec(
+    setting: json['setting']! as String,
+    required: json['required'] as bool? ?? false,
+  );
+
+  /// The name of a top-level `secret` setting.
+  final String setting;
+
+  /// Whether Start fails `gslt_required` while the setting is unset.
+  final bool required;
+}
+
+/// How a plugin's server is downloaded from Steam (`steam.login`).
+enum SteamLogin {
+  /// Always the anonymous login.
+  anonymous,
+
+  /// Needs the Steam account linked to the instance.
+  account,
+
+  /// The linked account when there is one, else the anonymous login.
+  accountOptional,
+}
+
 class SteamSpec {
   const SteamSpec({
     required this.appId,
-    this.anonymous = true,
+    this.login = SteamLogin.anonymous,
     this.sizeHintBytes,
+    this.gslt,
   });
   final int appId;
-  final bool anonymous;
+  final SteamLogin login;
+
+  /// Whether the download never uses an account.
+  bool get anonymous => login == SteamLogin.anonymous;
   final int? sizeHintBytes;
+  final GsltSpec? gslt;
+}
+
+/// Where an instance's mods come from. `url_archive` is a later version's.
+enum ModSource {
+  steamWorkshop('steam_workshop'),
+  serverManaged('server_managed');
+
+  const ModSource(this.wireName);
+
+  /// The spelling used in the manifest.
+  final String wireName;
+}
+
+/// How a mod reaches the server: a directory link, a copy, or not at all (the
+/// server fetches its own mods; role lists carry item ids).
+enum ModStage { link, copy, none }
+
+/// One entry of `mods.keys`: files of a staged mod matching [from] are placed
+/// in the directory [to].
+class ModKeyRule {
+  const ModKeyRule({required this.from, required this.to});
+
+  factory ModKeyRule.fromJson(Map<String, Object?> json) =>
+      ModKeyRule(from: json['from']! as String, to: json['to']! as String);
+
+  /// A glob over the files of the mod's content.
+  final String from;
+
+  /// A directory, relative to the instance root.
+  final String to;
+}
+
+/// The `mods` section: how a plugin's mods are acquired, staged and ordered.
+class ModsSpec {
+  const ModsSpec({
+    required this.source,
+    required this.stage,
+    required this.roles,
+    this.workshopAppId,
+    this.stageDir = defaultStageDir,
+    this.linkName = defaultLinkName,
+    this.copyFallback = false,
+    this.keys = const [],
+  });
+
+  factory ModsSpec.fromJson(Map<String, Object?> json) {
+    final source = ModSource.values.firstWhere(
+      (s) => s.wireName == json['source'],
+    );
+    return ModsSpec(
+      source: source,
+      workshopAppId: json['workshop_app_id'] as int?,
+      stage: switch (json['stage']) {
+        final String name => ModStage.values.byName(name),
+        _ => source == ModSource.serverManaged ? ModStage.none : ModStage.link,
+      },
+      stageDir: json['stage_dir'] as String? ?? defaultStageDir,
+      linkName: json['link_name'] as String? ?? defaultLinkName,
+      copyFallback: json['copy_fallback'] as bool? ?? false,
+      keys: [
+        for (final k in (json['keys'] as List<Object?>?) ?? const [])
+          ModKeyRule.fromJson(k! as Map<String, Object?>),
+      ],
+      roles: [...(json['roles']! as List<Object?>).cast<String>()],
+    );
+  }
+
+  /// The stage directory when the manifest names none.
+  static const defaultStageDir = 'server';
+
+  /// The link name template when the manifest names none.
+  static const defaultLinkName = '{{mod.name_safe}}';
+
+  final ModSource source;
+
+  /// The Steam app the workshop items belong to; `steam_workshop` only.
+  final int? workshopAppId;
+  final ModStage stage;
+
+  /// Where links or copies are made, relative to the instance root.
+  final String stageDir;
+
+  /// The template of a staged mod's name; `{{mod.name_safe}}` is its sanitised
+  /// title.
+  final String linkName;
+
+  /// Copy a mod whose link could not be created.
+  final bool copyFallback;
+  final List<ModKeyRule> keys;
+
+  /// The roles a mod can have; each is a list in the launch templates.
+  final List<String> roles;
 }
 
 /// The validated plugin manifest.
@@ -258,6 +438,8 @@ class PluginManifest {
     required this.dataPaths,
     required this.logs,
     required this.hooksTimeoutSeconds,
+    this.bindings = const [],
+    this.mods,
     this.description,
     this.steam,
   });
@@ -279,8 +461,16 @@ class PluginManifest {
           ? null
           : SteamSpec(
               appId: steam['app_id']! as int,
-              anonymous: steam['login'] != 'account',
+              login: switch (steam['login']) {
+                'account' => SteamLogin.account,
+                'account_optional' => SteamLogin.accountOptional,
+                _ => SteamLogin.anonymous,
+              },
               sizeHintBytes: steam['size_hint_bytes'] as int?,
+              gslt: switch (steam['gslt']) {
+                final Map<String, Object?> gslt => GsltSpec.fromJson(gslt),
+                _ => null,
+              },
             ),
       executables: (json['executable']! as Map<String, Object?>)
           .cast<String, String>(),
@@ -329,6 +519,14 @@ class PluginManifest {
       ],
       hooksTimeoutSeconds:
           hooks?['timeout_seconds'] as int? ?? defaultHookTimeoutSeconds,
+      bindings: [
+        for (final b in (json['bindings'] as List<Object?>?) ?? const [])
+          FileBinding.fromJson(b! as Map<String, Object?>),
+      ],
+      mods: switch (json['mods']) {
+        final Map<String, Object?> mods => ModsSpec.fromJson(mods),
+        _ => null,
+      },
     );
   }
 
@@ -357,6 +555,12 @@ class PluginManifest {
   final List<String> dataPaths;
   final List<LogSource> logs;
   final int hooksTimeoutSeconds;
+
+  /// The settings written into game files, in the manifest's order.
+  final List<FileBinding> bindings;
+
+  /// How the plugin's mods are acquired and staged; null when it has none.
+  final ModsSpec? mods;
 
   /// Operating systems with a declared executable, sorted.
   List<String> get platforms => executables.keys.toList()..sort();

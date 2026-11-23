@@ -183,11 +183,11 @@ exports.onPreStart = () => {
           run(instance, '''
 exports.onPreStart = () => ({files: [
   {path: 'cfg.json', format: 'json', patch: {a: 2}},
-  {path: 'server.ini', format: 'ini', patch: {a: 2}}]});
+  {path: 'server.xml', format: 'xml', patch: {a: 2}}]});
 '''),
           failsWith(
             'unsupported_in_this_version',
-            messageContains: 'server.ini',
+            messageContains: 'server.xml',
           ),
         );
         expect(file.readAsStringSync(), '{"a": 1}');
@@ -315,7 +315,7 @@ exports.onPreStart = () => {
   const out = [];
   out.push(String(yagura.formats.json.parse('{"a": [1, 2]}').a[1]));
   out.push(yagura.formats.json.serialize({a: 1}));
-  for (const format of ['ini', 'yaml']) {
+  for (const format of ['xml', 'yaml']) {
     try { yagura.formats[format].parse('x'); out.push('no error'); }
     catch (e) { out.push(e.code); }
   }
@@ -332,6 +332,29 @@ exports.onPreStart = () => {
         ]);
       },
     );
+
+    test('yagura.formats gets and edits ini, dayz-cfg and kv texts', () async {
+      final result = await run(makeInstance(), r'''
+exports.onPreStart = () => {
+  const out = [];
+  const ini = yagura.formats.ini;
+  out.push(ini.get('; c\n[A]\nb = 1\n', 'A.b'));
+  out.push(ini.edit('; c\n[A]\nb = 1\n', {'A.b': 2}));
+  const dayz = yagura.formats['dayz-cfg'];
+  out.push(dayz.edit('hostname = "a";\nmaxPlayers = 10;\n', {maxPlayers: 40}));
+  out.push(yagura.formats.kv.edit('RConPassword old\n', {RConPassword: 'new'}));
+  try { dayz.get('class {', 'x'); } catch (e) { out.push(e.code); }
+  return {args: out};
+};
+''');
+      expect(result.args, [
+        '1',
+        '; c\n[A]\nb = 2\n',
+        'hostname = "a";\nmaxPlayers = 40;\n',
+        'RConPassword new\n',
+        'config_parse_error',
+      ]);
+    });
 
     test('yagura.fs.readText reads a file inside the instance', () async {
       final instance = makeInstance();

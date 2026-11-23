@@ -19,3 +19,6 @@ The manifest declares bindings: each maps a setting (or a structured group) to a
 ## Consequences
 - The settings schema supports nested objects and repeatable groups so ARK's override lists are editable as tables.
 - Each parser needs a corpus of real files and a byte-identical round-trip test.
+
+## Amendment (2026-10-20, m3-steam-accounts-and-mods)
+Bindings no longer apply before `onPreStart`. Each operation makes one binder pass after its hooks have returned their edits: bindings first, then the hook edits in order (start: `onModsStaged`, then `onPreStart`; update: `onModsStaged`, then `onPostUpdate`), with one rollback over every file of the pass. Two writers to one file in two passes would each record a hash the other invalidates. Hooks therefore read bound files as they were before that operation's bindings.

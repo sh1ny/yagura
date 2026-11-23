@@ -47,6 +47,7 @@ const Mod$json = {
     },
     {'1': 'update_available', '3': 11, '4': 1, '5': 8, '10': 'updateAvailable'},
     {'1': 'last_error', '3': 12, '4': 1, '5': 9, '10': 'lastError'},
+    {'1': 'warnings', '3': 15, '4': 3, '5': 9, '10': 'warnings'},
   ],
 };
 
@@ -60,7 +61,8 @@ final $typed_data.Uint8List modDescriptor = $convert.base64Decode(
     'gEUglzaXplQnl0ZXMSPwoNbG9jYWxfdXBkYXRlZBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5U'
     'aW1lc3RhbXBSDGxvY2FsVXBkYXRlZBJBCg5yZW1vdGVfdXBkYXRlZBgKIAEoCzIaLmdvb2dsZS'
     '5wcm90b2J1Zi5UaW1lc3RhbXBSDXJlbW90ZVVwZGF0ZWQSKQoQdXBkYXRlX2F2YWlsYWJsZRgL'
-    'IAEoCFIPdXBkYXRlQXZhaWxhYmxlEh0KCmxhc3RfZXJyb3IYDCABKAlSCWxhc3RFcnJvcg==');
+    'IAEoCFIPdXBkYXRlQXZhaWxhYmxlEh0KCmxhc3RfZXJyb3IYDCABKAlSCWxhc3RFcnJvchIaCg'
+    'h3YXJuaW5ncxgPIAMoCVIId2FybmluZ3M=');
 
 @$core.Deprecated('Use listModsRequestDescriptor instead')
 const ListModsRequest$json = {

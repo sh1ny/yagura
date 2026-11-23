@@ -1,0 +1,262 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
+import 'package:test/test.dart';
+import 'package:yagurad/src/config/config_binder.dart';
+import 'package:yagurad/src/errors.dart';
+import 'package:yagurad/src/files/files.dart';
+
+import '../support/temp_support.dart';
+
+Directory makeRoot() {
+  final dir = createCanonicalTempSync('yagura_writer_test_');
+  addTearDown(() {
+    if (dir.existsSync()) dir.deleteSync(recursive: true);
+  });
+  return dir;
+}
+
+File put(Directory root, String relative, String content) {
+  final file = File(p.join(root.path, relative));
+  file.parent.createSync(recursive: true);
+  return file..writeAsStringSync(content);
+}
+
+Matcher failsWith(String reason) =>
+    throwsA(isA<YaguraException>().having((e) => e.reason, 'reason', reason));
+
+FileEdit json(String path, Object? patch) =>
+    FileEdit(path: path, format: 'json', patch: patch);
+
+void main() {
+  group('ConfigBinder edits', () {
+    test('patches a file keeping key order and formatting', () async {
+      final root = makeRoot();
+      const original = '{\n  "b": 1,\n  "a": {"x": 1, "y": 2},\n  "c": 3\n}\n';
+      final file = put(root, 'cfg.json', original);
+
+      await ConfigBinder(InstanceFs(root.path)).apply(
+        edits: [
+          json('cfg.json', {
+            'a': {'y': 20},
+            'd': true,
+          }),
+        ],
+      );
+
+      expect(
+        file.readAsStringSync(),
+        '{\n  "b": 1,\n  "a": {"x": 1, "y": 20},\n  "c": 3,\n  "d": true\n}\n',
+      );
+    });
+
+    test('creates a missing file, and its directory, pretty printed', () async {
+      final root = makeRoot();
+      await ConfigBinder(InstanceFs(root.path)).apply(
+        edits: [
+          json('new/dir/cfg.json', {
+            'a': 1,
+            'b': {'c': 2},
+          }),
+        ],
+      );
+      final content = File(p.join(root.path, 'new', 'dir', 'cfg.json'))
+          .readAsStringSync();
+      expect(content, '{\n  "a": 1,\n  "b": {\n    "c": 2\n  }\n}\n');
+    });
+
+    test('applies several edits of one file in order', () async {
+      final root = makeRoot();
+      final file = put(root, 'cfg.json', '{"a": 1}');
+      await ConfigBinder(InstanceFs(root.path)).apply(
+        edits: [
+          json('cfg.json', {'b': 2}),
+          json('./cfg.json', {'a': null, 'c': 3}),
+        ],
+      );
+      expect(jsonDecode(file.readAsStringSync()), {'b': 2, 'c': 3});
+    });
+
+    test('leaves no temporary files behind', () async {
+      final root = makeRoot();
+      put(root, 'cfg.json', '{}');
+      await ConfigBinder(InstanceFs(root.path)).apply(
+        edits: [
+          json('cfg.json', {'a': 1}),
+        ],
+      );
+      expect(root.listSync().map((e) => p.basename(e.path)), ['cfg.json']);
+    });
+
+    test('refuses a path outside the root and changes nothing', () async {
+      final root = makeRoot();
+      final file = put(root, 'cfg.json', '{"a": 1}');
+      await expectLater(
+        ConfigBinder(InstanceFs(root.path)).apply(
+          edits: [
+            json('cfg.json', {'a': 2}),
+            json('../escape.json', {'x': 1}),
+          ],
+        ),
+        failsWith('sandbox_violation'),
+      );
+      expect(file.readAsStringSync(), '{"a": 1}');
+      expect(File(p.join(root.parent.path, 'escape.json')).existsSync(), false);
+    });
+
+    test(
+      'refuses a format that is not supported and changes nothing',
+      () async {
+        final root = makeRoot();
+        final file = put(root, 'cfg.json', '{"a": 1}');
+        await expectLater(
+          ConfigBinder(InstanceFs(root.path)).apply(
+            edits: [
+              json('cfg.json', {'a': 2}),
+              const FileEdit(
+                path: 'server.xml',
+                format: 'xml',
+                patch: {'a': 1},
+              ),
+            ],
+          ),
+          throwsA(
+            isA<YaguraException>()
+                .having(
+                  (e) => e.reason,
+                  'reason',
+                  'unsupported_in_this_version',
+                )
+                .having((e) => e.message, 'message', contains('server.xml'))
+                .having((e) => e.message, 'message', contains('xml')),
+          ),
+        );
+        expect(file.readAsStringSync(), '{"a": 1}');
+        expect(File(p.join(root.path, 'server.xml')).existsSync(), false);
+      },
+    );
+
+    test(
+      'applies all edits or none when a later file is not valid JSON',
+      () async {
+        final root = makeRoot();
+        final first = put(root, 'a.json', '{"a": 1}');
+        final second = put(root, 'b.json', '{broken');
+        await expectLater(
+          ConfigBinder(InstanceFs(root.path)).apply(
+            edits: [
+              json('a.json', {'a': 2}),
+              json('b.json', {'b': 1}),
+            ],
+          ),
+          failsWith('config_parse_error'),
+        );
+        expect(first.readAsStringSync(), '{"a": 1}');
+        expect(second.readAsStringSync(), '{broken');
+      },
+    );
+
+    test('restores replaced files when a later rename fails', () async {
+      final root = makeRoot();
+      final first = put(root, 'a.json', '{"a": 1}');
+      final second = put(root, 'b.json', '{"b": 1}');
+      var renames = 0;
+      final writer = ConfigBinder(
+        InstanceFs(root.path),
+        rename: (temporary, target) {
+          if (++renames == 2) throw const FileSystemException('locked');
+          File(p.join(root.path, temporary))
+              .renameSync(p.join(root.path, target));
+        },
+      );
+      await expectLater(
+        writer.apply(
+          edits: [
+            json('a.json', {'a': 2}),
+            json('b.json', {'b': 2}),
+          ],
+        ),
+        failsWith('internal_error'),
+      );
+      expect(first.readAsStringSync(), '{"a": 1}');
+      expect(second.readAsStringSync(), '{"b": 1}');
+      expect(root.listSync().map((e) => p.basename(e.path)).toSet(), {
+        'a.json',
+        'b.json',
+      }, reason: 'temporary files are cleaned up');
+    });
+
+    test('rollback keeps a file already at the restore sibling name', () async {
+      final root = makeRoot();
+      final first = put(root, 'a.json', '{"a": 1}');
+      put(root, 'b.json', '{"b": 1}');
+      final sibling = put(root, 'a.json.yagura-restore.tmp', 'KEEP');
+      var renames = 0;
+      final writer = ConfigBinder(
+        InstanceFs(root.path),
+        rename: (temporary, target) {
+          if (++renames == 2) throw const FileSystemException('locked');
+          File(p.join(root.path, temporary))
+              .renameSync(p.join(root.path, target));
+        },
+      );
+      await expectLater(
+        writer.apply(
+          edits: [
+            json('a.json', {'a': 2}),
+            json('b.json', {'b': 2}),
+          ],
+        ),
+        failsWith('internal_error'),
+      );
+      expect(first.readAsStringSync(), '{"a": 1}');
+      expect(sibling.readAsStringSync(), 'KEEP');
+    });
+
+    test('refuses an edit whose output exceeds the file size limit', () async {
+      final root = makeRoot();
+      final small = '{"a": "${'x' * 64}"}';
+      final file = put(root, 'cfg.json', small);
+      final big = 'y' * (ConfigBinder.maxFileBytes + 1);
+
+      await expectLater(
+        ConfigBinder(InstanceFs(root.path)).apply(
+          edits: [
+            json('cfg.json', {'a': big}),
+            json('new.json', {'a': big}),
+          ],
+        ),
+        failsWith('file_too_large'),
+      );
+      expect(file.readAsStringSync(), small);
+      expect(File(p.join(root.path, 'new.json')).existsSync(), isFalse);
+    });
+
+    test('refuses an edit through a link to outside the root', () async {
+      final root = makeRoot();
+      final outside = makeRoot();
+      final target = put(outside, 'server.json', '{"a": 1}');
+      final link = p.join(root.path, 'cfg');
+      try {
+        Link(link).createSync(outside.path);
+      } on FileSystemException {
+        markTestSkipped('this account cannot create links');
+        return;
+      }
+      await expectLater(
+        ConfigBinder(InstanceFs(root.path)).apply(
+          edits: [
+            json('cfg/server.json', {'a': 2}),
+          ],
+        ),
+        throwsA(
+          isA<YaguraException>()
+              .having((e) => e.reason, 'reason', 'sandbox_violation')
+              .having((e) => e.message, 'message', contains('cfg/server.json')),
+        ),
+      );
+      expect(target.readAsStringSync(), '{"a": 1}');
+    });
+  });
+}

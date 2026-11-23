@@ -26,9 +26,9 @@ void main() {
   test('service_not_built_yet', () async {
     final env = TestEnv();
     final api = await ApiHarness.start(env);
-    final mods = pb.ModsClient(api.channel);
+    final rcon = pb.RconClient(api.channel);
 
-    final error = await failureOf(mods.listMods(pb.ListModsRequest()));
+    final error = await failureOf(rcon.execute(pb.ExecuteRequest()));
 
     expect(error.code, StatusCode.unimplemented);
     expect(errorDetailOf(error)!.reason, 'not_implemented');

@@ -71,6 +71,19 @@ class OperationsClient extends $grpc.Client {
     return $createUnaryCall(_$respondToPrompt, request, options: options);
   }
 
+  /// Snapshot of every pending prompt on the daemon (including those of account
+  /// operations that belong to no instance), then each prompt raised or
+  /// resolved. Sends resync_required and a new snapshot when the subscriber
+  /// fell more than 256 events behind.
+  $grpc.ResponseStream<$0.PromptEvent> watchPrompts(
+    $0.WatchPromptsRequest request, {
+    $grpc.CallOptions? options,
+  }) {
+    return $createStreamingCall(
+        _$watchPrompts, $async.Stream.fromIterable([request]),
+        options: options);
+  }
+
   // method descriptors
 
   static final _$getOperation =
@@ -98,6 +111,11 @@ class OperationsClient extends $grpc.Client {
           '/yagura.v1.Operations/RespondToPrompt',
           ($0.RespondToPromptRequest value) => value.writeToBuffer(),
           $0.Operation.fromBuffer);
+  static final _$watchPrompts =
+      $grpc.ClientMethod<$0.WatchPromptsRequest, $0.PromptEvent>(
+          '/yagura.v1.Operations/WatchPrompts',
+          ($0.WatchPromptsRequest value) => value.writeToBuffer(),
+          $0.PromptEvent.fromBuffer);
 }
 
 @$pb.GrpcServiceName('yagura.v1.Operations')
@@ -146,6 +164,14 @@ abstract class OperationsServiceBase extends $grpc.Service {
         ($core.List<$core.int> value) =>
             $0.RespondToPromptRequest.fromBuffer(value),
         ($0.Operation value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.WatchPromptsRequest, $0.PromptEvent>(
+        'WatchPrompts',
+        watchPrompts_Pre,
+        false,
+        true,
+        ($core.List<$core.int> value) =>
+            $0.WatchPromptsRequest.fromBuffer(value),
+        ($0.PromptEvent value) => value.writeToBuffer()));
   }
 
   $async.Future<$0.Operation> getOperation_Pre($grpc.ServiceCall $call,
@@ -188,4 +214,12 @@ abstract class OperationsServiceBase extends $grpc.Service {
 
   $async.Future<$0.Operation> respondToPrompt(
       $grpc.ServiceCall call, $0.RespondToPromptRequest request);
+
+  $async.Stream<$0.PromptEvent> watchPrompts_Pre($grpc.ServiceCall $call,
+      $async.Future<$0.WatchPromptsRequest> $request) async* {
+    yield* watchPrompts($call, await $request);
+  }
+
+  $async.Stream<$0.PromptEvent> watchPrompts(
+      $grpc.ServiceCall call, $0.WatchPromptsRequest request);
 }

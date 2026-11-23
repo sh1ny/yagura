@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:yagura_proto/yagura_proto.dart';
@@ -16,10 +17,15 @@ class SettingsEditor extends ConsumerStatefulWidget {
     super.key,
     required this.daemonId,
     required this.instance,
+    this.invalidFields = const {},
   });
 
   final String daemonId;
   final Instance instance;
+
+  /// Fields the daemon says no longer validate (a plugin update), with the
+  /// reason; they are marked in the form until the settings are saved.
+  final Map<String, String> invalidFields;
 
   @override
   ConsumerState<SettingsEditor> createState() => _SettingsEditorState();
@@ -30,7 +36,7 @@ class _SettingsEditorState extends ConsumerState<SettingsEditor> {
   String? _loadError;
   SettingsSchema? _schema;
   int _schemaVersion = 0;
-  Map<String, String> _violations = const {};
+  late Map<String, String> _violations = widget.invalidFields;
   String? _error;
 
   /// After a `revision_conflict`: the fields where the saved settings differ
@@ -50,6 +56,14 @@ class _SettingsEditorState extends ConsumerState<SettingsEditor> {
     super.initState();
     _editing = widget.instance;
     _load();
+  }
+
+  @override
+  void didUpdateWidget(SettingsEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!mapEquals(oldWidget.invalidFields, widget.invalidFields)) {
+      _violations = widget.invalidFields;
+    }
   }
 
   Future<void> _load() async {

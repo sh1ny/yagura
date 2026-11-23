@@ -22,6 +22,12 @@ final _fileCall = RegExp(
 /// Files under `lib/src` allowed to make those calls, and why.
 const _allowed = <String, String>{
   // Daemon-owned locations, none of them inside an instance directory.
+  'content/content_store.dart':
+      'the content store and its staging area in <data>/content; the SteamCMD '
+      'tree is read through ConfinedFs.copyOut, which refuses links',
+  'mods/mod_keys.dart':
+      'reads the key files of a mod in the content store (<data>/content); '
+      'the instance side goes through InstanceFs',
   'host/data_dir_lock.dart': 'the lock file in the data directory',
   'firewall/powershell_firewall.dart':
       'the request files for PowerShell in <data>/tmp or the install folder tmp, '
@@ -180,6 +186,6 @@ void main() {
     expect(source('instances/instance_file.dart'), contains('InstanceFs'));
     expect(source('instances/lifecycle.dart'), contains('InstanceFs'));
     expect(source('hooks/host_api.dart'), contains('ConfinedFs'));
-    expect(source('files/file_edit_writer.dart'), contains('ConfinedFs'));
+    expect(source('config/config_binder.dart'), contains('ConfinedFs'));
   });
 }

@@ -41,8 +41,14 @@ flowchart LR
     BIND --> FMT[Format parsers]
     HW -->|pure host functions| FMT
     MODS --> STEAM
+    MODS --> WSC[Workshop client]
+    STEAM --> ACC[Steam account service]
+    ACC --> PB[Prompt broker]
+    STEAM --> PB
+    OPS --> PB
     MODS --> CS[(Content store<br/>versioned, immutable)]
     PROC --> LOGS[Log hub]
+    LOGS --> MASK[Secret masker]
     INST --> RCON[RCON adapters]
     STATE[(SQLite state + DPAPI secrets)]
   end
@@ -60,7 +66,7 @@ flowchart LR
   FW -->|PowerShell NetSecurity| WFW[(Windows Firewall)]
   SCMD --> SteamNet[(Steam)]
   SVC[[WinSW service]] -->|starts the version directory exe| D
-  MODS -->|workshop metadata HTTP| SteamNet
+  WSC -->|workshop metadata HTTP| SteamNet
   IFS -->|writes| IDIR[(Instance dirs<br/>+ instance.json)]
 ```
 
@@ -73,9 +79,13 @@ flowchart LR
 | Instance manager | Instance CRUD, revisions, state machine; orchestrates install/update/start/stop | instances, settings, revisions, `instance.json` | Plugin registry, binder, mods, process, steam, firewall, snapshots |
 | Plugin registry | Discovers and validates plugins, serves schemas, explicit reload, settings re-validation | loaded manifests (memory) | `plugin.yaml` + JSON Schema (ADR 0002) |
 | Hook runner | Runs one hook in a fresh worker isolate with deadline and memory cap; returns file edits to the binder | none | Hook contract: JSON in/out, pure host API (ADR 0003) |
-| Config binder | Sole writer of bound files and hook-requested edits; detects external edits | last-applied hashes per file | Format parsers (ADR 0004) |
+| Config binder | Sole writer of bound files and hook-requested edits (settings and secrets bound into files, 64 files per instance); detects external edits | last-applied hashes per file | Format parsers (ADR 0004) |
 | Mod pipeline | Resolve, acquire (single-flight), stage (junctions), keys, load order, update checks | instance-mod rows with pinned versions | Steam service, content store (ADR 0005) |
 | Steam service | SteamCMD installs per account (one run at a time each), run as the `yagura-steam` account in service mode, app/workshop downloads, Guard relay | SteamCMD dirs, account rows | SteamCMD args and output patterns (ADR 0014) |
+| Steam account service | Adds, re-authenticates and removes Steam accounts (max 32): one SteamCMD installation per account, login as an operation, remembered password in the secret store, startup removal of `adding` rows | account rows, `steam:<id>` secrets, account installations | Steam service, prompt broker, SecretStore, SQLite |
+| Prompt broker | Raises Steam Guard prompts (one per operation step, expiry 15 min for codes and 2 min for mobile approval), first answer wins, publishes raised/resolved to `Operations.WatchPrompts` (32 subscribers, 256 events behind) | pending prompts (memory; lost on restart) | `Operations.RespondToPrompt` and `WatchPrompts` (`yagura.v1`) |
+| Workshop client | Workshop item metadata (`GetPublishedFileDetails`, batches of 100, 1 request/s per daemon, 15 s timeout) for names, sizes and `time_updated` | none | Steam Web API over HTTP; base URL configurable for tests |
+| Secret masker | Replaces secret values (current and replaced within 24 h) with `***` in log lines and operation output before they leave the log hub | masker per instance (memory, rebuilt from the secret store) | SecretStore, Log hub |
 | Instance file boundary (InstanceFs over ConfinedFs) | Every daemon file access under an instance directory or the SteamCMD directory: opened relative to the root handle, reparse points refused (`sandbox_violation`) | none | Win32 `NtCreateFile` with final-path check (ADR 0015) |
 | Process supervisor | Native spawn via launcher and relay, stop strategies, exit waiters, re-attach, process identity verification before any signal or kill | run records (relay/server PID, exe, start time) | Relay files, Win32/POSIX process APIs (ADR 0009) |
 | Save snapshots | Copies of declared `data_paths` before update and before delete with files | snapshot rows, `snapshots/` | Filesystem |
@@ -152,10 +162,16 @@ Start from `error: settings_invalid` or `plugin_missing` fails `invalid_state`. 
 | Hook worker slots | Hook runner | Daemon process | 4 slots; a timed-out call keeps its slot until its isolate exits; an isolate not gone 5 s after the watchdog is leaked and keeps the slot; at 2 leaked, hooks fail `hook_runtime_degraded` until restart | In memory; `GetHealth` reports leaked workers |
 | Operations + history | Operation runner | 30 days or 1,000 per instance | Pruned at startup and daily | SQLite |
 | Loaded manifests | Plugin registry | Daemon process | Explicit `ReloadPlugins` only; operations use a snapshot | Plugin files on disk |
-| Content store versions | Steam service (publishes), mod pipeline (GC) | Until unreferenced for 7 days | Immutable once published | Disk |
+| Content store versions | Mod pipeline (publishes and GC) | Until unreferenced for 7 days | Immutable once published | Disk |
 | Instance-mod rows (`staged_version`, `desired_version`, order, staged name; GC treats both versions as references) | Mod pipeline | Until removed | — | SQLite |
 | Bound file hashes | Config binder | Per bound file | Updated after each apply | SQLite |
 | SteamCMD installs + cached logins | Steam service | Per Steam account | Re-login on expiry | SteamCMD's own files (ACL'd) |
+| Steam account rows and status | Steam account service | Until removed | `reauth_required` on an expired login; `ready` on a successful login; `adding` rows deleted at startup | SQLite |
+| Remembered Steam password (`steam:<id>`) | SecretStore, called by the account service | Until reauth without remember, or account removal | Replaced on reauth | SQLite `secrets` (DPAPI) |
+| Pending prompts | Prompt broker | One operation step | Resolved by first answer, expiry or cancel; lost on daemon restart (the operation becomes `interrupted`) | Memory |
+| Mod update flags and check status | Mod pipeline | Until the next check | Each check | SQLite |
+| Replaced secrets for masking | SecretStore | 24 h | Pruned hourly | SQLite (DPAPI) |
+| Secret masker | Log hub | Per instance | Rebuilt on secret change and at startup | Memory, from the secret store |
 | Secrets (CA key, Steam pw, RCON pw, GSLT, `yagura-srv` and `yagura-steam` passwords) | SecretStore, called by the owning component | Until replaced/deleted | A row whose `scope_sid` is not the daemon's own is deleted and re-created in service mode (secret settings become unset), and refused in dev mode | SQLite `secrets` table: DPAPI blobs, user scope of LocalSystem, each row with its `scope_sid` (ADR 0011) |
 | Devices, pairing codes | Pairing + CA | Device: until revoked; code: 10 min, single use | Expired codes pruned | SQLite |
 | Owned firewall rules | Firewall reconciler | While the port is wanted | Reconcile at startup, on port change, on request | Windows Firewall (actual) vs SQLite (desired) |
@@ -213,6 +229,14 @@ Startup separates fatal steps from degraded ones:
 | Backlog request | 5,000 lines | Truncated with marker | — | Client |
 | Instance watch subscribers | 32 per daemon; 1,000 events or 8 MiB behind per subscriber | `resync_required` + new snapshot | — | Client |
 | Operations history | 1,000 per instance / 30 days | Pruned | — | — |
+| Steam accounts | 32 per daemon, `adding` rows included; 10 queued operations per account | `RESOURCE_EXHAUSTED` `too_many_accounts` / `queue_full` | — | Client |
+| Mods per instance | 256 | `INVALID_ARGUMENT` `too_many_mods` | — | Client |
+| Pending prompts | 1 per operation; expiry 15 min (codes), 2 min (mobile approval); answer 16 characters `[A-Za-z0-9]` | A second raise fails the operation / `prompt_answer_invalid` | Operation fails on expiry | Client |
+| `WatchPrompts` subscribers | 32 per daemon; 256 events behind | Refused / `resync_required` + new snapshot | — | Client |
+| Bound files per instance | 64 distinct files; each ≤ 16 MiB | Plugin rejected at load / `file_too_large` | — | Client plugin list, operation error |
+| Key rules | ≤ 1,024 files per mod rule | `key_rule_too_broad` | — | Client |
+| Workshop metadata | 100 items per request, 1 request/s per daemon, 15 s per request | Batched and paced | — | — |
+| Mod update check | Every 6 h ± 30 min (first 10 min after start); failure backoff 5 min doubling to 6 h | Previous flags kept, `update_check: unknown` | — | Client |
 | Operation events | Progress coalesced per step; other events 2,000 per operation | `events_dropped` marker on resume | — | Client |
 | Audit log (mutating + auth calls only) | 100,000 rows | Oldest pruned | — | — |
 | RCON | 1 session per instance, 8 console subscribers, 10 s command timeout | Rejected | Reconnect 1→30 s backoff | Client console |

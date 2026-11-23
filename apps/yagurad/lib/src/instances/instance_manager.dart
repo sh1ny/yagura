@@ -12,9 +12,13 @@ import '../files/files.dart';
 import '../firewall/firewall_backend.dart';
 import '../firewall/firewall_reconciler.dart';
 import '../firewall/rule_names.dart';
+import '../config/bound_file_store.dart';
 import '../hooks/hooks.dart';
+import '../mods/mod_entry.dart';
+import '../mods/mods_service.dart';
 import '../host/acl_layout.dart';
 import '../host/data_directory.dart';
+import '../host/replaced_secrets.dart';
 import '../host/secret_store.dart';
 import '../operations/operations.dart';
 import '../plugins/plugin_registry.dart';
@@ -46,10 +50,13 @@ class InstanceManager {
     required this.os,
     required this.processHost,
     required this.steam,
+    required this.accounts,
     required this.hooks,
     required this.snapshotter,
     required this.runs,
+    required this.boundFiles,
     this.acls,
+    this.replacedSecrets,
     HealthEvaluator? healthEvaluator,
     this.restartDelay = const Duration(seconds: 5),
     this.autostartInterval = const Duration(seconds: 10),
@@ -62,6 +69,12 @@ class InstanceManager {
     lifecycle = Lifecycle(this);
     for (final record in store.loadAll()) {
       _records[record.id] = record;
+    }
+    if (replacedSecrets != null) {
+      _pruneTimer = Timer.periodic(
+        const Duration(hours: 1),
+        (_) => pruneReplacedSecrets(),
+      );
     }
   }
 
@@ -83,6 +96,9 @@ class InstanceManager {
   final String os;
   final ProcessHost processHost;
   final SteamService steam;
+
+  /// The Steam accounts instances may use.
+  final SteamAccounts accounts;
   final HookHost hooks;
   final Snapshotter snapshotter;
 
@@ -90,9 +106,16 @@ class InstanceManager {
   /// [Lifecycle] is their only writer.
   final RunStore runs;
 
+  /// The hashes of the configuration files the binder wrote.
+  final BoundFileStore boundFiles;
+
   /// Writes the instance DACL at create and for older instances; null in
   /// development mode, which manages no ACLs.
   final InstanceAcls? acls;
+
+  /// The values secret settings held before a change, for the log masker;
+  /// null keeps none.
+  final ReplacedSecrets? replacedSecrets;
   final HealthEvaluator healthEvaluator;
 
   /// How long after a crash the instance is started again.
@@ -112,6 +135,15 @@ class InstanceManager {
   /// the daemon in service mode, null where the daemon manages no rules.
   FirewallReconciler? firewall;
 
+  /// Called with the instance id after a secret of the instance was set,
+  /// replaced or deleted, so the log hub builds its masker again (design D11);
+  /// set by the daemon once the log hub exists.
+  void Function(String instanceId)? secretsChanged;
+
+  /// Called after replaced secrets past their 24 hours were pruned, when every
+  /// masker has to be built again.
+  void Function()? maskedSecretsExpired;
+
   /// Opens a `log_match` watch on [source] of an instance (set by the daemon
   /// once the log hub exists).
   Future<LogMatchWatch> Function(
@@ -127,11 +159,19 @@ class InstanceManager {
   final DateTime Function() clock;
   late final Lifecycle lifecycle;
 
+  /// The mod pipeline's instance side (design D7); set by the daemon.
+  ModsService? mods;
+
   final _records = <String, InstanceRecord>{};
   final _events = StreamController<InstanceEvent>.broadcast();
   final _pluginsReloaded = StreamController<void>.broadcast();
   final _recoveryNotices = <InstanceNotice>[];
   final _restartTimers = <String, Timer>{};
+
+  /// The settings migration queued for each instance and the plugin it moves
+  /// the settings to (design D10).
+  final _pendingMigrations = <String, _PendingMigration>{};
+  Timer? _pruneTimer;
   var _createTail = Future<void>.value();
   var _closed = false;
 
@@ -207,6 +247,9 @@ class InstanceManager {
       pid: record.server?.pid ?? 0,
       health: record.health,
       revision: record.revision,
+      modsUpdateAvailable: record.listedMods
+          .where((m) => m.updateAvailable)
+          .length,
       firewallStatus: switch (firewall) {
         null => 'disabled',
         final f when f.isDegraded(record.id) => 'degraded',
@@ -472,7 +515,11 @@ class InstanceManager {
         previous == null ||
         previous.length != bytes.length ||
         !_sameBytes(previous, bytes);
+    if (changed && previous != null) {
+      replacedSecrets?.record(id, key, previous);
+    }
     secrets.put(secretId, bytes, instanceId: id, setting: key);
+    if (changed) secretsChanged?.call(id);
     return _secretChanged(record, changed: changed);
   }
 
@@ -490,8 +537,39 @@ class InstanceManager {
     _requireSecretSetting(record, key);
     final secretId = secretIdFor(id, key);
     final changed = secrets.contains(secretId);
+    if (changed && replacedSecrets != null) {
+      Uint8List? previous;
+      try {
+        previous = secrets.get(secretId);
+      } on YaguraException {
+        // A value that cannot be opened cannot be masked either.
+      }
+      if (previous != null) replacedSecrets!.record(id, key, previous);
+    }
     secrets.delete(secretId);
+    if (changed) secretsChanged?.call(id);
     return _secretChanged(record, changed: changed);
+  }
+
+  /// The secret values of instance [id] to hide in its log (design D11): the
+  /// current ones and those replaced or deleted within 24 hours.
+  List<String> secretValuesToMask(String id) {
+    final values = <String>[];
+    if (_records[id] case final record?) {
+      for (final name in setSecretsOf(record)) {
+        final bytes = secrets.get(secretIdFor(id, name));
+        if (bytes != null) values.add(utf8.decode(bytes, allowMalformed: true));
+      }
+    }
+    return [...values, ...?replacedSecrets?.recent(id)];
+  }
+
+  /// Deletes the replaced secrets older than 24 hours (hourly), and has the
+  /// maskers built again without them.
+  void pruneReplacedSecrets() {
+    if (_closed) return;
+    final pruned = replacedSecrets?.prune() ?? 0;
+    if (pruned > 0) maskedSecretsExpired?.call();
   }
 
   /// A running server keeps the old value until it restarts, so a change of
@@ -536,9 +614,21 @@ class InstanceManager {
   /// Fails `secret_required` naming the `required` secret settings of
   /// [record] that are unset.
   void requireSecrets(InstanceRecord record) {
-    final defs = registry.find(record.pluginId)?.manifest.settings;
+    final manifest = registry.find(record.pluginId)?.manifest;
+    final defs = manifest?.settings;
     if (defs == null) return;
     final set = setSecretsOf(record);
+    // The token comes first: its setting may also be `required`, and the
+    // message that names Steam's login token is the useful one.
+    if (manifest?.steam?.gslt case GsltSpec(:final setting, required: true)
+        when !set.contains(setting)) {
+      throw YaguraException(
+        'gslt_required',
+        'the game server login token $setting is not set; set it with '
+            'SetSecret before starting',
+        details: {'instanceId': record.id, 'settings': setting},
+      );
+    }
     final missing = [
       for (final MapEntry(key: name, value: def) in defs.entries)
         if (def.type == SettingType.secret &&
@@ -721,6 +811,93 @@ class InstanceManager {
       id = 'inst-${hex()}';
     }
     return id;
+  }
+
+  // ---- mods ---------------------------------------------------------------
+
+  /// The record of [id] for the mods service, which keeps it up to date.
+  InstanceRecord requireRecord(String id) => _require(id);
+
+  /// Every record, for the update check.
+  List<InstanceRecord> get records => _records.values.toList();
+
+  ModsService get modsService =>
+      mods ??
+      (throw YaguraException('internal_error', 'the mods service is not set'));
+
+  /// Fails `revision_required` or `revision_conflict` like a settings save.
+  void checkRevision(InstanceRecord record, int? expected) =>
+      _checkRevision(record, expected);
+
+  /// Commits [mods] as the instance's list: a configuration change, so the
+  /// revision increments with it and `instance.json` is rewritten (design D7).
+  /// The record is as it was when the commit fails.
+  void commitMods(InstanceRecord record, List<ModEntry> mods) {
+    final before = record.mods;
+    record.mods = mods;
+    try {
+      _commit(record, revisedFrom: record.revision);
+    } on Object {
+      record.mods = before;
+      rethrow;
+    }
+  }
+
+  /// The `{staged path -> content directory}` of the instance's linked mods,
+  /// which `InstanceFs` follows read-only (design D7, ADR 0015).
+  Map<String, String> recordedJunctions(InstanceRecord record) {
+    final spec = registry.find(record.pluginId)?.manifest.mods;
+    if (spec == null || record.mods.isEmpty) return const {};
+    return {
+      for (final mod in record.mods)
+        if (mod.stageKind == 'link' &&
+            mod.stagedName.isNotEmpty &&
+            mod.stagedVersion.isNotEmpty)
+          p.posix.join(spec.stageDir, mod.stagedName): stagedVersionPath(
+            dataDirectory.contentPath,
+            spec,
+            mod,
+          ),
+    };
+  }
+
+  InstanceRecord _modsRecord(String id) {
+    final record = _require(id);
+    if (requirePlugin(record).manifest.mods == null) {
+      throw ModsService.modsNotSupported(record);
+    }
+    return record;
+  }
+
+  Operation applyMods(String id) {
+    final record = _modsRecord(id);
+    _guarded(id, OperationKind.applyMods);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.applyMods,
+      body: (context) => lifecycle.applyMods(context, record.id),
+    );
+  }
+
+  /// Checks the workshop for newer versions of the mods of [id], or of every
+  /// instance when it is empty (an operation of the host's own queue).
+  Operation checkModUpdates(String id) {
+    if (id.isNotEmpty) _modsRecord(id);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.checkModUpdates,
+      body: (context) => modsService.checkUpdates(context, instanceId: id),
+    );
+  }
+
+  Operation updateMods(String id, List<String> items) {
+    final record = _modsRecord(id);
+    modsService.updateTargets(record, items);
+    return runner.enqueue(
+      instanceId: id,
+      kind: OperationKind.updateMods,
+      body: (context) => lifecycle.updateMods(context, record.id, items),
+    );
   }
 
   // ---- lifecycle requests -------------------------------------------------
@@ -1060,6 +1237,24 @@ class InstanceManager {
       details: {'instanceId': record.id, 'state': state.wireName},
     );
 
+    // Only a failed migration leaves the recorded version behind the loaded
+    // one (design D10); Stop and delete still work, so the server can be ended
+    // and the instance removed.
+    final loaded = registry.find(record.pluginId)?.manifest.version;
+    if (loaded != null &&
+        loaded != record.pluginVersion &&
+        kind != OperationKind.stop &&
+        kind != OperationKind.delete &&
+        kind != OperationKind.migrateSettings) {
+      throw YaguraException(
+        'invalid_state',
+        'instance "${record.name}" is $described: its settings were not '
+            'migrated to plugin version $loaded ($settingsInvalidReason); '
+            'save valid settings',
+        details: {'instanceId': record.id, 'state': state.wireName},
+      );
+    }
+
     switch (kind) {
       case OperationKind.install:
         if (state != InstanceState.notInstalled) {
@@ -1130,6 +1325,23 @@ class InstanceManager {
             state == InstanceState.notInstalled ||
             state == InstanceState.error;
         if (!ok) refuse('invalid_state', 'Delete needs it stopped');
+      case OperationKind.migrateSettings:
+        break;
+      case OperationKind.addSteamAccount || OperationKind.reauthSteamAccount:
+        // Account operations belong to no instance.
+        break;
+      case OperationKind.applyMods:
+        if (state == InstanceState.running || state == InstanceState.starting) {
+          refuse('instance_running', 'mods are staged while it is stopped');
+        }
+        if (state == InstanceState.notInstalled) {
+          refuse('not_installed', 'install it first');
+        }
+        if (state != InstanceState.stopped) {
+          refuse('invalid_state', 'ApplyMods needs it stopped');
+        }
+      case OperationKind.checkModUpdates || OperationKind.updateMods:
+        break;
     }
   }
 
@@ -1182,6 +1394,7 @@ class InstanceManager {
   void removeRows(InstanceRecord record) {
     if (_closed) return;
     cancelRestart(record.id);
+    _pendingMigrations.remove(record.id);
     store.delete(record.id);
     _records.remove(record.id);
     if (!_events.isClosed) _events.add(InstanceRemoved(record.id));
@@ -1283,7 +1496,9 @@ class InstanceManager {
 
   /// Applies the plugin registry to every instance: `plugin_missing` for a
   /// stopped instance whose plugin is gone, back to `stopped` when it is
-  /// restored, and settings re-validation against the loaded manifest.
+  /// restored, a queued settings migration for an instance whose recorded
+  /// plugin version is not the loaded one (design D10), and settings
+  /// re-validation against the loaded manifest for the others.
   void reconcilePlugins({Set<String> pluginIds = const {}}) {
     for (final record in _records.values.toList()) {
       if (pluginIds.isNotEmpty && !pluginIds.contains(record.pluginId)) {
@@ -1305,18 +1520,19 @@ class InstanceManager {
           record.stateReason == pluginMissingReason) {
         setState(record, InstanceState.stopped);
       }
+      if (record.pluginVersion != plugin.manifest.version) {
+        _queueMigration(record, plugin);
+        continue;
+      }
       final validation = validateSettings(plugin.manifest, record.settings);
       if (validation.isValid) {
         // The normalized values carry the defaults of fields the plugin added.
         final normalized = validation.values;
         final changed = jsonEncode(normalized) != jsonEncode(record.settings);
-        if (record.settingsInvalid ||
-            changed ||
-            record.pluginVersion != plugin.manifest.version) {
+        if (record.settingsInvalid || changed) {
           record
             ..settingsInvalid = false
-            ..settings = normalized
-            ..pluginVersion = plugin.manifest.version;
+            ..settings = normalized;
           if (changed &&
               (record.state == InstanceState.running ||
                   record.state == InstanceState.starting)) {
@@ -1337,6 +1553,80 @@ class InstanceManager {
         notice(record.id, settingsInvalidReason, message);
       }
     }
+  }
+
+  // ---- settings migration (design D10) --------------------------------------
+
+  /// Queues the migration of [record] to [plugin] at the head of its queue. A
+  /// migration that has not started yet is retargeted instead of queueing
+  /// another; one that runs keeps the plugin it took, and a new one follows it.
+  void _queueMigration(InstanceRecord record, LoadedPlugin plugin) {
+    final pending = _pendingMigrations[record.id];
+    if (pending != null &&
+        runner.get(pending.operationId)?.status == OperationStatus.queued) {
+      pending.plugin = plugin;
+      return;
+    }
+    final operation = runner.enqueue(
+      instanceId: record.id,
+      kind: OperationKind.migrateSettings,
+      body: (context) => lifecycle.migrateSettings(context, record.id),
+    );
+    _pendingMigrations[record.id] = _PendingMigration(operation.id, plugin);
+    _emitChanged(record);
+  }
+
+  /// The plugin a migration that starts now moves [record] to.
+  LoadedPlugin takeMigrationTarget(InstanceRecord record) {
+    final pending = _pendingMigrations.remove(record.id);
+    return pending?.plugin ?? requirePlugin(record);
+  }
+
+  /// The error for settings that do not validate against the loaded manifest.
+  YaguraException settingsInvalidError(List<SettingError> errors) =>
+      _settingsInvalid(errors);
+
+  /// Commits migrated [settings] and the plugin [version] they are for in one
+  /// revisioned transaction, and rewrites `instance.json`. An instance that
+  /// was `error: settings_invalid` is `stopped` again.
+  void completeMigration(
+    InstanceRecord record,
+    Map<String, Object?> settings,
+    String version,
+  ) {
+    if (_closed) return;
+    final changed = jsonEncode(settings) != jsonEncode(record.settings);
+    record
+      ..settings = settings
+      ..pluginVersion = version
+      ..settingsInvalid = false;
+    if (changed &&
+        (record.state == InstanceState.running ||
+            record.state == InstanceState.starting)) {
+      record.restartRequired = true;
+    }
+    if (record.state == InstanceState.error &&
+        record.stateReason == settingsInvalidReason) {
+      _applyState(record, InstanceState.stopped);
+    }
+    _commit(record, revisedFrom: record.revision);
+  }
+
+  /// Leaves the stored settings and version as they are and marks [record]
+  /// `settings_invalid`: a stopped instance becomes `error`, any other keeps
+  /// its state and gets the flag. [message] names the fields or the hook
+  /// error.
+  void migrationFailed(InstanceRecord record, String message) {
+    if (_closed) return;
+    if (record.state == InstanceState.stopped) {
+      setState(record, InstanceState.error, reason: settingsInvalidReason);
+    } else if (!(record.state == InstanceState.error &&
+            record.stateReason == settingsInvalidReason) &&
+        !record.settingsInvalid) {
+      record.settingsInvalid = true;
+      saveChanges(record);
+    }
+    notice(record.id, settingsInvalidReason, message);
   }
 
   // ---- recovery -----------------------------------------------------------
@@ -1865,6 +2155,7 @@ class InstanceManager {
   /// Stops announcing changes. Operations still running change nothing more.
   Future<void> close() async {
     _closed = true;
+    _pruneTimer?.cancel();
     for (final timer in _restartTimers.values) {
       timer.cancel();
     }
@@ -1875,4 +2166,13 @@ class InstanceManager {
     await _events.close();
     await _pluginsReloaded.close();
   }
+}
+
+/// The migration queued for an instance: its operation and the plugin it
+/// moves the settings to (a repeat reload replaces the plugin).
+class _PendingMigration {
+  _PendingMigration(this.operationId, this.plugin);
+
+  final String operationId;
+  LoadedPlugin plugin;
 }

@@ -10,6 +10,7 @@ import 'package:yagurad/src/operations/operations.dart';
 
 import '../support/api_support.dart';
 import '../support/daemon_support.dart';
+import '../support/steam_account_support.dart';
 
 /// Starts an operation on [instanceId] whose body is [body].
 pb.Operation startOperation(
@@ -169,6 +170,75 @@ void main() {
       reason: 'then live events',
     );
     expect(events.last.hasFinished(), isTrue);
+
+    // The snapshot also carries the prompt of an operation that waits for
+    // input, whose events were dropped.
+    final rig = await AccountRig.start(maxRetainedOperationEvents: 3);
+    rig.steam.script.rules([loginRule(2, 'email_code_asked')]);
+    final started = await rig.add('srvadmin');
+    final waiting = await rig.waitForPrompt(started.id);
+    final later = EventLog.of(rig.api, started.id, after: 1);
+    await eventually(
+      () => later.events.any((e) => e.hasSnapshot()),
+      reason: 'the snapshot',
+    );
+    expect(later.events.first.hasEventsDropped(), isTrue);
+    expect(
+      later.events[1].snapshot.pendingPrompt.id,
+      waiting.pendingPrompt.id,
+      reason: 'the current operation, including its pending prompt',
+    );
+  });
+
+  test('pending_prompt_after_reconnect', () async {
+    // Only the last events are retained, so a client that comes back finds
+    // the start of the operation, and its prompt event, gone.
+    final rig = await AccountRig.start(maxRetainedOperationEvents: 3);
+    rig.steam.script.rules([
+      loginRule(3, 'code_accepted'),
+      loginRule(2, 'email_code_asked'),
+    ]);
+    final started = await rig.add('srvadmin');
+    final waiting = await rig.waitForPrompt(started.id);
+    final promptId = waiting.pendingPrompt.id;
+
+    final resumed = EventLog.of(rig.api, started.id, after: 1);
+    await eventually(
+      () => resumed.events.any((e) => e.hasSnapshot()),
+      reason: 'the snapshot',
+    );
+
+    final dropped = resumed.events.first;
+    expect(dropped.hasEventsDropped(), isTrue);
+    expect(dropped.eventsDropped.fromSequence.toInt(), 2);
+    final snapshot = resumed.events[1].snapshot;
+    expect(
+      snapshot.status,
+      pb.OperationStatus.OPERATION_STATUS_WAITING_FOR_INPUT,
+    );
+    expect(snapshot.pendingPrompt.id, promptId);
+    expect(snapshot.pendingPrompt.kind, 'email');
+    expect(snapshot.pendingPrompt.steamAccount, 'srvadmin');
+    expect(snapshot.pendingPrompt.hasExpiresAt(), isTrue);
+
+    // It can answer the prompt it learned of from the snapshot.
+    await rig.api.operations.respondToPrompt(
+      pb.RespondToPromptRequest(
+        operationId: started.id,
+        promptId: snapshot.pendingPrompt.id,
+        value: 'F3K9P',
+      ),
+    );
+    await resumed.whenDone();
+    expect(
+      resumed.events.last.finished.status,
+      pb.OperationStatus.OPERATION_STATUS_SUCCEEDED,
+    );
+    expect(
+      resumed.events.last.finished.hasPendingPrompt(),
+      isFalse,
+      reason: 'the answered prompt is no longer pending',
+    );
   });
 
   test('operation_pruned_from_history', () async {

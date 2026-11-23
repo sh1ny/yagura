@@ -245,6 +245,174 @@ class WindowsConfinedBackend implements ConfinedBackend {
   }
 
   @override
+  void createJunction(ConfinedPath path, String target) {
+    if (path.isRoot) throw _notAFile(path);
+    final directory = _junctionDirectory(target);
+    final parent = _requireParent(path, _add);
+    try {
+      // Created as a plain directory, opened for writing without following
+      // it, then turned into a mount point; removed again if that fails.
+      final created = _create(
+        parent.handle,
+        path.name,
+        access:
+            Win32Files.fileWriteData |
+            Win32Files.fileWriteEa |
+            Win32Files.fileWriteAttributes |
+            Win32Files.fileReadAttributes |
+            Win32Files.delete |
+            Win32Files.synchronize,
+        disposition: Win32Files.fileCreate,
+        options: _directory,
+      );
+      if (created.status < 0) throw _fail(created.status, path, 'create');
+      try {
+        try {
+          _setMountPoint(created.handle, directory, path);
+        } on Object {
+          try {
+            _dispose(created.handle, path);
+          } on Object {
+            // Best effort: the empty directory is not a link.
+          }
+          rethrow;
+        }
+      } finally {
+        _nt.ntClose(created.handle);
+      }
+    } finally {
+      parent.close();
+    }
+  }
+
+  /// [target] as a drive path without a trailing separator.
+  static String _junctionDirectory(String target) {
+    var text = target.startsWith(r'\\?\') ? target.substring(4) : target;
+    text = text.replaceAll('/', r'\');
+    if (text.length > 3 && text.endsWith(r'\')) {
+      text = text.substring(0, text.length - 1);
+    }
+    if (!RegExp(r'^[A-Za-z]:\\').hasMatch(text)) {
+      throw ArgumentError.value(target, 'target', 'is not a drive path');
+    }
+    return text;
+  }
+
+  /// Sets the mount-point reparse data (`REPARSE_DATA_BUFFER`: an 8-byte
+  /// header, the four name offsets and lengths, then the NUL-terminated
+  /// substitute and print names) on the empty directory [handle].
+  void _setMountPoint(int handle, String directory, ConfinedPath path) =>
+      using((arena) {
+        final substitute = r'\??\' + directory;
+        final substituteBytes = substitute.length * 2;
+        final printBytes = directory.length * 2;
+        final dataLength = 8 + substituteBytes + 2 + printBytes + 2;
+        final buffer = arena<Uint8>(8 + dataLength);
+        buffer.cast<Uint32>().value = reparseTagMountPoint;
+        (buffer + 4).cast<Uint16>().value = dataLength;
+        (buffer + 8).cast<Uint16>().value = 0;
+        (buffer + 10).cast<Uint16>().value = substituteBytes;
+        (buffer + 12).cast<Uint16>().value = substituteBytes + 2;
+        (buffer + 14).cast<Uint16>().value = printBytes;
+        final names = (buffer + 16).cast<Uint16>();
+        for (var i = 0; i < substitute.length; i++) {
+          names[i] = substitute.codeUnitAt(i);
+        }
+        final printName = names + substitute.length + 1;
+        for (var i = 0; i < directory.length; i++) {
+          printName[i] = directory.codeUnitAt(i);
+        }
+        final returned = arena<Uint32>();
+        final call = callReadingError(
+          () => _nt.deviceIoControl(
+            handle,
+            Win32Files.fsctlSetReparsePoint,
+            buffer.cast(),
+            8 + dataLength,
+            nullptr,
+            0,
+            returned,
+            nullptr,
+          ),
+          (result) => result == 0,
+        );
+        if (call.value == 0) throw _controlError(call.error, path, 'junction');
+      });
+
+  @override
+  String? junctionTarget(ConfinedPath path) {
+    if (path.isRoot) return null;
+    final parent = _openDirectory(path.parent, _read);
+    if (parent == null) return null;
+    try {
+      final opened = _create(
+        parent.handle,
+        path.name,
+        access: Win32Files.fileReadAttributes | Win32Files.synchronize,
+        disposition: Win32Files.fileOpen,
+        options: _common,
+      );
+      if (_isNotFound(opened.status)) return null;
+      if (opened.status < 0) throw _fail(opened.status, path, 'read junction');
+      try {
+        final (attributes, tag) = _attributeTag(opened.handle, path);
+        if (!_linkLike(attributes, tag)) return null;
+        // Only a directory mount point is a junction; anything else is a
+        // link, refused.
+        if (tag != reparseTagMountPoint ||
+            attributes & Win32Files.attributeDirectory == 0) {
+          _refuseLink(opened.handle, path, path.parts.length);
+        }
+        return _readMountPoint(opened.handle, path);
+      } finally {
+        _nt.ntClose(opened.handle);
+      }
+    } finally {
+      parent.close();
+    }
+  }
+
+  /// The substitute name of the mount point [handle], without its `\??\`.
+  String _readMountPoint(int handle, ConfinedPath path) => using((arena) {
+    const capacity = 16 * 1024;
+    final buffer = arena<Uint8>(capacity);
+    final returned = arena<Uint32>();
+    final result = _nt.deviceIoControl(
+      handle,
+      Win32Files.fsctlGetReparsePoint,
+      nullptr,
+      0,
+      buffer.cast(),
+      capacity,
+      returned,
+      nullptr,
+    );
+    if (result == 0) {
+      throw _controlError(Win32.instance.getLastError(), path, 'read junction');
+    }
+    // Header (8) and the four name fields (8) come first.
+    final offset = (buffer + 8).cast<Uint16>().value;
+    final length = (buffer + 10).cast<Uint16>().value;
+    if (returned.value < 16 + offset + length) {
+      throw _controlError(13, path, 'read junction');
+    }
+    final name = (buffer + 16 + offset).cast<Utf16>().toDartString(
+      length: length ~/ 2,
+    );
+    return name.startsWith(r'\??\') ? name.substring(4) : name;
+  });
+
+  FileSystemException _controlError(
+    int code,
+    ConfinedPath path,
+    String operation,
+  ) => FileSystemException(
+    '$operation failed',
+    path.toString(),
+    OSError(code == 5 ? 'Access is denied.' : 'Windows error $code', code),
+  );
+
+  @override
   void setSecurity(
     ConfinedPath path,
     String sddl, {
@@ -609,40 +777,50 @@ class WindowsConfinedBackend implements ConfinedBackend {
     return (info.cast<Uint32>().value, (info + 4).cast<Uint32>().value);
   });
 
-  ConfinedEntry _entryOf(int handle, String name, ConfinedPath path) =>
-      using((arena) {
-        final (attributes, tag) = _attributeTag(handle, path);
-        final block = arena<Uint8>(16);
-        final basic = arena<Uint8>(40);
-        var status = _nt.ntQueryInformationFile(
-          handle,
-          block.cast(),
-          basic.cast(),
-          40,
-          Win32Files.fileBasicInformation,
-        );
-        if (status < 0) throw _fail(status, path, 'query times');
-        final standard = arena<Uint8>(24);
-        status = _nt.ntQueryInformationFile(
-          handle,
-          block.cast(),
-          standard.cast(),
-          24,
-          Win32Files.fileStandardInformation,
-        );
-        if (status < 0) throw _fail(status, path, 'query size');
-        final isDirectory = attributes & Win32Files.attributeDirectory != 0;
-        return ConfinedEntry(
-          name: name,
-          isDirectory: isDirectory,
-          isLink: _linkLike(attributes, tag),
-          size: isDirectory ? 0 : (standard + 8).cast<Int64>().value,
-          modified: _time((basic + 16).cast<Int64>().value),
-          created: _time(basic.cast<Int64>().value),
-          // FILE_STANDARD_INFORMATION.NumberOfLinks
-          links: (standard + 16).cast<Uint32>().value,
-        );
-      });
+  ConfinedEntry _entryOf(int handle, String name, ConfinedPath path) => using((
+    arena,
+  ) {
+    final (attributes, tag) = _attributeTag(handle, path);
+    final block = arena<Uint8>(16);
+    final basic = arena<Uint8>(40);
+    var status = _nt.ntQueryInformationFile(
+      handle,
+      block.cast(),
+      basic.cast(),
+      40,
+      Win32Files.fileBasicInformation,
+    );
+    if (status < 0) throw _fail(status, path, 'query times');
+    final standard = arena<Uint8>(24);
+    status = _nt.ntQueryInformationFile(
+      handle,
+      block.cast(),
+      standard.cast(),
+      24,
+      Win32Files.fileStandardInformation,
+    );
+    if (status < 0) throw _fail(status, path, 'query size');
+    final internal = arena<Uint8>(8);
+    status = _nt.ntQueryInformationFile(
+      handle,
+      block.cast(),
+      internal.cast(),
+      8,
+      Win32Files.fileInternalInformation,
+    );
+    final isDirectory = attributes & Win32Files.attributeDirectory != 0;
+    return ConfinedEntry(
+      name: name,
+      isDirectory: isDirectory,
+      isLink: _linkLike(attributes, tag),
+      size: isDirectory ? 0 : (standard + 8).cast<Int64>().value,
+      modified: _time((basic + 16).cast<Int64>().value),
+      created: _time(basic.cast<Int64>().value),
+      // FILE_STANDARD_INFORMATION.NumberOfLinks
+      links: (standard + 16).cast<Uint32>().value,
+      fileId: status < 0 ? '' : internal.cast<Int64>().value.toRadixString(16),
+    );
+  });
 
   static DateTime _time(int fileTime) => DateTime.fromMicrosecondsSinceEpoch(
     (fileTime - 116444736000000000) ~/ 10,

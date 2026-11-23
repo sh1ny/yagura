@@ -16,6 +16,8 @@ import 'package:yagurad/src/instances/instance.dart';
 import 'package:yagurad/src/instances/instance_acls.dart';
 import 'package:yagurad/src/logs/log_hub.dart';
 import 'package:yagurad/src/logs/log_models.dart';
+import 'package:yagurad/src/mods/mod_check_schedule.dart';
+import 'package:yagurad/src/mods/stage_link.dart';
 import 'package:yagurad/src/operations/operations.dart';
 import 'package:yagurad/src/host/secret_store.dart';
 import 'package:yagurad/src/process/process.dart';
@@ -204,6 +206,42 @@ class FakeSteamService implements SteamService {
     reporter.progress(percent: 100, bytesDone: 5000, bytesTotal: 5000);
   }
 
+  /// The logins run, by account id.
+  final logins = <SteamLoginRequest>[];
+
+  /// When set, a login fails with this.
+  YaguraException? loginFailure;
+
+  /// The installations removed.
+  final removed = <String>[];
+
+  @override
+  Future<void> login(
+    SteamLoginRequest request,
+    SteamRunReporter reporter,
+    CancelToken cancel,
+  ) async {
+    logins.add(request);
+    reporter.step('steam_login');
+    if (loginFailure case final error?) throw error;
+  }
+
+  /// The workshop runs requested.
+  final workshopRuns = <SteamWorkshopRequest>[];
+
+  @override
+  Future<List<SteamWorkshopItemResult>> downloadWorkshopItems(
+    SteamWorkshopRequest request,
+    SteamRunReporter reporter,
+    CancelToken cancel,
+  ) async {
+    workshopRuns.add(request);
+    return [for (final item in request.items) SteamWorkshopItemResult(item)];
+  }
+
+  @override
+  Future<void> removeInstallation(String account) async => removed.add(account);
+
   @override
   Future<void> sweepStrays() async {
     sweeps++;
@@ -355,6 +393,12 @@ class TestEnv {
     VersionSweeper? versionSweeper,
     FirewallBackend? firewall,
     Duration firewallTimeout = const Duration(seconds: 30),
+    int maxRetainedOperationEvents = 2000,
+    Uri? workshopEndpoint,
+    Duration workshopMinInterval = const Duration(milliseconds: 5),
+    // The update check runs only when a test asks for it.
+    ModCheckSchedule modCheckSchedule = const ModCheckSchedule.off(),
+    StageLinkCreator stageLink = defaultStageLink,
     // Nothing polls by itself unless a test says so: tests call `pollNow`.
     LogHubOptions logOptions = const LogHubOptions.manual(),
   }) async {
@@ -389,7 +433,12 @@ class TestEnv {
         versionSweeper: versionSweeper,
         firewall: firewall,
         firewallTimeout: firewallTimeout,
+        maxRetainedOperationEvents: maxRetainedOperationEvents,
         logOptions: logOptions,
+        workshopEndpoint: workshopEndpoint,
+        workshopMinInterval: workshopMinInterval,
+        modCheckSchedule: modCheckSchedule,
+        stageLink: stageLink,
         hookHost: hookHost,
         os: os,
         migrations: migrations,

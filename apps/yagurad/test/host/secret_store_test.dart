@@ -85,7 +85,7 @@ void main() {
     expect(store.get('s1'), isNull);
   });
 
-  test('service_mode_deletes_foreign_scope_rows', () {
+  test('secrets_protected_for_another_account', () {
     var db = openDb();
     addInstance(db, 'A', 'Alpha');
     addInstance(db, 'B', 'Beta');
@@ -111,7 +111,7 @@ void main() {
     );
   });
 
-  test('service_mode_deletes_rows_protected_on_another_machine', () {
+  test('secrets_protected_on_another_machine', () {
     var db = openDb();
     addInstance(db, 'A', 'Alpha');
     addInstance(db, 'B', 'Beta');
@@ -140,7 +140,7 @@ void main() {
     expect(db.sqlite.select('SELECT id FROM instances'), hasLength(2));
   });
 
-  test('service_mode_with_a_dpapi_fault_deletes_nothing', () {
+  test('dpapi_fault_deletes_nothing', () {
     var db = openDb();
     addInstance(db, 'A', 'Alpha');
     DatabaseSecretStore.open(
