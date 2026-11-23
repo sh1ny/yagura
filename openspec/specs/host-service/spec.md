@@ -7,11 +7,15 @@ Runs the daemon with a predictable data layout and a safe startup sequence.
 ## Requirements
 
 ### Requirement: Data directory layout
-The daemon SHALL keep its state in one data directory (default `%ProgramData%\Yagura`, `/var/lib/yagura` on Linux) containing the database, SteamCMD installations, plugins, snapshots and daemon logs. Instance directories default under its `instances/` folder and may be placed under other instance roots, which are added and removed only with `yagurad roots add|remove` over the local admin channel, which makes a root writable only by SYSTEM and Administrators; the gRPC API cannot change them.
+The daemon SHALL keep its state in one data directory (default `%ProgramData%\Yagura`, `/var/lib/yagura` on Linux) holding the database, SteamCMD installations, the content store, plugins, snapshots and daemon logs. Instance directories default under its `instances/` folder and may sit under other instance roots, added and removed only with `yagurad roots add|remove` over the local admin channel, which makes a root writable only by SYSTEM and Administrators; the gRPC API cannot change them.
 
 #### Scenario: Default layout created
 - **WHEN** the daemon starts for the first time with no configuration
-- **THEN** `%ProgramData%\Yagura` contains `yagura.db`, `steamcmd/`, `plugins/`, `instances/`, `snapshots/` and `logs/`
+- **THEN** `%ProgramData%\Yagura` contains `yagura.db`, `steamcmd/`, `content/`, `plugins/`, `instances/`, `snapshots/` and `logs/`
+
+#### Scenario: Content store protected
+- **WHEN** the service-mode daemon creates `content/`
+- **THEN** SYSTEM and Administrators have full access, the game-server account has read and execute only, and the SteamCMD account has no entry
 
 #### Scenario: Data directory not writable
 - **WHEN** the daemon cannot create its data directory
@@ -34,7 +38,7 @@ The daemon SHALL keep its state in one data directory (default `%ProgramData%\Ya
 - **THEN** the command fails with `root_in_use` naming the instance, and the root stays configured
 
 ### Requirement: Startup sequence
-On start the daemon SHALL lock the data directory, in service mode protect the data directory (owner Administrators, a protected SYSTEM/Administrators DACL, and a one-time no-follow walk of its existing contents outside instance directories), open and migrate the database, open the secret store and, in service mode, load its identity (failures here exit non-zero naming the step), then load plugins, recover instances, in service mode set up the service accounts and directory permissions and reconcile the firewall, and start log tailing, where failures are reported as notices and health flags, and then open the API listener. In service mode, secrets protected for another Windows account cannot be read; the daemon SHALL delete them, re-create what it owns, and keep every instance.
+On start the daemon SHALL, in order: lock the data directory; in service mode protect it (Administrators owner, protected SYSTEM/Administrators DACL, one no-follow walk outside instance directories); open and migrate the database; open the secret store and, in service mode, its identity, exiting non-zero naming a failed step; then load plugins, recover instances, in service mode set up accounts, directory rights and firewall, start log tailing (failures: notices, health flags) and open the API.
 
 #### Scenario: Migration with backup
 - **WHEN** a new daemon version starts on a database with an older schema
@@ -123,3 +127,18 @@ Stopping, restarting or upgrading the daemon service SHALL NOT stop running game
 #### Scenario: Server exits while the daemon is down
 - **WHEN** a server exits while the service is stopped
 - **THEN** after the service starts the instance shows the exit code from the relay's exit record
+
+### Requirement: Unreadable secrets are reset in service mode
+In service mode, secrets protected for another Windows account or another machine cannot be read; the daemon SHALL delete them at startup, re-create the secrets it owns, keep every instance and name the affected instances in notice `secrets_reset`. When DPAPI fails for any other reason, it SHALL delete nothing and fail with `secret_store_unavailable`.
+
+#### Scenario: Secrets protected for another account
+- **WHEN** a `--dev` daemon stored secrets for instance `A` and one of its own, and the service then opens the secret store
+- **THEN** those secrets are deleted, the reset names instance `A`, every instance is kept, and only secrets the service stores afterwards remain
+
+#### Scenario: Secrets protected on another machine
+- **WHEN** the service opens a secret store whose secrets were protected by LocalSystem on another machine
+- **THEN** those secrets are deleted, the reset names instance `A` by its name, and every instance is kept
+
+#### Scenario: DPAPI fault deletes nothing
+- **WHEN** the service opens its own secret store and DPAPI fails for a reason other than a wrong key
+- **THEN** opening fails with `secret_store_unavailable`, no secret or instance is deleted, and the same secrets open once DPAPI works again
