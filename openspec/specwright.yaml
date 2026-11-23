@@ -11,7 +11,7 @@ finish: local
 github:
   # Account for push, PR creation, replies and thread resolution.
   # Empty = the active gh account, resolved once when a run starts and fenced
-  # for the whole run (as.sh), so a later gh auth switch cannot redirect it.
+  # for the whole run (sw as), so a later gh auth switch cannot redirect it.
   # Set it if you switch gh accounts between sessions.
   login: ""
   # Comment posted once on each new PR to request a review. Empty = none.
@@ -48,6 +48,12 @@ review:
   # true = review the finished change before its first PR or a local merge;
   # ship and the local merge wait for a pass. false = no pre-ship review.
   preship: false
+
+# How far you are kept in the loop while a change is planned:
+#   autonomous - the agent decides; a decision summary shows at the end (the default)
+#   important  - important decisions are put to you with options and a recommendation
+#   all        - every decision is put to you
+decision_making: autonomous
 
 project:
   # Project-level files used by specwright-roadmap. Point these at existing
@@ -100,6 +106,13 @@ pr:
   # while it is still at the merged head and no open PR is based on it.
   delete_branch: true
 
+# Backend for branch state and version-control writes: git, jj or gitbutler.
+vcs: git
+
+# Opt in to the cheaper implementer for LIGHT changes.
+cheap_tier:
+  enabled: false
+
 # Store-backed changes only (planning in an OpenSpec store, a separate git
 # repo): settings for the store side. Every other setting is shared with the
 # code repo, and each key below falls back to the code repo's value.
@@ -131,7 +144,8 @@ release:
   tag: "v{version}"
   # Path or glob -> regex with exactly one capture group (the version). The
   # first key is the primary file. Every file must match exactly once and all
-  # must agree. Keep the regexes single-quoted.
+  # must agree. Use JavaScript regexes (Unicode and multiline mode) in
+  # single quotes.
   version_files:
     VERSION: '^(\d+\.\d+\.\d+)$'
     # package.json: '^  "version": "(\d+\.\d+\.\d+)",$'

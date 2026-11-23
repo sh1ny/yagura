@@ -32,3 +32,25 @@
 ## Impact
 
 <!-- Affected code, APIs, dependencies, systems -->
+
+## Decision Making
+
+<!-- The decision mode in force for this change; later steps read it here. A proposal
+     without the line uses the `decision_making` setting. -->
+DECISION_MAKING: <mode>
+- **Source:** <setting, or user with the user's quoted words>
+
+### S1: <scope decision>
+
+- **Choice:** <what was chosen>
+- **Rejected:** <alternatives, and why>
+- **Reversal cost:** <low | medium | high>
+- **Important:** <yes or no, with the reason>
+- **Chosen by:** <agent | user>
+
+## Release Notes
+
+<!-- For projects with `release.enabled: true`; delete this section otherwise.
+     A summary (at most 600 characters), then `### Added`, `### Changed`, `### Fixed`
+     and `### Removed` lists (leave empty ones out). Each item is at most 500 characters
+     and names its issue or PR (`#123`). -->

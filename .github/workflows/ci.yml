@@ -59,4 +59,4 @@ jobs:
         run: pwsh tool/ci/outside-job.ps1 -Run 'mise exec -- dart run tool/bundle_smoke.dart'
       - name: Validate OpenSpec
         if: runner.os == 'Linux'
-        run: npx -y @fission-ai/openspec@1.14.1 validate --all --strict
+        run: npx -y @fission-ai/openspec@1.16.0 validate --all --strict
