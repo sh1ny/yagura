@@ -41,3 +41,5 @@ Once the M1 design review passes, `/opsx:apply init-core-platform` starting with
 ## License
 
 Yagura is licensed under [Apache-2.0](LICENSE). Game plugins in `plugins/` are licensed under the [MIT License](plugins/LICENSE).
+
+Third-party files with their own licence notices keep those licences.
