@@ -37,3 +37,9 @@ Agent tooling: `.mcp.json` runs the official Dart MCP server from the mise-pinne
 ## Next step
 
 Once the M1 design review passes, `/opsx:apply init-core-platform` starting with task group 1 (workspace and the two M1 spikes: quickjs-ng on MSVC, Ctrl+C through the relay).
+
+## License
+
+Yagura is licensed under [Apache-2.0](LICENSE). Game plugins in `plugins/` are licensed under the [MIT License](plugins/LICENSE).
+
+Third-party files with their own licence notices keep those licences.

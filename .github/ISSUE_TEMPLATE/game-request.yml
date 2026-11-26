@@ -1,0 +1,46 @@
+name: Support a new game
+description: Ask for a game server Yagura should be able to run.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks. Only the game's name is required.
+        Every game is a plugin: a YAML manifest plus optional JavaScript hooks. If you'd like to write it yourself, docs/overview.md has an example.
+  - type: input
+    id: game
+    attributes:
+      label: Game
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Optional. What you run today and what's painful about it.
+  - type: input
+    id: appid
+    attributes:
+      label: Dedicated server Steam app ID
+      description: Optional. The number in the server's SteamDB or store URL, if it's on Steam.
+  - type: checkboxes
+    id: needs
+    attributes:
+      label: What the server needs
+      description: Optional. Tick what applies.
+      options:
+        - label: Workshop or other mods
+        - label: Runs on Windows
+        - label: Runs on Linux
+        - label: Needs a Steam account that owns the game
+  - type: textarea
+    id: config
+    attributes:
+      label: Config files and launch options
+      description: Optional. Which files admins usually edit, and links to the game's server docs.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Writing the plugin
+      options:
+        - label: I'd like to write the plugin myself
