@@ -40,6 +40,10 @@ const _failureLines = 50;
 /// at most one run uses an installation at a time; app runs are keyed by
 /// their instance directory and queue on that one lock.
 class SteamCmdService implements SteamService {
+  /// Creates a service that runs one SteamCMD child per installation at a time.
+  ///
+  /// [clock] and [watchdogTimer] affect only [_execute]'s watchdog. They
+  /// default to [DateTime.now] and [Timer.periodic]; log polling is unchanged.
   SteamCmdService({
     required this.steamcmdRoot,
     SteamCmdBootstrap? bootstrap,
@@ -59,6 +63,8 @@ class SteamCmdService implements SteamService {
     this.mobileWait = const Duration(minutes: 2),
     this.loginSilence = const Duration(seconds: 60),
     this.loginCap = const Duration(minutes: 10),
+    DateTime Function()? clock,
+    Timer Function(Duration, void Function(Timer))? watchdogTimer,
     void Function(String message)? log,
   }) : _bootstrap = bootstrap ?? SteamCmdBootstrap(),
        _command = command ?? _platformCommand,
@@ -68,6 +74,8 @@ class SteamCmdService implements SteamService {
        _patterns = patterns ?? SteamPatterns.embedded(),
        _state = state, // ignore: prefer_initializing_formals
        _fs = ConfinedFs(steamcmdRoot),
+       _clock = clock ?? DateTime.now,
+       _watchdogTimer = watchdogTimer ?? Timer.periodic,
        _log = log ?? ((message) => stderr.writeln('yagurad: $message'));
 
   /// The one installation of this version.
@@ -114,6 +122,8 @@ class SteamCmdService implements SteamService {
   final SteamPatterns _patterns;
   SteamState? _state;
   final ConfinedFs _fs;
+  final DateTime Function() _clock;
+  final Timer Function(Duration, void Function(Timer)) _watchdogTimer;
   final void Function(String message) _log;
 
   final _locks = <String, Semaphore>{};
@@ -857,7 +867,7 @@ class SteamCmdService implements SteamService {
     final command = _command(directory);
     final scrub = scrubber ?? Scrubber.none;
     final tail = Queue<String>();
-    final started = DateTime.now();
+    final started = _clock();
     var lastProgressAt = started;
     var lastSignalAt = started;
     SteamProgress? last;
@@ -872,7 +882,7 @@ class SteamCmdService implements SteamService {
           last!.bytesDone != progress.bytesDone ||
           last!.bytesTotal != progress.bytesTotal ||
           last!.percent != progress.percent;
-      if (moved) lastProgressAt = DateTime.now();
+      if (moved) lastProgressAt = _clock();
       last = progress;
       onProgress?.call(progress);
     }
@@ -892,7 +902,7 @@ class SteamCmdService implements SteamService {
       stripTimestamp: true,
       onLine: (line) {
         followed = true;
-        lastSignalAt = DateTime.now();
+        lastSignalAt = _clock();
         if (anyOutputIsProgress || (countsAsProgress?.call(line) ?? false)) {
           lastProgressAt = lastSignalAt;
         }
@@ -949,7 +959,7 @@ class SteamCmdService implements SteamService {
         final line = scrub.scrub(raw);
         tail.add(line);
         if (tail.length > 200) tail.removeFirst();
-        lastSignalAt = DateTime.now();
+        lastSignalAt = _clock();
         if (anyOutputIsProgress || (countsAsProgress?.call(line) ?? false)) {
           lastProgressAt = lastSignalAt;
         }
@@ -967,8 +977,8 @@ class SteamCmdService implements SteamService {
     );
 
     final cap = totalLimit ?? totalTimeout;
-    final watchdog = Timer.periodic(pollInterval, (_) {
-      final now = DateTime.now();
+    final watchdog = _watchdogTimer(pollInterval, (_) {
+      final now = _clock();
       if (now.difference(started) >= cap) {
         cutShort('total');
       } else if (now.difference(lastProgressAt) >= noProgressTimeout) {
