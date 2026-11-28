@@ -1,7 +1,7 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:yagura_desktop/src/providers.dart';
 import 'package:yagura_desktop/src/ui/home_page.dart';
 import 'package:yagura_desktop/src/ui/instance_list.dart';

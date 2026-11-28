@@ -1,7 +1,7 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:yagura_desktop/src/providers.dart';
 import 'package:yagura_desktop/src/schema.dart';
 import 'package:yagura_desktop/src/transport.dart';
@@ -401,6 +401,59 @@ void main() {
       ],
     });
     expect(submitted!.secrets, {'pass': 's3cret'});
+  });
+
+  testWidgets('submits the selected settings enum value', (tester) async {
+    final schema = SettingsSchema.tryParse(
+      '{"mode":{"type":"enum","values":["easy","hard"],"default":"easy"}}',
+    );
+    SettingsSubmission? submitted;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsForm(
+            schema: schema,
+            values: const {},
+            ports: const [],
+            onSubmit: (value) => submitted = value,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(_field('mode'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('hard').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await tester.pump();
+
+    expect(submitted?.settings, {'mode': 'hard'});
+  });
+
+  testWidgets('rejects an unselected required enum', (tester) async {
+    final schema = SettingsSchema.tryParse(
+      '{"mode":{"type":"enum","values":["easy","hard"],"required":true}}',
+    );
+    SettingsSubmission? submitted;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsForm(
+            schema: schema,
+            values: const {},
+            ports: const [],
+            onSubmit: (value) => submitted = value,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('form:save')));
+    await tester.pump();
+
+    expect(find.text('Choose a value'), findsOneWidget);
+    expect(submitted, isNull);
   });
 
   testWidgets('create_an_instance_with_a_secret', (tester) async {

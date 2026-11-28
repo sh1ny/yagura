@@ -25,6 +25,9 @@ class DaemonRegistry extends Notifier<List<DaemonRecord>> {
   /// Completes when the saved list has been read.
   Future<void> get ready => _ready;
 
+  /// Loads the saved list and sweeps the OS keychain. Run release smoke
+  /// launches under an isolated Windows account with no live Yagura
+  /// credentials; redirecting the data directory does not isolate the keychain.
   Future<void> _load() async {
     final DaemonListLoad saved;
     try {

@@ -18,7 +18,7 @@ Reviews: [openspec/architecture-review.md](openspec/architecture-review.md) (bas
 
 ## Development setup
 
-Prerequisites: [mise](https://mise.jdx.dev/) and Git. `mise install` installs the pinned Flutter SDK (with Dart), protoc and git-cliff from `mise.toml`.
+Prerequisites: [mise](https://mise.jdx.dev/) and Git. `mise install` installs Flutter 3.50.1 (with Dart 3.14.0), protoc and git-cliff from `mise.toml`.
 
 | Task | What it does |
 |---|---|
@@ -43,3 +43,5 @@ Once the M1 design review passes, `/opsx:apply init-core-platform` starting with
 Yagura is licensed under [Apache-2.0](LICENSE). Game plugins in `plugins/` are licensed under the [MIT License](plugins/LICENSE).
 
 Third-party files with their own licence notices keep those licences.
+
+The desktop uses [Flutter 3.50.1](https://github.com/flutter/flutter/blob/3.50.1/LICENSE), [Dart 3.14.0](https://github.com/dart-lang/sdk/blob/3.14.0/LICENSE) and [Material UI 1.11.1](https://pub.dev/packages/material_ui/versions/1.11.1/license). The links point to their upstream license notices.
