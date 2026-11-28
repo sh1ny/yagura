@@ -10,7 +10,7 @@ No delta scenarios. This change preserves the desktop and daemon contracts. Use 
 
 ## 2. Verify the release compiler
 
-- [ ] 2.1 [evidence] Settle A3 for the desktop with `mise exec -- flutter build windows --release --no-pub` from `apps/yagura_desktop` on the committed code. Run the gaming check before building. If gaming blocks the build, keep this task open until the workstation is free or hosted desktop verification is approved. Record the exact command, the Flutter and Dart versions, the source SHA and the successful exit. If #64917 hits, record the trace before applying S2/C2, rerun the same target and the affected existing tests, and record the Yagura follow-up labeled `p1` and `risk:high`. Desktop release launch is optional and must follow C1 → `evidence/2.1.md`.
+- [x] 2.1 [evidence] Settle A3 for the desktop with `mise exec -- flutter build windows --release --no-pub` from `apps/yagura_desktop` on the committed code. Run the gaming check before building. If gaming blocks the build, keep this task open until the workstation is free or hosted desktop verification is approved. Record the exact command, the Flutter and Dart versions, the source SHA and the successful exit. If #64917 hits, record the trace before applying S2/C2, rerun the same target and the affected existing tests, and record the Yagura follow-up labeled `p1` and `risk:high`. Desktop release launch is optional and must follow C1 → `evidence/2.1.md`.
 
 ## Workflow follow-up
 
