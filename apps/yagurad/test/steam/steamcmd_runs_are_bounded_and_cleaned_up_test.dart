@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -54,6 +55,50 @@ Future<Process> startStray(String directory) async {
   return process;
 }
 
+class _DownloadReporter extends RecordingReporter {
+  _DownloadReporter(this.startDownloadClock);
+
+  final void Function() startDownloadClock;
+  final firstBytes = Completer<void>();
+  final committed = Completer<void>();
+
+  @override
+  void progress({double percent = -1, int bytesDone = 0, int bytesTotal = 0}) {
+    super.progress(
+      percent: percent,
+      bytesDone: bytesDone,
+      bytesTotal: bytesTotal,
+    );
+    final step = progresses.last.step;
+    if (step == 'download' && !firstBytes.isCompleted) {
+      if (bytesDone == 0 && bytesTotal > 0) startDownloadClock();
+      if (bytesDone == 1250 && bytesTotal == 5000) firstBytes.complete();
+    }
+    if (step == 'commit' && !committed.isCompleted) committed.complete();
+  }
+}
+
+class _ManualWatchdog implements Timer {
+  _ManualWatchdog(this._callback);
+
+  final void Function(Timer) _callback;
+
+  @override
+  var isActive = true;
+
+  @override
+  var tick = 0;
+
+  @override
+  void cancel() => isActive = false;
+
+  void fire() {
+    if (!isActive) throw StateError('The watchdog stopped before the tick');
+    tick++;
+    _callback(this);
+  }
+}
+
 void main() {
   test('stalled_download', () async {
     final env = TestEnv();
@@ -92,37 +137,90 @@ void main() {
 
   test('long_download_that_keeps_progressing', () async {
     final env = TestEnv();
-    // Like SteamCMD, the fake holds its output back until it exits and writes
-    // it to logs/console_log.txt as it goes. The run takes longer than the
-    // no-progress limit, but its log reports progress every 250 ms.
+    final hold = File(p.join(env.root.path, 'hold_download'))..createSync();
+    final finishHold = File(p.join(env.root.path, 'hold_exit'))..createSync();
+    final start = DateTime.utc(2026);
+    var now = start;
+    final watchdog = Completer<_ManualWatchdog>();
     final steam = SteamHarness(
       env,
       noProgressTimeout: const Duration(seconds: 4),
       realOutput: true,
-      fakeEnvironment: {'FAKE_STEAMCMD_DELAY_MS': '250'},
+      fakeEnvironment: {
+        'FAKE_STEAMCMD_HOLD_FILE': hold.path,
+        'FAKE_STEAMCMD_HOLD_ON': '(1250 / 5000)',
+        'FAKE_STEAMCMD_FINISH_HOLD_FILE': finishHold.path,
+      },
+      clock: () => now,
+      watchdogTimer: (_, callback) {
+        final timer = _ManualWatchdog(callback);
+        if (!watchdog.isCompleted) watchdog.complete(timer);
+        return timer;
+      },
     );
-    final reporter = RecordingReporter();
+    final reporter = _DownloadReporter(() {
+      now = start.add(const Duration(seconds: 3));
+    });
+    final cancel = CancelToken();
+    Future<void>? install;
+    var settled = false;
+    addTearDown(() async {
+      if (!settled) cancel.cancel();
+      if (hold.existsSync()) hold.deleteSync();
+      if (finishHold.existsSync()) finishHold.deleteSync();
+      // The body observes the original outcome; teardown only joins the run.
+      await install?.then<void>((_) {}, onError: (Object _) {});
+    });
 
-    final started = DateTime.now();
-    await steam.service.installApp(requestFor(env), reporter, CancelToken());
-    final ended = DateTime.now();
+    final run = steam.service
+        .installApp(requestFor(env), reporter, cancel)
+        .whenComplete(() {
+          settled = true;
+        });
+    install = run;
+    Future<T> beforeExit<T>(Future<T> event) => Future.any<T>([
+      event,
+      run.then<T>((_) {
+        throw StateError('SteamCMD exited before the expected log report');
+      }),
+    ]);
+
+    Future<_ManualWatchdog> ready() async {
+      final timer = await watchdog.future;
+      await Future.any<void>([
+        reporter.firstBytes.future,
+        reporter.committed.future.then((_) {
+          if (!reporter.firstBytes.isCompleted) {
+            fail('SteamCMD reached committing before the download checkpoint');
+          }
+        }),
+      ]);
+      expect(
+        reporter.committed.isCompleted,
+        isFalse,
+        reason: 'the child must hold at the download checkpoint',
+      );
+      return timer;
+    }
+
+    // Initial zero-byte reports are at t=0. The first nonzero update is at
+    // t=3 and comes only from the live log until the child is released.
+    final timer = await beforeExit(ready());
+    now = start.add(const Duration(seconds: 5));
+    timer.fire();
+    hold.deleteSync();
+    await beforeExit(reporter.committed.future);
 
     expect(
-      ended.difference(started),
-      greaterThan(const Duration(seconds: 4)),
-      reason: 'the run outlasted the limit',
+      reporter.progresses
+          .where((p) => p.step == 'download')
+          .map((p) => p.bytesDone),
+      containsAllInOrder([0, 1250, 2500, 3750, 5000]),
     );
-    expect(
-      reporter.progresses.last.percent,
-      100,
-      reason: 'the progress reached the end',
-    );
-    expect(reporter.progresses.map((p) => p.step), contains('download'));
-    expect(
-      reporter.times.first.isBefore(ended.subtract(const Duration(seconds: 1))),
-      isTrue,
-      reason: 'the progress came while SteamCMD ran, not when it exited',
-    );
+    expect(reporter.progresses.last.percent, 100);
+
+    finishHold.deleteSync();
+    await run;
     expect(steam.appRuns(), hasLength(1));
   }, timeout: const Timeout(Duration(seconds: 60)));
 

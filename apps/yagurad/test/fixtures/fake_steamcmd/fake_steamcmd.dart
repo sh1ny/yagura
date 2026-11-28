@@ -18,6 +18,10 @@
 // FAKE_STEAMCMD_STALL_AFTER  print this many lines, then hang until killed
 // FAKE_STEAMCMD_HOLD_FILE    after the first progress line, wait while this
 //                            file exists
+// FAKE_STEAMCMD_HOLD_ON      when holding, wait at the first line containing
+//                            this text instead of the first progress line
+// FAKE_STEAMCMD_FINISH_HOLD_FILE  after the transcript, wait while this file
+//                                exists before flushing stdout and exiting
 // FAKE_STEAMCMD_LOOP         keep repeating progress lines until killed
 // FAKE_STEAMCMD_APP_BYTES    size of the app file written on success
 //                            (default 4096)
@@ -309,6 +313,7 @@ Future<void> main(List<String> args) async {
   final lines = File('$here/output/$transcript').readAsLinesSync();
   final stallAfter = int.tryParse(env['FAKE_STEAMCMD_STALL_AFTER'] ?? '');
   final holdFile = env['FAKE_STEAMCMD_HOLD_FILE'];
+  final holdOn = env['FAKE_STEAMCMD_HOLD_ON'] ?? 'progress:';
   var printed = 0;
   var held = false;
   for (final template in lines) {
@@ -320,12 +325,13 @@ Future<void> main(List<String> args) async {
     if (stallAfter != null && printed >= stallAfter) {
       await Future<void>.delayed(const Duration(days: 1));
     }
-    if (!held && holdFile != null && line.contains('progress:')) {
+    if (!held && holdFile != null && line.contains(holdOn)) {
       held = true;
-      while (File(holdFile).existsSync()) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
+      await _waitForRelease(holdFile);
     }
+  }
+  if (env['FAKE_STEAMCMD_FINISH_HOLD_FILE'] case final finishHold?) {
+    await _waitForRelease(finishHold);
   }
   if (env['FAKE_STEAMCMD_LOOP'] != null) {
     for (var bytes = 0; ; bytes += 100) {
@@ -346,6 +352,13 @@ Future<void> main(List<String> args) async {
   }
   if (!quit) await _waitForInput(stdinClosed);
   await _out.quit(exitWith);
+}
+
+Future<void> _waitForRelease(String path) async {
+  final file = File(path);
+  while (file.existsSync()) {
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
 }
 
 /// Without `+quit` SteamCMD sits at its prompt until stdin ends.
