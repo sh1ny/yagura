@@ -31,9 +31,9 @@ The existing test starts the real Dart fixture through `SteamHarness`, makes the
 
 ### D2: Hold the real child at its first nonzero download report
 
-- **Choice:** Allow the existing hold file to select a transcript line, defaulting to its original first-progress behavior. Start logical time at `t=0` for pre-launch and both zero-byte reports. The reporter advances the clock to `t=3` after receiving `0 / 5000`; `_execute` has already processed that report at `t=0`. The child holds after writing `1250 / 5000`. After watchdog registration and the first nonzero byte report, tick at `t=5` while the flag remains. A stale timestamp raises `steam_stalled` (`limit: no_progress`); the new report at `t=3` stays within four seconds. Release that hold and keep the child from exiting with a second flag until the reporter sees the final 100% report. Assert ordered progress, success and one child run.
+- **Choice:** Allow the existing hold file to select a progress checkpoint by its log text, defaulting to its original first-progress behavior. Start logical time at `t=0` for pre-launch and both zero-byte reports. The reporter advances the clock to `t=3` after receiving `0 / 5000`; `_execute` has already processed that report at `t=0`. The child holds after writing `1250 / 5000`. After watchdog registration and that report, tick at `t=5` while the flag remains. A stale timestamp raises `steam_stalled` (`limit: no_progress`); the new report at `t=3` stays within four seconds. Release that hold and keep the child from exiting with a second flag until the reporter sees the final 100% report. Assert ordered progress, success and one child run.
 - **Rejected:** Add delay margins, repeat on failure, or assert that progress happened a fixed wall-clock interval before exit. All depend on the runner's time to launch or schedule a process.
-- **Reversal cost:** low; the fixture gains a line selector and a hold before exit, both opt-in.
+- **Reversal cost:** low; the fixture gains a text selector and a hold before exit, both opt-in.
 - **Important:** no; this preserves the existing test intent and real process coverage.
 - **Chosen by:** agent.
 
@@ -115,7 +115,7 @@ One real child, two held fixture files and one registered watchdog callback. The
 | Mechanism | Built? | Why | Evidence that would change it |
 |---|---|---|---|
 | Clock and injectable watchdog schedule | Yes | The existing test failed before the fixture could deliver progress | An existing seam that independently controls watchdog time |
-| Selectable hold line and hold before exit | Yes | The default hold ends at reconfiguration, and the follower may not poll again before exit | An existing fixture gate that holds both checkpoints after logging |
+| Selectable hold text and hold before exit | Yes | The default hold ends at reconfiguration, and the follower may not poll again before exit | An existing fixture gate that holds both checkpoints after logging |
 | Test dependency or retry | No | The fixture and service expose both required events | An event not available through the existing seams |
 
 ## Risks / Trade-offs

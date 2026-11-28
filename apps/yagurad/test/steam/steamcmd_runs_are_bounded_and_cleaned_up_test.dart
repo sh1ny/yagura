@@ -72,7 +72,7 @@ class _DownloadReporter extends RecordingReporter {
     final step = progresses.last.step;
     if (step == 'download' && !firstBytes.isCompleted) {
       if (bytesDone == 0 && bytesTotal > 0) startDownloadClock();
-      if (bytesDone > 0) firstBytes.complete();
+      if (bytesDone == 1250 && bytesTotal == 5000) firstBytes.complete();
     }
     if (step == 'commit' && !committed.isCompleted) committed.complete();
   }
@@ -148,13 +148,13 @@ void main() {
       realOutput: true,
       fakeEnvironment: {
         'FAKE_STEAMCMD_HOLD_FILE': hold.path,
-        'FAKE_STEAMCMD_HOLD_AFTER': '11', // First nonzero download update.
+        'FAKE_STEAMCMD_HOLD_ON': '(1250 / 5000)',
         'FAKE_STEAMCMD_FINISH_HOLD_FILE': finishHold.path,
       },
       clock: () => now,
       watchdogTimer: (_, callback) {
         final timer = _ManualWatchdog(callback);
-        watchdog.complete(timer);
+        if (!watchdog.isCompleted) watchdog.complete(timer);
         return timer;
       },
     );
@@ -187,7 +187,19 @@ void main() {
 
     Future<_ManualWatchdog> ready() async {
       final timer = await watchdog.future;
-      await reporter.firstBytes.future;
+      await Future.any<void>([
+        reporter.firstBytes.future,
+        reporter.committed.future.then((_) {
+          if (!reporter.firstBytes.isCompleted) {
+            fail('SteamCMD reached committing before the download checkpoint');
+          }
+        }),
+      ]);
+      expect(
+        reporter.committed.isCompleted,
+        isFalse,
+        reason: 'the child must hold at the download checkpoint',
+      );
       return timer;
     }
 
