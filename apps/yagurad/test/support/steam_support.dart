@@ -84,6 +84,9 @@ class SteamHarness {
     Duration pollInterval = const Duration(milliseconds: 50),
     SteamCmdBootstrap? bootstrap,
     StrayProcessControl? strays,
+    SpyLauncher? processLauncher,
+    DateTime Function()? clock,
+    Timer Function(Duration, void Function(Timer))? watchdogTimer,
     int freeBytes = 1 << 40,
     bool ready = true,
     // The fake writes its logs and holds its output back until it exits, like
@@ -106,7 +109,7 @@ class SteamHarness {
     script = LoginScript(_fakeEnvironment['FAKE_STEAMCMD_LOGIN_SCRIPT']!)
       ..rules([]);
     if (ready) markReady();
-    launcher = SpyLauncher();
+    launcher = processLauncher ?? SpyLauncher();
     service = SteamCmdService(
       steamcmdRoot: root,
       bootstrap: bootstrap,
@@ -125,6 +128,8 @@ class SteamHarness {
       mobileWait: mobileWait ?? const Duration(minutes: 2),
       loginSilence: loginSilence ?? const Duration(seconds: 60),
       loginCap: loginCap ?? const Duration(minutes: 10),
+      clock: clock,
+      watchdogTimer: watchdogTimer,
       log: log.add,
     );
     addTearDown(service.close);
