@@ -10,7 +10,7 @@ No requirements change. The existing Steam content behavior must survive a watch
 
 ## 1. Drive the watchdog from observed progress
 
-- [ ] 1.1 Verify the fixture writes the first progress line to the live log and holds the child until its flag is removed. Confirm install cancellation remains latched while the child launches.
+- [x] 1.1 Verify the fixture writes the first progress line to the live log and holds the child until its flag is removed. Confirm install cancellation remains latched while the child launches.
 - [ ] 1.2 Replace this test's wall-clock inference with an injected clock and watchdog callback. Wait for actual log progress and registration; race readiness against install completion, and pre-register cleanup using this install's cancel token. Demonstrate that the test fails with `steam_stalled` (`limit: no_progress`) when the timestamp refresh is deliberately disabled.
 - [ ] 1.3 Restore the original timestamp refresh with the scoped injected clock. Keep the default production clock, periodic schedule, bounds and progress policy. Run the watchdog test file and its callers' relevant tests, including the real log path.
 
