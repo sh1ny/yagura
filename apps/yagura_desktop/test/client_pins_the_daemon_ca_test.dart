@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:grpc/grpc.dart' show GrpcError;
+import 'package:material_ui/material_ui.dart';
 import 'package:yagura_desktop/src/credentials.dart';
 import 'package:yagura_desktop/src/grpc_transport.dart';
 import 'package:yagura_desktop/src/transport.dart';

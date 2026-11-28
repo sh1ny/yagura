@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:pointycastle/export.dart' show ECPublicKey;
 import 'package:yagura_desktop/src/credentials.dart';
 import 'package:yagura_desktop/src/daemon_record.dart';

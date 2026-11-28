@@ -38,7 +38,7 @@ jobs:
           key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: pub-${{ runner.os }}-
       - name: Resolve workspace dependencies
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
       - name: Format check
         run: mise run format:check
       - name: Analyze
@@ -57,6 +57,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: pwsh tool/ci/outside-job.ps1 -Run 'mise exec -- dart run tool/bundle_smoke.dart'
+      - name: Check workspace lockfile stayed unchanged
+        if: ${{ !cancelled() }}
+        run: git diff --exit-code HEAD -- pubspec.lock
       - name: Validate OpenSpec
         if: runner.os == 'Linux'
         run: npx -y @fission-ai/openspec@1.16.0 validate --all --strict

@@ -3,7 +3,7 @@ description: "Pub workspace root for Yagura (design D1)."
 publish_to: 'none'
 
 environment:
-  sdk: ^3.13.5
+  sdk: ^3.14.0
 
 workspace:
   - apps/yagurad

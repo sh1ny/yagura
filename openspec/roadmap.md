@@ -4,7 +4,7 @@ Strategy: openspec/strategy.md · Architecture: openspec/architecture.md
 
 <!-- Status is derived: a change is done when archived; a milestone is done when its changes are done and its exit criteria pass. Do not add status checkboxes for changes. -->
 
-Each milestone is one change. `init-core-platform` carries M1. The requirements, design decisions and task groups already written for M2-M5 are parked in `platform-backlog`, which is never applied or archived: when a milestone starts, `specwright-roadmap next` takes its part of the backlog into a new change named for the milestone (for example `m2-secure-remote-host`), with the requirements as delta specs and its own design review, and deletes that part from the backlog. A milestone change archives when its groups are done, so `openspec/specs/` only ever records built behaviour. The exit criteria below are what each milestone must show.
+Each milestone has one primary change and can include supporting changes. `init-core-platform` carries M1. The remaining requirements, design decisions and tasks are parked in `platform-backlog`, which is never applied or archived. When a milestone starts, `specwright-roadmap next` moves its part of the backlog into a change with delta specs and its own design review. Each change archives when its tasks are done, so `openspec/specs/` records only built behaviour. The exit criteria below are what each milestone must show.
 
 ## Now: M3 - Steam accounts and mods
 
@@ -20,6 +20,7 @@ Each milestone is one change. `init-core-platform` carries M1. The requirements,
 
 **Changes** (in order; each about one PR):
 1. `m3-steam-accounts-and-mods` - taken from `platform-backlog` groups 14-17 (Steam accounts and Steam Guard; formats and config bindings; mod pipeline and content store; DayZ plugin and plugin migrations)
+2. `upgrade-flutter-3-50` - update the pinned Flutter and Dart toolchain and migrate the desktop client to the standalone Material package
 
 ## Next: M4 - Operations and complex configs
 
