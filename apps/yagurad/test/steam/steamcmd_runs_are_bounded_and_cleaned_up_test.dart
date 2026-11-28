@@ -60,6 +60,7 @@ class _DownloadReporter extends RecordingReporter {
 
   final void Function() startDownloadClock;
   final firstBytes = Completer<void>();
+  final committed = Completer<void>();
 
   @override
   void progress({double percent = -1, int bytesDone = 0, int bytesTotal = 0}) {
@@ -68,9 +69,12 @@ class _DownloadReporter extends RecordingReporter {
       bytesDone: bytesDone,
       bytesTotal: bytesTotal,
     );
-    if (progresses.last.step != 'download' || firstBytes.isCompleted) return;
-    if (bytesDone == 0 && bytesTotal > 0) startDownloadClock();
-    if (bytesDone > 0) firstBytes.complete();
+    final step = progresses.last.step;
+    if (step == 'download' && !firstBytes.isCompleted) {
+      if (bytesDone == 0 && bytesTotal > 0) startDownloadClock();
+      if (bytesDone > 0) firstBytes.complete();
+    }
+    if (step == 'commit' && !committed.isCompleted) committed.complete();
   }
 }
 
@@ -134,6 +138,7 @@ void main() {
   test('long_download_that_keeps_progressing', () async {
     final env = TestEnv();
     final hold = File(p.join(env.root.path, 'hold_download'))..createSync();
+    final finishHold = File(p.join(env.root.path, 'hold_exit'))..createSync();
     final start = DateTime.utc(2026);
     var now = start;
     final watchdog = Completer<_ManualWatchdog>();
@@ -144,6 +149,7 @@ void main() {
       fakeEnvironment: {
         'FAKE_STEAMCMD_HOLD_FILE': hold.path,
         'FAKE_STEAMCMD_HOLD_AFTER': '11', // First nonzero download update.
+        'FAKE_STEAMCMD_FINISH_HOLD_FILE': finishHold.path,
       },
       clock: () => now,
       watchdogTimer: (_, callback) {
@@ -161,6 +167,7 @@ void main() {
     addTearDown(() async {
       if (!settled) cancel.cancel();
       if (hold.existsSync()) hold.deleteSync();
+      if (finishHold.existsSync()) finishHold.deleteSync();
       // The body observes the original outcome; teardown only joins the run.
       await install?.then<void>((_) {}, onError: (Object _) {});
     });
@@ -171,6 +178,13 @@ void main() {
           settled = true;
         });
     install = run;
+    Future<T> beforeExit<T>(Future<T> event) => Future.any<T>([
+      event,
+      run.then<T>((_) {
+        throw StateError('SteamCMD exited before the expected log report');
+      }),
+    ]);
+
     Future<_ManualWatchdog> ready() async {
       final timer = await watchdog.future;
       await reporter.firstBytes.future;
@@ -179,18 +193,11 @@ void main() {
 
     // Initial zero-byte reports are at t=0. The first nonzero update is at
     // t=3 and comes only from the live log until the child is released.
-    final timer = await Future.any<_ManualWatchdog>([
-      ready(),
-      run.then<_ManualWatchdog>((_) {
-        throw StateError(
-          'SteamCMD exited before the watchdog and log were ready',
-        );
-      }),
-    ]);
+    final timer = await beforeExit(ready());
     now = start.add(const Duration(seconds: 5));
     timer.fire();
     hold.deleteSync();
-    await run;
+    await beforeExit(reporter.committed.future);
 
     expect(
       reporter.progresses
@@ -199,6 +206,9 @@ void main() {
       containsAllInOrder([0, 1250, 2500, 3750, 5000]),
     );
     expect(reporter.progresses.last.percent, 100);
+
+    finishHold.deleteSync();
+    await run;
     expect(steam.appRuns(), hasLength(1));
   }, timeout: const Timeout(Duration(seconds: 60)));
 

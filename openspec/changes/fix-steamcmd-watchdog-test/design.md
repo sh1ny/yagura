@@ -31,9 +31,9 @@ The existing test starts the real Dart fixture through `SteamHarness`, makes the
 
 ### D2: Hold the real child at its first nonzero download report
 
-- **Choice:** Allow the existing hold file to select a transcript line, defaulting to its original first-progress behavior. Start logical time at `t=0` for pre-launch and both zero-byte reports. The reporter advances the clock to `t=3` after receiving `0 / 5000`; `_execute` has already processed that report at `t=0`. The child holds after writing `1250 / 5000`. After watchdog registration and the first nonzero byte report, tick at `t=5` while the flag remains. A stale timestamp from launch or zero-byte progress raises `steam_stalled` (`limit: no_progress`); the nonzero report at `t=3` keeps the run within the four-second budget. Release the child and assert ordered progress, success and one child run.
+- **Choice:** Allow the existing hold file to select a transcript line, defaulting to its original first-progress behavior. Start logical time at `t=0` for pre-launch and both zero-byte reports. The reporter advances the clock to `t=3` after receiving `0 / 5000`; `_execute` has already processed that report at `t=0`. The child holds after writing `1250 / 5000`. After watchdog registration and the first nonzero byte report, tick at `t=5` while the flag remains. A stale timestamp raises `steam_stalled` (`limit: no_progress`); the new report at `t=3` stays within four seconds. Release that hold and keep the child from exiting with a second flag until the reporter sees the final 100% report. Assert ordered progress, success and one child run.
 - **Rejected:** Add delay margins, repeat on failure, or assert that progress happened a fixed wall-clock interval before exit. All depend on the runner's time to launch or schedule a process.
-- **Reversal cost:** low; the fixture gains one opt-in line selector for its existing hold.
+- **Reversal cost:** low; the fixture gains a line selector and a hold before exit, both opt-in.
 - **Important:** no; this preserves the existing test intent and real process coverage.
 - **Chosen by:** agent.
 
@@ -75,8 +75,11 @@ sequenceDiagram
     F-->>S: Append 1250 / 5000, hold at gate
     S-->>T: Report nonzero download progress
     T->>S: Tick watchdog at t=5
-    T->>F: Remove hold file
-    F-->>S: Finish replay and exit successfully
+    T->>F: Remove first hold file
+    F-->>S: Append final progress and hold before exit
+    S-->>T: Report committing at 100%
+    T->>F: Remove exit hold file
+    F-->>S: Exit successfully
     S-->>T: Install completes with ordered progress
 ```
 
@@ -88,7 +91,7 @@ The first diagram covers T1 and T4; the sequence covers T3. Await the timer regi
 |---|---|---|---|---|
 | Logical time and callback | The test's manual clock and timer | One test | Test releases or cancels after the run | Local test object |
 | Progress and timeout decision | `SteamCmdService._execute` | One child run | Progress updates the timestamp; run completion cancels the timer | Service's local run state |
-| Hold flag | Test | One child run | Removed to allow replay and in cleanup on failure | File below test temp root |
+| Hold flags | Test | One child run | Removed to allow the next phase or in cleanup on failure | Files below test temp root |
 
 ## Failure & Visibility (FULL)
 
@@ -100,11 +103,11 @@ The first diagram covers T1 and T4; the sequence covers T3. Await the timer regi
 
 ## Resource Bounds (FULL)
 
-One real child, one held fixture file and one registered watchdog callback. The fixture replays a finite transcript. The existing follower bounds bytes per poll, line length and retained lines; real periodic log polling continues while the test waits (`apps/yagurad/test/fixtures/fake_steamcmd/output/update_ok.txt:1-17`, `apps/yagurad/lib/src/steam/steam_log_follower.dart:30-47,75-89`). Scheduler delays do not change the logical-time assertion when both readiness events arrive within the outer guard.
+One real child, two held fixture files and one registered watchdog callback. The fixture replays a finite transcript. The existing follower bounds bytes per poll, line length and retained lines; real periodic log polling continues while the test waits (`apps/yagurad/test/fixtures/fake_steamcmd/output/update_ok.txt:1-17`, `apps/yagurad/lib/src/steam/steam_log_follower.dart:30-47,75-89`). Scheduler delays do not change the assertions when the readiness and final-progress events arrive within the outer guard.
 
 ## Flow & State Gaps (FULL)
 
-- Before starting the install, register teardown ahead of harness and directory teardown. Race the two readiness events against the install settling: fail immediately if install succeeds too early, or surface its original error and stack if it fails. With the gate still held, fire the controlled tick before releasing the child. If the test fails or its outer guard fires, cancellation must stay active across a pending launch; release the file gate and await install settlement before directory deletion.
+- Before starting the install, register teardown ahead of harness and directory teardown. Race log readiness and the final progress event against the install settling: fail immediately on premature success, or surface the original error and stack. Fire the controlled tick while the first gate is held. Await ordered final progress while the exit gate is held. If the test fails or its outer guard fires, cancellation must stay active across a pending launch; release both gates and await settlement before directory deletion.
 - Keep a single top-level test hang guard. Do not use child startup time, internal fixture sleeps, polling attempt counts, or test timeout expiry as evidence of behavior.
 
 ## Mechanism Ledger (FULL)
@@ -112,7 +115,7 @@ One real child, one held fixture file and one registered watchdog callback. The 
 | Mechanism | Built? | Why | Evidence that would change it |
 |---|---|---|---|
 | Clock and injectable watchdog schedule | Yes | The existing test failed before the fixture could deliver progress | An existing seam that independently controls watchdog time |
-| Selectable fixture hold line | Yes | The default hold ends at reconfiguration, before any bytes arrive | A simpler way to hold the same child after nonzero progress |
+| Selectable hold line and hold before exit | Yes | The default hold ends at reconfiguration, and the follower may not poll again before exit | An existing fixture gate that holds both checkpoints after logging |
 | Test dependency or retry | No | The fixture and service expose both required events | An event not available through the existing seams |
 
 ## Risks / Trade-offs

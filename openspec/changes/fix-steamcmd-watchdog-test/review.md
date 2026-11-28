@@ -36,3 +36,7 @@ CHANGES_APPLIED: yes
 ## Rebuttals
 
 The reviewer accepts the author's fix notes for all three required changes.
+
+## Implementation follow-through
+
+The accepted review above covers the original design. Pre-ship review moved the clock advance from launch to the `0 / 5000` download report, so refreshing on zero-byte reports alone cannot pass. The test holds the child at the first nonzero report for the tick and again before exit until the final report arrives. Both gates keep stdout buffered; the test still depends on the live log.
