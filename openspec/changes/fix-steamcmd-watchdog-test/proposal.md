@@ -8,7 +8,7 @@ This is a separate prerequisite for M3's Windows test exit criterion and the Flu
 
 ## What Changes
 
-- Drive watchdog time explicitly in the failing test. Synchronize on observed log progress from the real child while its stdout is still buffered; check that progress resets the stall deadline and the child can finish.
+- Drive watchdog time explicitly in the failing test. Wait for the real child to report nonzero download bytes in its live log while stdout is still buffered; check that the report resets the stall deadline and the child can finish.
 - Keep production clock and timer defaults, deadline values, process launching, cancellation, log polling and watchdog decisions unchanged. Do not add test retries or adjust real timing thresholds to pass.
 - Ship a separate PR from `main`. Do not merge either PR or carry the prerequisite into PR #7 without the owner's next decision.
 

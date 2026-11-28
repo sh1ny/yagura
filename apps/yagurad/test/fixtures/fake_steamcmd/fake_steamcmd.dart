@@ -18,6 +18,8 @@
 // FAKE_STEAMCMD_STALL_AFTER  print this many lines, then hang until killed
 // FAKE_STEAMCMD_HOLD_FILE    after the first progress line, wait while this
 //                            file exists
+// FAKE_STEAMCMD_HOLD_AFTER   when holding, use this transcript line number
+//                            instead of the first progress line
 // FAKE_STEAMCMD_LOOP         keep repeating progress lines until killed
 // FAKE_STEAMCMD_APP_BYTES    size of the app file written on success
 //                            (default 4096)
@@ -309,6 +311,7 @@ Future<void> main(List<String> args) async {
   final lines = File('$here/output/$transcript').readAsLinesSync();
   final stallAfter = int.tryParse(env['FAKE_STEAMCMD_STALL_AFTER'] ?? '');
   final holdFile = env['FAKE_STEAMCMD_HOLD_FILE'];
+  final holdAfter = int.tryParse(env['FAKE_STEAMCMD_HOLD_AFTER'] ?? '');
   var printed = 0;
   var held = false;
   for (final template in lines) {
@@ -320,7 +323,11 @@ Future<void> main(List<String> args) async {
     if (stallAfter != null && printed >= stallAfter) {
       await Future<void>.delayed(const Duration(days: 1));
     }
-    if (!held && holdFile != null && line.contains('progress:')) {
+    if (!held &&
+        holdFile != null &&
+        (holdAfter == null
+            ? line.contains('progress:')
+            : printed == holdAfter)) {
       held = true;
       while (File(holdFile).existsSync()) {
         await Future<void>.delayed(const Duration(milliseconds: 20));

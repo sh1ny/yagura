@@ -42,7 +42,8 @@ const _failureLines = 50;
 class SteamCmdService implements SteamService {
   /// Creates a service that runs one SteamCMD child per installation at a time.
   ///
-  /// [clock] and [watchdogTimer] override run timing without changing log polling.
+  /// [clock] and [watchdogTimer] affect only [_execute]'s watchdog. They
+  /// default to [DateTime.now] and [Timer.periodic]; log polling is unchanged.
   SteamCmdService({
     required this.steamcmdRoot,
     SteamCmdBootstrap? bootstrap,

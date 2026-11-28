@@ -84,7 +84,6 @@ class SteamHarness {
     Duration pollInterval = const Duration(milliseconds: 50),
     SteamCmdBootstrap? bootstrap,
     StrayProcessControl? strays,
-    SpyLauncher? processLauncher,
     DateTime Function()? clock,
     Timer Function(Duration, void Function(Timer))? watchdogTimer,
     int freeBytes = 1 << 40,
@@ -109,7 +108,7 @@ class SteamHarness {
     script = LoginScript(_fakeEnvironment['FAKE_STEAMCMD_LOGIN_SCRIPT']!)
       ..rules([]);
     if (ready) markReady();
-    launcher = processLauncher ?? SpyLauncher();
+    launcher = SpyLauncher();
     service = SteamCmdService(
       steamcmdRoot: root,
       bootstrap: bootstrap,

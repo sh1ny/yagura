@@ -29,11 +29,11 @@ The existing test starts the real Dart fixture through `SteamHarness`, makes the
 - **Important:** no; no new dependency or production default.
 - **Chosen by:** agent.
 
-### D2: Hold the real child at its first progress line
+### D2: Hold the real child at its first nonzero download report
 
-- **Choice:** Reuse the fixture's hold file. Start logical time at zero so `_execute` records its pre-launch timestamp at `t=0`. Move the clock to `t=3` before delegating to the real launcher and hold it there until both the watchdog is registered and the reporter receives the first parsed log progress. Tick at `t=5` while the flag is still held. From the pre-launch timestamp, five seconds exceeds the four-second budget: a stale timestamp raises `steam_stalled` with `limit: no_progress`. With the refreshed `t=3` timestamp, only two seconds have elapsed. Release the child and assert ordered progress, a successful install and one child run.
+- **Choice:** Allow the existing hold file to select a transcript line, defaulting to its original first-progress behavior. Start logical time at `t=0` for pre-launch and both zero-byte reports. The reporter advances the clock to `t=3` after receiving `0 / 5000`; `_execute` has already processed that report at `t=0`. The child holds after writing `1250 / 5000`. After watchdog registration and the first nonzero byte report, tick at `t=5` while the flag remains. A stale timestamp from launch or zero-byte progress raises `steam_stalled` (`limit: no_progress`); the nonzero report at `t=3` keeps the run within the four-second budget. Release the child and assert ordered progress, success and one child run.
 - **Rejected:** Add delay margins, repeat on failure, or assert that progress happened a fixed wall-clock interval before exit. All depend on the runner's time to launch or schedule a process.
-- **Reversal cost:** low; the fixture protocol already exists.
+- **Reversal cost:** low; the fixture gains one opt-in line selector for its existing hold.
 - **Important:** no; this preserves the existing test intent and real process coverage.
 - **Chosen by:** agent.
 
@@ -43,11 +43,11 @@ The existing test starts the real Dart fixture through `SteamHarness`, makes the
 |---|---|---|---|---|---|---|
 | S1 | Fix scope | Standalone test repair with real child and log | Rerun, raise limit, or fold into upgrade | Low | Yes | User |
 | D1 | Watchdog time | Inject clock and callback registration only | Zone-wide interception or fake process | Low | No | Agent |
-| D2 | Proof of progress | Hold at first real log report and tick past the original deadline | Real-time assertions or retries | Low | No | Agent |
+| D2 | Proof of progress | Hold after nonzero download bytes and tick past the earlier deadline | Real-time assertions or retries | Low | No | Agent |
 
 ## Assumptions
 
-- **A1:** The controlled test exercises the former failure path: if the watchdog compares against the initial time despite the progress event, the five-second tick fails the install. Confirm it using the unchanged real fixture and a single targeted fault check or equivalent deterministic red evidence before accepting the green result.
+- **A1:** If the watchdog ignores progress after bytes advance, a five-second tick fails the install even if zero-byte reports refresh the deadline. Confirm this with the real fixture and a targeted fault check before accepting the green result.
 
 ## Carried constraints
 
@@ -69,16 +69,18 @@ sequenceDiagram
     participant S as SteamCmdService
     participant F as Fixture process
     T->>S: Install at logical t=0
-    S->>F: Launch at logical t=3
-    F-->>S: Append first progress line, hold at gate
-    S-->>T: Report log progress
+    S->>F: Launch at logical t=0
+    F-->>S: Append zero-byte reports
+    S-->>T: Report 0 / 5000; advance to t=3
+    F-->>S: Append 1250 / 5000, hold at gate
+    S-->>T: Report nonzero download progress
     T->>S: Tick watchdog at t=5
     T->>F: Remove hold file
     F-->>S: Finish replay and exit successfully
     S-->>T: Install completes with ordered progress
 ```
 
-The first diagram covers T1 and T4; the sequence covers T3. Await the timer registration and first report without prescribing their order.
+The first diagram covers T1 and T4; the sequence covers T3. Await the timer registration and the nonzero report without prescribing their order.
 
 ## State & Ownership (FULL)
 
@@ -110,7 +112,8 @@ One real child, one held fixture file and one registered watchdog callback. The 
 | Mechanism | Built? | Why | Evidence that would change it |
 |---|---|---|---|
 | Clock and injectable watchdog schedule | Yes | The existing test failed before the fixture could deliver progress | An existing seam that independently controls watchdog time |
-| New fixture gate protocol, test dependency, or retry | No | The fixture already has a gate and the service exposes real progress | A verified inability to observe real progress using the existing gate |
+| Selectable fixture hold line | Yes | The default hold ends at reconfiguration, before any bytes arrive | A simpler way to hold the same child after nonzero progress |
+| Test dependency or retry | No | The fixture and service expose both required events | An event not available through the existing seams |
 
 ## Risks / Trade-offs
 

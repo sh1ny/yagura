@@ -55,30 +55,11 @@ Future<Process> startStray(String directory) async {
   return process;
 }
 
-class _LaunchBarrier extends SpyLauncher {
-  _LaunchBarrier(this.beforeStart);
-
-  final void Function() beforeStart;
-
-  @override
-  Future<SteamProcess> start(
-    String executable,
-    List<String> arguments, {
-    required String workingDirectory,
-    Map<String, String> environment = const {},
-  }) {
-    beforeStart();
-    return super.start(
-      executable,
-      arguments,
-      workingDirectory: workingDirectory,
-      environment: environment,
-    );
-  }
-}
-
 class _DownloadReporter extends RecordingReporter {
-  final firstDownload = Completer<void>();
+  _DownloadReporter(this.startDownloadClock);
+
+  final void Function() startDownloadClock;
+  final firstBytes = Completer<void>();
 
   @override
   void progress({double percent = -1, int bytesDone = 0, int bytesTotal = 0}) {
@@ -87,9 +68,9 @@ class _DownloadReporter extends RecordingReporter {
       bytesDone: bytesDone,
       bytesTotal: bytesTotal,
     );
-    if (!firstDownload.isCompleted && progresses.last.step == 'download') {
-      firstDownload.complete();
-    }
+    if (progresses.last.step != 'download' || firstBytes.isCompleted) return;
+    if (bytesDone == 0 && bytesTotal > 0) startDownloadClock();
+    if (bytesDone > 0) firstBytes.complete();
   }
 }
 
@@ -160,10 +141,10 @@ void main() {
       env,
       noProgressTimeout: const Duration(seconds: 4),
       realOutput: true,
-      fakeEnvironment: {'FAKE_STEAMCMD_HOLD_FILE': hold.path},
-      processLauncher: _LaunchBarrier(() {
-        now = start.add(const Duration(seconds: 3));
-      }),
+      fakeEnvironment: {
+        'FAKE_STEAMCMD_HOLD_FILE': hold.path,
+        'FAKE_STEAMCMD_HOLD_AFTER': '11', // First nonzero download update.
+      },
       clock: () => now,
       watchdogTimer: (_, callback) {
         final timer = _ManualWatchdog(callback);
@@ -171,7 +152,9 @@ void main() {
         return timer;
       },
     );
-    final reporter = _DownloadReporter();
+    final reporter = _DownloadReporter(() {
+      now = start.add(const Duration(seconds: 3));
+    });
     final cancel = CancelToken();
     Future<void>? install;
     var settled = false;
@@ -190,11 +173,12 @@ void main() {
     install = run;
     Future<_ManualWatchdog> ready() async {
       final timer = await watchdog.future;
-      await reporter.firstDownload.future;
+      await reporter.firstBytes.future;
       return timer;
     }
 
-    // The fake writes this progress only to the live log until released.
+    // Initial zero-byte reports are at t=0. The first nonzero update is at
+    // t=3 and comes only from the live log until the child is released.
     final timer = await Future.any<_ManualWatchdog>([
       ready(),
       run.then<_ManualWatchdog>((_) {
